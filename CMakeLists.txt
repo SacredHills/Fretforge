@@ -119,6 +119,10 @@ target_link_libraries(ff_core
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 set_target_properties(ff_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(APPLE)
+    # Audio Unit hosting (generic AU editor views) lives in CoreAudioKit
+    target_link_libraries(ff_core PUBLIC "-framework CoreAudioKit")
+endif()
 
 # ---------------------------------------------------------------- GUI application
 if(FF_BUILD_APP)
@@ -126,6 +130,7 @@ juce_add_gui_app(FretForgeStudio
     PRODUCT_NAME "FretForge Studio"
     COMPANY_NAME "FretForge"
     BUNDLE_ID "com.fretforge.studio"
+    PLUGINHOST_AU TRUE
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "FretForge Studio needs audio input to tune and record your instrument."
     VERSION ${PROJECT_VERSION})
