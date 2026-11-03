@@ -211,11 +211,24 @@ void TrackHeader::mouseDown (const juce::MouseEvent& e)
 
 void TrackHeader::mouseDrag (const juce::MouseEvent& e)
 {
-    // Dragging up/down across headers selects the range of tracks under the mouse.
-    if (e.mods.isPopupMenu() || e.getDistanceFromDragStartY() == 0) return;
+    // Drag a header up/down to move the track (and any other selected tracks) to a new position.
+    if (e.mods.isPopupMenu() || std::abs (e.getDistanceFromDragStartY()) < 5) return;
+    draggingTrack = true;
+    setMouseCursor (juce::MouseCursor::DraggingHandCursor);
     const int y = e.getEventRelativeTo (getParentComponent()).y;
-    const int idx = juce::jlimit (0, owner.numTracks() - 1, (y + owner.geo.scrollY) / owner.geo.trackHeight);
-    owner.session.selectTrackRange (track, owner.trackAtIndex (idx));
+    const int idx = juce::jlimit (0, owner.numTracks(), juce::roundToInt ((float) (y + owner.geo.scrollY) / (float) owner.geo.trackHeight));
+    owner.setTrackDropIndex (idx);
+}
+
+void TrackHeader::mouseUp (const juce::MouseEvent&)
+{
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+    if (! draggingTrack) return;
+    draggingTrack = false;
+    const int idx = owner.trackDropIndex();
+    owner.setTrackDropIndex (-1);
+    if (idx >= 0)
+        owner.moveTracks (owner.session.tracksForEdit (track), idx);
 }
 
 void TrackHeader::showMenu()
@@ -1414,6 +1427,52 @@ void ArrangeView::selectAll()
         for (auto c : t)
             if (c.hasType (ids::CLIP)) selection.add (c);
     repaintAll();
+}
+
+void ArrangeView::setTrackDropIndex (int idx)
+{
+    if (dropIndex == idx) return;
+    dropIndex = idx;
+    repaint();
+}
+
+void ArrangeView::paintOverChildren (juce::Graphics& g)
+{
+    if (dropIndex < 0) return;
+    const int y = headerHolder.getY() + dropIndex * geo.trackHeight - geo.scrollY;
+    g.setColour (palette::accent);
+    g.fillRect (0, y - 2, getWidth(), 3);
+}
+
+void ArrangeView::moveTracks (juce::Array<juce::ValueTree> moving, int insertIndex)
+{
+    auto tracks = doc.tracks();
+    std::sort (moving.begin(), moving.end(), [&] (const juce::ValueTree& a, const juce::ValueTree& b) {
+        return tracks.indexOf (a) < tracks.indexOf (b);
+    });
+    // desired order: the untouched tracks with the moved block inserted at the drop point
+    juce::Array<juce::ValueTree> order;
+    int insertAt = insertIndex;
+    for (int i = 0; i < tracks.getNumChildren(); ++i)
+    {
+        auto t = tracks.getChild (i);
+        if (moving.contains (t)) { if (i < insertIndex) --insertAt; continue; }
+        order.add (t);
+    }
+    for (int i = 0; i < moving.size(); ++i)
+        order.insert (insertAt + i, moving[i]);
+
+    bool changed = false;
+    for (int i = 0; i < order.size(); ++i)
+        changed = changed || tracks.indexOf (order[i]) != i;
+    if (! changed) return;
+
+    doc.undo().beginNewTransaction (moving.size() > 1 ? "Move tracks" : "Move track");
+    for (int i = 0; i < order.size(); ++i)
+    {
+        const int from = tracks.indexOf (order[i]);
+        if (from != i) tracks.moveChild (from, i, &doc.undo());
+    }
 }
 
 void ArrangeView::addMarkerAtPlayhead()

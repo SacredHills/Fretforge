@@ -43,6 +43,7 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     void tickMeter();
     void refreshInputs();
     juce::ValueTree track;
@@ -59,7 +60,7 @@ private:
     void beginGroupDrag (const juce::Identifier& id);
     void applyGroupDelta (const juce::Identifier& id, double delta, double lo, double hi);
     float meterLevel = -100.0f;
-    bool updating = false;
+    bool updating = false, draggingTrack = false;
     void refresh();
     void showMenu();
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { refresh(); }
@@ -142,6 +143,11 @@ public:
     void zoom (double factor, float aroundX = -1.0f);
     void zoomToFit();
     bool hasSelection() const { return ! selection.isEmpty(); }
+    /** Reorders: moves `tracks` as a block so they start at `insertIndex` (0..numTracks). */
+    void moveTracks (juce::Array<juce::ValueTree> tracks, int insertIndex);
+    void setTrackDropIndex (int index);
+    int trackDropIndex() const { return dropIndex; }
+    void paintOverChildren (juce::Graphics&) override;
 
     // ---- shared with children ----
     ProjectDocument& doc;
@@ -181,6 +187,7 @@ private:
     struct ClipboardItem { juce::ValueTree clip; int trackOffset; double timeOffset; };
     std::vector<ClipboardItem> clipboard;
     bool rebuildPending = false;
+    int dropIndex = -1;
 
     void rebuildHeaders();
     void layoutHeaders();

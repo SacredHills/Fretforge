@@ -228,19 +228,26 @@ juce::StringArray SessionController::inputChoiceNames (juce::Array<std::pair<int
 
 juce::Result SessionController::importFiles (const juce::Array<juce::File>& files, juce::ValueTree track, double atSec)
 {
-    if (! track.isValid())
-        track = addTrack();
-    if (! track.isValid())
-        return juce::Result::fail ("No track to import onto.");
-
+    // One file goes onto the given track (a new one if none). Several files each get their own
+    // track, named after the file, all starting at the same position - like dragging stems in.
+    auto tracks = doc.tracks();
     const auto bundle = doc.mediaBundle();
     auto r = project::Bundle::createStructure (bundle);
     if (r.failed())
         return r;
 
     juce::StringArray problems;
-    double pos = atSec;
-    doc.undo().beginNewTransaction ("Import audio");
+    juce::Array<juce::ValueTree> created;
+    doc.undo().beginNewTransaction (files.size() > 1 ? "Import " + juce::String (files.size()) + " files" : juce::String ("Import audio"));
+    int insertAt = track.isValid() ? tracks.indexOf (track) + 1 : tracks.getNumChildren();
+    bool useGivenTrack = track.isValid();
+    if (files.size() > 1 && track.isValid())
+    {
+        bool hasClips = false;
+        for (auto c : track) hasClips = hasClips || c.hasType (ids::CLIP);
+        useGivenTrack = ! hasClips; // fill an empty selected track with the first file
+    }
+
     for (const auto& f : files)
     {
         std::unique_ptr<juce::AudioFormatReader> reader (cache.formats().createReaderFor (f));
@@ -250,6 +257,7 @@ juce::Result SessionController::importFiles (const juce::Array<juce::File>& file
             continue;
         }
         const double len = (double) reader->lengthInSamples / reader->sampleRate;
+        const bool stereoFile = reader->numChannels > 1;
         reader.reset();
 
         auto dst = bundle.getChildFile ("Audio").getChildFile (f.getFileName());
@@ -263,15 +271,36 @@ juce::Result SessionController::importFiles (const juce::Array<juce::File>& file
             }
         }
         else
-        {
             dst = f;
+
+        juce::ValueTree target;
+        if (useGivenTrack)
+        {
+            target = track;
+            useGivenTrack = false;
         }
-        auto clip = createClip (project::Bundle::toPortablePath (bundle, dst), f.getFileNameWithoutExtension(), pos, len, 0.0);
-        track.appendChild (clip, &doc.undo());
+        else
+        {
+            if (tracks.getNumChildren() >= maxTracks)
+            {
+                problems.add (f.getFileName() + ": track limit reached (" + juce::String (maxTracks) + ").");
+                continue;
+            }
+            target = createTrack (f.getFileNameWithoutExtension(), tracks.getNumChildren());
+            const auto inputs = host.activeInputChannelNames();
+            target.setProperty (ids::inputChannel, inputs.isEmpty() ? -1 : 0, nullptr);
+            target.setProperty (ids::inputStereo, stereoFile && inputs.size() > 1, nullptr);
+            tracks.addChild (target, juce::jmin (insertAt++, tracks.getNumChildren()), &doc.undo());
+        }
+        created.add (target);
+
+        auto clip = createClip (project::Bundle::toPortablePath (bundle, dst), f.getFileNameWithoutExtension(), atSec, len, 0.0);
+        target.appendChild (clip, &doc.undo());
         cache.get (dst);
-        pos += len;
         juce::Logger::writeToLog ("Imported " + f.getFullPathName() + " as " + dst.getFullPathName());
     }
+    if (! created.isEmpty())
+        setSelectedTracks (created);
     return problems.isEmpty() ? juce::Result::ok() : juce::Result::fail (problems.joinIntoString ("\n"));
 }
 
