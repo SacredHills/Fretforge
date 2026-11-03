@@ -163,6 +163,16 @@ void DrumGrid::paint (juce::Graphics& g)
         }
     }
 
+    {
+        // play-from marker (set by clicking the bar numbers)
+        const float sx = (float) nameWidth + cellW * (float) (startQ * drums::ppq / st);
+        g.setColour (palette::info.withAlpha (0.8f));
+        juce::Path tri;
+        tri.addTriangle (sx - 6.0f, 2.0f, sx + 6.0f, 2.0f, sx, (float) headerHeight - 4.0f);
+        g.fillPath (tri);
+        g.setColour (palette::info.withAlpha (0.35f));
+        g.drawLine (sx, (float) headerHeight, sx, bottom, 1.0f);
+    }
     if (playQ >= 0.0)
     {
         const float x = (float) nameWidth + cellW * (float) (playQ * drums::ppq / st);
@@ -176,6 +186,17 @@ void DrumGrid::mouseDown (const juce::MouseEvent& e)
 {
     drag = Drag::none;
     moved = false;
+    if (e.y < headerHeight && e.x >= juce::jmax (0, -getX()) + nameWidth && pat.isValid())
+    {
+        // bar-number strip: set the play position (snapped to the grid; Alt = no snap)
+        const double st = drums::stepTicks (pat);
+        double ticks = juce::jmax (0.0, ((double) e.x - nameWidth) / cellW * st);
+        if (! e.mods.isAltDown()) ticks = std::round (ticks / st) * st;
+        ticks = juce::jmin (ticks, (double) drums::lengthTicks (pat) - 1.0);
+        if (onSeek) onSeek (ticks / drums::ppq);
+        drag = Drag::seek;
+        return;
+    }
     const int lane = laneAt (e.y);
     if (! juce::isPositiveAndBelow (lane, (int) drums::numPieces) || e.y < headerHeight) return;
     if (e.x < juce::jmax (0, -getX()) + nameWidth)
@@ -228,6 +249,14 @@ void DrumGrid::mouseDown (const juce::MouseEvent& e)
 void DrumGrid::mouseDrag (const juce::MouseEvent& e)
 {
     if (e.getDistanceFromDragStart() > 3) moved = true;
+    if (drag == Drag::seek && pat.isValid())
+    {
+        const double st = drums::stepTicks (pat);
+        double ticks = juce::jlimit (0.0, (double) drums::lengthTicks (pat) - 1.0, ((double) e.x - nameWidth) / cellW * st);
+        if (! e.mods.isAltDown()) ticks = std::round (ticks / st) * st;
+        if (onSeek) onSeek (ticks / drums::ppq);
+        return;
+    }
     if (drag == Drag::velocity && dragHit.isValid())
     {
         const int v = juce::jlimit (1, 127, dragStartVel - e.getDistanceFromDragStartY());
@@ -337,6 +366,7 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
     : doc (d), host (h), session (s), settings (st), grid (d, h), strip (d)
 {
     grid.onLaneMenu = [this] (int lane) { showLaneMenu (lane); };
+    grid.onSeek = [this] (double q) { seekTo (q); };
     grid.laneHasSample = [this] (int lane) { return drums::samplePath (drums, lane).isNotEmpty(); };
     viewport.setViewedComponent (&grid, false);
     viewport.setScrollBarsShown (true, true);
@@ -477,7 +507,7 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
         host.engine.stop();
         rebuildSequence();
         pushEngine();
-        host.engine.locateSeconds (0.0);
+        host.engine.locateSeconds (grid.getStartQ() * 60.0 / juce::jmax (10.0, doc.tempo()));
         host.engine.play();
     };
     playSongButton.onClick = [this] {
@@ -487,7 +517,7 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
         host.engine.stop();
         rebuildSequence();
         pushEngine();
-        host.engine.locateSeconds (0.0);
+        host.engine.locateSeconds (seekSet ? (songOffsetQ() + grid.getStartQ()) * 60.0 / juce::jmax (10.0, doc.tempo()) : 0.0);
         host.engine.play();
     };
     loopButton.setClickingTogglesState (true);
@@ -678,8 +708,41 @@ juce::ValueTree DrumPage::current() const
     return p.isValid() ? p : drums::patterns (drums).getChild (0);
 }
 
+double DrumPage::songOffsetQ() const
+{
+    const auto id = current()[dids::id].toString();
+    double acc = 0.0, first = -1.0;
+    int i = 0;
+    for (auto s : drums::song (drums))
+    {
+        auto p = drums::patternById (drums, s[dids::pattern].toString());
+        if (p.isValid())
+        {
+            if (s[dids::pattern].toString() == id)
+            {
+                if (i == strip.selected) return acc;
+                if (first < 0.0) first = acc;
+            }
+            acc += drums::lengthTicks (p) / (double) drums::ppq * juce::jlimit (1, 64, (int) s.getProperty (dids::repeats, 1));
+        }
+        ++i;
+    }
+    return juce::jmax (0.0, first);
+}
+
+void DrumPage::seekTo (double q)
+{
+    grid.setStartQ (q);
+    seekSet = true;
+    auto& e = host.engine;
+    if (! e.isPlaying()) return;
+    const double spq = 60.0 / juce::jmax (10.0, doc.tempo());
+    e.locateSeconds ((songMode ? songOffsetQ() + q : q) * spq);   // jump while playing
+}
+
 void DrumPage::selectPattern (const juce::String& id)
 {
+    if (id != drums[dids::selected].toString()) { grid.setStartQ (0.0); seekSet = false; }
     drums.setProperty (dids::selected, id, nullptr);   // view state: not an undoable edit
     refresh();
     if (! host.engine.isPlaying() || ! songMode) rebuildSequence();
@@ -726,7 +789,7 @@ void DrumPage::refresh()
     strip.repaint();
     status.setText (has ? juce::String (cur.getNumChildren()) + " hits" + dotSep() + "click: add / remove" + dotSep() + "Shift-click: ghost"
                               + dotSep() + "Alt-click: accent" + dotSep() + "drag a hit up/down: velocity" + dotSep() + "right-click: presets"
-                              + dotSep() + "click a name to hear it, right-click to load a sample" + dotSep() + "Space: play / stop"
+                              + dotSep() + "click the bar numbers to set where playback starts" + dotSep() + "click a name to hear it, right-click to load a sample" + dotSep() + "Space: play / stop"
                         : juce::String(), juce::dontSendNotification);
 }
 

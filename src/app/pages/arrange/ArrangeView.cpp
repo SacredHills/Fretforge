@@ -699,7 +699,7 @@ void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
 
     if (! clip.isValid())
     {
-        // Empty space: a click locates the playhead; a drag draws a selection rectangle.
+        // Empty space: a click selects the track and clears the clip selection; a drag draws a selection rectangle.
         mode = Mode::marquee;
         marqueeRect = {};
         return;
@@ -845,7 +845,7 @@ void TimelineCanvas::mouseUp (const juce::MouseEvent& e)
             owner.clearSelection();
             if (auto t = owner.trackAtIndex (owner.trackIndexAtY (e.getMouseDownY())); t.isValid())
                 owner.session.clickTrack (t, e.mods);
-            owner.locate (owner.geo.snap (owner.geo.timeFor ((float) e.getMouseDownX()), ! e.mods.isAltDown()));
+            // the playhead only moves from the ruler (bar numbers) at the top
         }
         mode = Mode::none;
         marqueeRect = {};

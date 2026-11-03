@@ -21,6 +21,9 @@ public:
     float xForQ (double q) const;
     void updateSize (int visibleWidth);
     std::function<void (int lane)> onLaneMenu;       // right-click on a lane name
+    std::function<void (double q)> onSeek;           // click on the bar-number strip at the top
+    void setStartQ (double q) { startQ = q; repaint(); }
+    double getStartQ() const { return startQ; }
     std::function<bool (int lane)> laneHasSample;
 
     void paint (juce::Graphics&) override;
@@ -28,16 +31,16 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
-    static constexpr int laneHeight = 22, nameWidth = 112, headerHeight = 20;
+    static constexpr int laneHeight = 22, nameWidth = 112, headerHeight = 24;
 
 private:
     ProjectDocument& doc;
     EngineHost& host;
     juce::ValueTree pat;
-    double playQ = -1.0;
+    double playQ = -1.0, startQ = 0.0;
     float cellW = 24.0f;
 
-    enum class Drag { none, velocity, paint, erase } drag = Drag::none;
+    enum class Drag { none, velocity, paint, erase, seek } drag = Drag::none;
     juce::ValueTree dragHit;
     int dragStartVel = 100, dragLane = -1, paintVel = 100;
     bool moved = false;
@@ -85,6 +88,7 @@ private:
     juce::ValueTree root, drums;
     bool active = false, updating = false, songMode = false;
     juce::uint32 seed = 1;
+    bool seekSet = false;   // the user clicked a play position in the grid's bar numbers
 
     DrumGrid grid;
     juce::Viewport viewport;
@@ -128,6 +132,8 @@ private:
     void rebuildSequence();
     void pushEngine();
     void generate (bool asNew);
+    void seekTo (double patternQ);
+    double songOffsetQ() const;   // where the edited pattern starts in the song (selected section, else first use)
     void renderToStudio();
     void message (const juce::String& title, const juce::String& text);
 

@@ -1052,6 +1052,25 @@ void TabEditor::mouseDown (const juce::MouseEvent& e)
     int s;
     if (locate (e.getPosition(), p, s))
     {
+        // a click on the bar-number line selects the whole bar (Shift extends to more bars)
+        if (auto* m = layoutFor (p.bar); m != nullptr && e.y < rowInfo[(size_t) m->row].y + headerPad + 2)
+        {
+            const Pos last { p.bar, juce::jmax (0, numBeats (p.bar) - 1) };
+            if (e.mods.isShiftDown() && selActive)
+            {
+                if (p.bar < selAnchor.bar) { selAnchor = { selAnchor.bar, juce::jmax (0, numBeats (selAnchor.bar) - 1) }; cursor = { p.bar, 0 }; }
+                else { selAnchor = { selAnchor.bar, 0 }; cursor = last; }
+            }
+            else
+            {
+                selAnchor = { p.bar, 0 };
+                cursor = last;
+            }
+            selActive = true;
+            lastDigit = -1;
+            changed();
+            return;
+        }
         cursorString = s;
         setCursor (p, e.mods.isShiftDown());
     }
@@ -1314,6 +1333,40 @@ void TabEditor::insertMeasure (bool after)
     changed();
 }
 
+juce::Rectangle<int> TabEditor::barBounds (int b) const
+{
+    if (auto* m = layoutFor (b))
+        return { (int) m->x, rowInfo[(size_t) m->row].y, (int) m->w, rowInfo[(size_t) m->row].height };
+    return {};
+}
+
+int TabEditor::barAtQ (double q) const
+{
+    const auto starts = tab::measureStarts (score);
+    const auto it = std::upper_bound (starts.begin(), starts.end(), q);
+    return juce::jlimit (0, juce::jmax (0, barCount() - 1), (int) (it - starts.begin()) - 1);
+}
+
+void TabEditor::deleteSelectedBars()
+{
+    int first = cursor.bar, last = cursor.bar;
+    if (selActive)
+    {
+        const auto [a, b] = selectionRange();
+        first = a.bar;
+        last = b.bar;
+    }
+    if (tab::numMeasures (score) <= 1) return;
+    last = juce::jmin (last, tab::numMeasures (score) - 1);
+    if (last - first + 1 >= tab::numMeasures (score)) first += 1;   // always keep one bar
+    begin (last > first ? "Delete bars" : "Delete bar");
+    for (int b = last; b >= first; --b)
+        tab::removeMeasure (score, b, um());
+    selActive = false;
+    cursor = { juce::jlimit (0, barCount() - 1, first), 0 };
+    changed();
+}
+
 void TabEditor::deleteMeasure()
 {
     if (tab::numMeasures (score) <= 1) return;
@@ -1338,6 +1391,7 @@ bool TabEditor::keyPressed (const juce::KeyPress& k)
         if (code == juce::KeyPress::rightKey) { moveBar (1); return true; }
         if (code == juce::KeyPress::upKey) { setTrackIndex (trackIndex - 1); return true; }
         if (code == juce::KeyPress::downKey) { setTrackIndex (trackIndex + 1); return true; }
+        if (code == juce::KeyPress::deleteKey) { deleteSelectedBars(); return true; }
         if (code == 'C') { copy (false); return true; }
         if (code == 'X') { copy (true); return true; }
         if (code == 'V') { paste(); return true; }
@@ -1371,7 +1425,22 @@ bool TabEditor::keyPressed (const juce::KeyPress& k)
     if (code == juce::KeyPress::homeKey) { setCursor ({ cursor.bar, 0 }, mods.isShiftDown()); return true; }
     if (code == juce::KeyPress::endKey) { setCursor ({ cursor.bar, numBeats (cursor.bar) }, mods.isShiftDown()); return true; }
     if (code == juce::KeyPress::escapeKey) { selActive = false; changed(); return true; }
-    if (code == juce::KeyPress::deleteKey) { deleteNote(); return true; }
+    if (code == juce::KeyPress::deleteKey)
+    {
+        // whole bars selected, or nothing under the cursor: delete the bar(s); otherwise the note
+        bool wholeBars = false;
+        if (selActive)
+        {
+            const auto [a, b] = selectionRange();
+            wholeBars = a.beat == 0 && b.beat >= numBeats (b.bar) - 1;
+        }
+        if (wholeBars || mods.isCommandDown() || mods.isCtrlDown()
+            || (! selActive && ! tab::noteOnString (beatAt (cursor), cursorString).isValid()))
+            deleteSelectedBars();
+        else
+            deleteNote();
+        return true;
+    }
     if (code == juce::KeyPress::backspaceKey) { deleteBeat(); return true; }
     if (code == juce::KeyPress::insertKey) { insertBeat(); return true; }
 

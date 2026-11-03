@@ -364,7 +364,13 @@ void TabPage::timerCallback()
     playButton.setToggleState (playing, juce::dontSendNotification);
     if (playing && ! e.isCountingIn())
     {
-        editor.setPlayheadQ (playMap.quarterAt (e.getPositionSeconds()));
+        const double q = playMap.quarterAt (e.getPositionSeconds());
+        editor.setPlayheadQ (q);
+        // follow the playhead: keep the system being played in view
+        const auto r = editor.barBounds (editor.barAtQ (q));
+        const int top = viewport.getViewPositionY(), h = viewport.getViewHeight();
+        if (! r.isEmpty() && (r.getY() < top || r.getBottom() > top + h))
+            viewport.setViewPosition (viewport.getViewPositionX(), juce::jmax (0, r.getY() - 8));
     }
     else
         editor.setPlayheadQ (-1.0);
@@ -770,42 +776,30 @@ void TabPage::resized()
 {
     auto r = getLocalBounds();
     auto row1 = r.removeFromTop (42).reduced (8, 7);
-    const bool roomy = row1.getWidth() >= 1480;
+    const bool roomy = row1.getWidth() >= 1460;
     tempoLabel.setVisible (roomy);
     speedLabel.setVisible (roomy);
     if (roomy && tempoLabel.getParentComponent() == nullptr) { addAndMakeVisible (tempoLabel); addAndMakeVisible (speedLabel); }
-    trackCombo.setBounds (row1.removeFromLeft (roomy ? 230 : 156));
-    row1.removeFromLeft (6);
-    addTrackButton.setBounds (row1.removeFromLeft (72));
-    row1.removeFromLeft (4);
-    tuningButton.setBounds (row1.removeFromLeft (74));
-    row1.removeFromLeft (4);
-    trackMenuButton.setBounds (row1.removeFromLeft (64));
-    row1.removeFromLeft (12);
-    if (roomy) tempoLabel.setBounds (row1.removeFromLeft (44));
-    tempoSlider.setBounds (row1.removeFromLeft (92));
-    row1.removeFromLeft (8);
-    if (roomy) speedLabel.setBounds (row1.removeFromLeft (44));
-    speedCombo.setBounds (row1.removeFromLeft (76));
-    row1.removeFromLeft (10);
-    playButton.setBounds (row1.removeFromLeft (60));
-    row1.removeFromLeft (4);
-    loopButton.setBounds (row1.removeFromLeft (50));
-    row1.removeFromLeft (4);
-    loopSongButton.setBounds (row1.removeFromLeft (78));
-    row1.removeFromLeft (4);
-    clickButton.setBounds (row1.removeFromLeft (50));
-    row1.removeFromLeft (4);
-    countButton.setBounds (row1.removeFromLeft (64));
-    exportButton.setBounds (row1.removeFromRight (70));
+    auto take = [&row1] (juce::Component& c, int w, int gap) { c.setBounds (row1.removeFromLeft (w)); row1.removeFromLeft (gap); };
+    take (trackCombo, roomy ? 220 : 150, 4);
+    take (addTrackButton, 64, 2);
+    take (tuningButton, 64, 2);
+    take (trackMenuButton, 56, 8);
+    if (roomy) take (tempoLabel, 44, 0);
+    take (tempoSlider, 84, 6);
+    if (roomy) take (speedLabel, 44, 0);
+    take (speedCombo, 70, 8);
+    take (playButton, 52, 3);
+    take (loopButton, 46, 3);
+    take (loopSongButton, 72, 3);
+    take (clickButton, 46, 3);
+    take (countButton, 62, 8);
+    take (drumsButton, 54, 3);
+    take (notationButton, 70, 3);
+    take (midiButton, 60, 8);
+    exportButton.setBounds (row1.removeFromRight (juce::jmax (60, juce::jmin (70, (row1.getWidth() - 4) / 2))));
     row1.removeFromRight (4);
-    importButton.setBounds (row1.removeFromRight (70));
-    row1.removeFromRight (8);
-    midiButton.setBounds (row1.removeFromRight (64));
-    row1.removeFromRight (4);
-    notationButton.setBounds (row1.removeFromRight (76));
-    row1.removeFromRight (4);
-    drumsButton.setBounds (row1.removeFromRight (58));
+    importButton.setBounds (row1.removeFromRight (juce::jmax (60, juce::jmin (70, row1.getWidth()))));
 
     auto row2 = r.removeFromTop (42).reduced (8, 8);
     for (auto* b : durButtons) { b->setBounds (row2.removeFromLeft (34)); row2.removeFromLeft (2); }

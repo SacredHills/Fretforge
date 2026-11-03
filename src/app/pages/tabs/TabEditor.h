@@ -11,6 +11,8 @@ namespace ff
     systems of measures with fret numbers on string lines, rhythm stems/beams below,
     technique markings, a note cursor, beat selection and a playback cursor.
 
+    Click a bar number to select the whole bar; Delete then removes it (Delete also removes a bar when the cursor is on
+    an empty spot, Ctrl+Delete always removes the cursor's bar).
     Keyboard: digits enter frets (two quick digits = two-digit fret), arrows move,
     Ctrl+arrows change bar/track, Shift+arrows select, +/- change duration, '.' dot,
     T triplet, R rest, Ins insert beat, Del delete note, Backspace delete beat,
@@ -61,6 +63,11 @@ public:
     void transpose (int semitones);
     void insertMeasure (bool after);
     void deleteMeasure();
+    /** Deletes every bar the selection covers (or the cursor's bar). */
+    void deleteSelectedBars();
+    /** Area of the system (row) that shows a bar, for scrolling. */
+    juce::Rectangle<int> barBounds (int bar) const;
+    int barAtQ (double q) const;
     void enterFret (int fret);
     /** MIDI keyboard entry: writes the pitches (a chord) into the cursor's beat with automatically chosen
         strings; with `advance` the cursor first moves to the next beat. */
