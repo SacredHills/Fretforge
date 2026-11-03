@@ -61,6 +61,9 @@ void AudioEngine::renderTab (float* const* bus, int numBus, int offset, int len)
         const auto& notes = tabSeq->notes;
         tabNext = (size_t) (std::lower_bound (notes.begin(), notes.end(), t,
                                               [] (const SynthNote& n, double v) { return n.startSec < v; }) - notes.begin());
+        const auto& hits = tabSeq->drumHits;
+        drumNext = (size_t) (std::lower_bound (hits.begin(), hits.end(), t,
+                                               [] (const DrumHit& h, double v) { return h.sec < v; }) - hits.begin());
         tabNeedsSeek = false;
     }
 
@@ -114,6 +117,26 @@ void AudioEngine::renderTab (float* const* bus, int numBus, int offset, int len)
     }
     synth.render (L + cursor, R + cursor, len - cursor);
 
+    // drums
+    if (const int pv = drumPreview.exchange (-1); pv >= 0)
+        drumSynth.trigger (pv & 0xff, (float) ((pv >> 8) & 0x7f) / 127.0f);
+    cursor = 0;
+    if (tabSeq != nullptr) drumSynth.volume = tabSeq->drumVolume;
+    if (playing && tabSeq != nullptr)
+    {
+        const double t1 = (double) (pos + len) / sr;
+        const auto& hits = tabSeq->drumHits;
+        while (drumNext < hits.size() && hits[drumNext].sec < t1)
+        {
+            const int off = juce::jlimit (cursor, len, (int) (std::llround (hits[drumNext].sec * sr) - pos));
+            drumSynth.render (L + cursor, R + cursor, off - cursor);
+            cursor = off;
+            drumSynth.trigger (hits[drumNext].piece, hits[drumNext].velocity);
+            ++drumNext;
+        }
+    }
+    drumSynth.render (L + cursor, R + cursor, len - cursor);
+
     juce::FloatVectorOperations::add (bus[0] + offset, L, len);
     juce::FloatVectorOperations::add ((numBus > 1 ? bus[1] : bus[0]) + offset, R, len);
 }
@@ -162,6 +185,7 @@ void AudioEngine::prepare (double sr, int maximumBlockSize)
     blockSize = maximumBlockSize;
     metronome.prepare (sr);
     synth.prepare (sr);
+    drumSynth.prepare (sr);
     tabNeedsSeek = tabNeedsSeekClicks = true;
     smoothedGain.reset (sr, 0.02);
     smoothedGain.setCurrentAndTargetValue (masterGain.load());
@@ -273,6 +297,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         closeRecordSegments();
         tabNeedsSeek = tabNeedsSeekClicks = true;
         synth.allNotesOff();
+        drumSynth.allNotesOff();
         if (playing && countInRemaining == 0)
             metronome.resetAtBeat (beatsAt (pos));
     }
@@ -293,6 +318,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         playing = false;
         countInRemaining = 0;
         synth.allNotesOff();
+        drumSynth.allNotesOff();
     }
 
     const bool practice = practiceMetronome.load();
@@ -384,6 +410,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
                 metronome.resetAtBeat (beatsAt (pos));
                 tabNeedsSeek = tabNeedsSeekClicks = true;
                 synth.allNotesOff();
+        drumSynth.allNotesOff();
             }
         }
         done += len;

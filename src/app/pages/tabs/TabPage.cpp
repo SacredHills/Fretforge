@@ -53,7 +53,10 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
     playButton.setTooltip ("Play from the cursor, or loop the selection (Space also plays/stops)");
     loopButton.setClickingTogglesState (true);
     loopButton.setTooltip ("Loop the selected beats (or the cursor's bar)");
-    loopButton.onClick = [this] { pushEngineOverrides(); };
+    loopButton.onClick = [this] { if (loopButton.getToggleState()) loopSongButton.setToggleState (false, juce::dontSendNotification); pushEngineOverrides(); };
+    loopSongButton.setClickingTogglesState (true);
+    loopSongButton.setTooltip ("Loop the whole song: playback starts at the cursor and wraps from the last bar to the first");
+    loopSongButton.onClick = [this] { if (loopSongButton.getToggleState()) loopButton.setToggleState (false, juce::dontSendNotification); pushEngineOverrides(); };
     clickButton.setClickingTogglesState (true);
     clickButton.setToggleState (settings.getBoolValue ("tabClick", false), juce::dontSendNotification);
     clickButton.onClick = [this] { settings.setValue ("tabClick", clickButton.getToggleState()); pushEngineOverrides(); };
@@ -72,7 +75,7 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
     midiButton.onClick = [this] { setMidiInput (midiButton.getToggleState()); editor.grabKeyboardFocus(); };
 
     for (auto* c : std::initializer_list<juce::Component*> { &trackCombo, &addTrackButton, &tuningButton, &trackMenuButton, &tempoSlider,
-                                                             &speedCombo, &playButton, &loopButton, &clickButton, &countButton,
+                                                             &speedCombo, &playButton, &loopButton, &loopSongButton, &clickButton, &countButton,
                                                              &importButton, &exportButton, &notationButton, &midiButton })
     {
         c->setWantsKeyboardFocus (false);
@@ -291,7 +294,14 @@ void TabPage::pushEngineOverrides()
     e.setTimeSignature ((int) m0.getProperty (tids::tsNum, 4), (int) m0.getProperty (tids::tsDen, 4));
     e.clickWhilePlaying = clickButton.getToggleState();
     e.punchEnabled = false;
-    if (loopButton.getToggleState())
+    if (loopSongButton.getToggleState())
+    {
+        const auto map = tab::tempoMap (score, speed);
+        e.loopStartSec = 0.0;
+        e.loopEndSec = map.secondsAt (tab::measureStarts (score).back());
+        e.loopEnabled = true;
+    }
+    else if (loopButton.getToggleState())
     {
         const auto [a, b] = editor.selectionSpanQ();
         const auto map = tab::tempoMap (score, speed);
@@ -752,7 +762,7 @@ void TabPage::resized()
 {
     auto r = getLocalBounds();
     auto row1 = r.removeFromTop (42).reduced (8, 7);
-    const bool roomy = row1.getWidth() >= 1330;
+    const bool roomy = row1.getWidth() >= 1410;
     tempoLabel.setVisible (roomy);
     speedLabel.setVisible (roomy);
     if (roomy && tempoLabel.getParentComponent() == nullptr) { addAndMakeVisible (tempoLabel); addAndMakeVisible (speedLabel); }
@@ -773,6 +783,8 @@ void TabPage::resized()
     playButton.setBounds (row1.removeFromLeft (60));
     row1.removeFromLeft (4);
     loopButton.setBounds (row1.removeFromLeft (50));
+    row1.removeFromLeft (4);
+    loopSongButton.setBounds (row1.removeFromLeft (78));
     row1.removeFromLeft (4);
     clickButton.setBounds (row1.removeFromLeft (50));
     row1.removeFromLeft (4);

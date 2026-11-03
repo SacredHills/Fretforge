@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(FretForgeStudio VERSION 0.4.0 LANGUAGES C CXX)
+project(FretForgeStudio VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,7 +62,9 @@ target_sources(ff_core PRIVATE
     src/core/TabModel.cpp
     src/core/GuitarPro.cpp
     src/core/MusicXml.cpp
+    src/core/DrumModel.cpp
     src/engine/TabSynth.cpp
+    src/engine/DrumSynth.cpp
     src/engine/AudioCache.cpp
     src/engine/Recorder.cpp
     src/engine/PlaybackGraph.cpp
@@ -111,6 +113,7 @@ target_sources(FretForgeStudio PRIVATE
     src/app/pages/tabs/TabEditor.cpp
     src/app/pages/tabs/NotationGlyphs.cpp
     src/app/pages/tabs/ScorePdf.cpp
+    src/app/pages/drums/DrumPage.cpp
     src/app/pages/tabs/TabPage.cpp
     src/app/pages/StudioPage.cpp
     src/app/pages/ToolsPage.cpp
@@ -144,7 +147,8 @@ if(FF_BUILD_TESTS)
         tests/ArrangementEngineTests.cpp
         tests/TabTests.cpp
         tests/GuitarProTests.cpp
-        tests/MusicXmlTests.cpp)
+        tests/MusicXmlTests.cpp
+        tests/DrumTests.cpp)
     target_link_libraries(ff_tests PRIVATE ff_core juce::juce_recommended_config_flags)
     target_compile_definitions(ff_tests PRIVATE FF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     enable_testing()

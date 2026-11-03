@@ -1,5 +1,6 @@
 #include "ProjectFile.h"
 #include "TabModel.h"
+#include "DrumModel.h"
 
 #ifndef FF_VERSION_STRING
  #define FF_VERSION_STRING "0.0.0"
@@ -42,6 +43,7 @@ juce::ValueTree createDefault (const juce::String& name)
     root.appendChild (juce::ValueTree (TRACKS), nullptr);
     root.appendChild (juce::ValueTree (MARKERS), nullptr);
 
+    drums::getOrCreate (root);
     auto score = tab::getOrCreateScore (root);
     tab::addTrack (score, "Guitar", { 40, 45, 50, 55, 59, 64 }, "guitar", nullptr);
     return root;

@@ -94,6 +94,8 @@ public:
     // ---- tablature playback ----
     /** When true the engine plays the tab sequence (guitar synth) instead of the arrangement. */
     std::atomic<bool> tabMode { false };
+    /** Auditions a drum piece on the next audio block (score mode only). Lock-free. */
+    void previewDrum (int piece, float velocity) noexcept { drumPreview.store ((piece & 0xff) | (juce::jlimit (1, 127, (int) (velocity * 127.0f)) << 8)); }
     void submitTabSequence (std::unique_ptr<TabSequence> seq);
     /** Starts playback after `countInSamples` of metronome count-in. */
     void playWithCountIn (juce::int64 countInSamples) noexcept { countInRequest = juce::jmax ((juce::int64) 0, countInSamples); playRequested = true; }
@@ -133,7 +135,9 @@ private:
     TabSequence* tabSeq = nullptr;
     SpscFifo<TabSequence*> retiredTabs;
     GuitarSynth synth;
-    size_t tabNext = 0, tabNextClick = 0;
+    DrumSynth drumSynth;
+    std::atomic<int> drumPreview { -1 };
+    size_t tabNext = 0, tabNextClick = 0, drumNext = 0;
     bool tabNeedsSeek = true, tabNeedsSeekClicks = true;
     void renderTab (float* const* bus, int numBus, int offset, int len) noexcept;
     SpscFifo<PlaybackGraph*> retired;

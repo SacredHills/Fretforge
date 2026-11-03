@@ -12,6 +12,7 @@
 #include "pages/SettingsPage.h"
 #include "pages/MilestonePage.h"
 #include "pages/tabs/TabPage.h"
+#include "pages/drums/DrumPage.h"
 
 namespace ff
 {
@@ -90,6 +91,7 @@ private:
     std::unique_ptr<MixerPage> mixerPage;
     std::unique_ptr<SettingsPage> settingsPage;
     std::unique_ptr<TabPage> tabPage;
+    std::unique_ptr<DrumPage> drumPage;
     juce::OwnedArray<MilestonePage> milestonePages;
     juce::Array<juce::Component*> pages;
     juce::Label statusLeft, statusRight;

@@ -4,7 +4,22 @@ A cross-platform guitar workstation (DAW + tab editor + drum studio + training c
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technology evaluation, architecture, audio-engine design,
 project format, plugin system, milestone plan, risks and licensing.
 
-## Status: Milestone 3 — Guitar tab editor (working)
+## Status: Milestone 4 (part 1) — Drum Studio (working)
+
+| Area | What works now |
+|---|---|
+| Patterns | Any number of patterns; 2/4 to 12/8 meters; 1–16 bars; grid 1/8, 1/8T, 1/16, 1/16T, 1/32 (hits keep exact positions when the grid changes); swing; new / duplicate / rename / delete; full undo |
+| Grid editor | 19-piece kit lanes (2 kicks, snare, side stick, clap, 3 hi-hats, 4 toms, 2 crashes, china, splash, ride, ride bell, cowbell); click to add/remove, Shift-click ghost, Alt-click accent, drag a hit for velocity, drag across to paint, right-click velocity presets, click a lane name to hear the sound |
+| Generator | 17 styles: rock, hard rock, pop, punk, funk, blues shuffle, reggae one-drop, jazz swing, metal, thrash, d-beat, doom, death metal, black metal, blast beats (traditional / hammer / bomb), double-bass gallop, djent 3-over-4; half-time, complexity, fill, crash on 1; each click gives a new variation |
+| Humanize | Timing (ms) and velocity (%) variation, identical on every playback |
+| Song | Arrange patterns into sections with repeats; reorder; play the song with a moving playhead |
+| Sound | Built-in synthesized kit (no samples needed; hi-hat choke, velocity, stereo placement); click follows the pattern meter |
+| Output | MIDI export (pattern or song, General MIDI drums) and import; render the song to an audio track in the Studio |
+
+**Not yet in Milestone 4:** sample-based kits (load your own drum samples), a piano roll for melodic MIDI, flams/drags and
+cymbal chokes as articulations, drum tracks inside the tab editor (and Guitar Pro drum tracks), tempo changes inside a drum song.
+
+## Milestone 3 — Guitar tab editor (working)
 
 | Area | What works now |
 |---|---|
@@ -13,7 +28,7 @@ project format, plugin system, milestone plan, risks and licensing.
 | Techniques | Hammer-on/pull-off, slides (to next / in / out), bends (½, full, 1½, 2) and pre-bends, vibrato, palm mute, dead and ghost notes, natural and artificial harmonics, let ring, tapping, ties, accents, staccato, pick strokes, tremolo picking |
 | Standard notation | Shown above the tab (toggle "Notation"): treble-8 or bass-8 clef, key signatures, accidentals, ledger lines, stems, beams, flags, dots, tuplets, ties, rests |
 | Score text | Tempo changes, key signatures and section markers per bar ("Bar..."); chord names with diagrams, lyrics and text per beat ("Text..." or double-click) |
-| Playback | Built-in physically-modelled guitar/bass synth that performs the techniques; follows tempo changes; practice speed 25–150% without pitch change; loop the selection; metronome click that follows meter and tempo changes; count-in |
+| Playback | Built-in physically-modelled guitar/bass synth that performs the techniques; follows tempo changes; practice speed 25–150% without pitch change; loop the selection or the whole song; metronome click that follows meter and tempo changes; count-in |
 | Import | **Guitar Pro** 3, 4, 5, 6 (.gpx) and 7/8 (.gp); **MusicXML** (.musicxml, .xml, compressed .mxl); MIDI; ASCII tab. Replace the score or add the tracks; repeats are written out; drag a file onto the Tabs page |
 | Export | MIDI (with tempo changes), MusicXML (TAB staff with fingering and techniques), PDF (notation + tab, A4), print (via the PDF) |
 | MIDI entry | "MIDI In": play notes or chords on a MIDI keyboard / MIDI guitar interface to write them at the cursor |
@@ -46,7 +61,7 @@ Ctrl+E export, Ctrl+D duplicate, Ctrl+C/X/V, Ctrl+A, Del, = / - zoom, F fit.
 tempo/meter changes along the timeline, track folders/groups, automation lanes, MIDI and instrument tracks, MP3 export
 (needs LAME), and disk streaming (audio is loaded into memory; fine for songs, not for hour-long sessions).
 
-Sections without working features (Drum Studio, Training, Effects & Amps, Library) still show a labelled
+Sections without working features (Training, Effects & Amps, Library) still show a labelled
 "Not yet implemented — Milestone N" page with their planned scope and no controls.
 
 ## Building

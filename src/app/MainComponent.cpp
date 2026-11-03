@@ -75,9 +75,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     settingsPage = std::make_unique<SettingsPage> (host, *doc, settings);
 
     tabPage = std::make_unique<TabPage> (*doc, host, settings);
-    auto* drums = milestonePages.add (new MilestonePage ("Drum Studio", 4, "Drum studio",
-        { "Step sequencer, drum grid and piano roll", "Velocity, timing, humanize, ghost notes, chokes", "Fills, variations, polyrhythms, sections",
-          "Genre-aware pattern generator (rock to black metal)", "Blast beats, d-beats, double bass, half-time", "Editable MIDI output, song arrangement" }));
+    drumPage = std::make_unique<DrumPage> (*doc, host, *session, settings);
     auto* training = milestonePages.add (new MilestonePage ("Training", 6, "Training centre",
         { "Rule-based exercise generator (23 techniques)", "Exercises as editable tab with playback", "Progressive tempo practice with thresholds",
           "Structured plans (fundamentals to death-metal picking)", "Practice tracking, streaks and speed records", "Progress charts and weak-area analysis" },
@@ -90,9 +88,9 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
           "Preset & IR browser", "Song structure timeline", "Cross-project riff reuse" }));
 
     const juce::StringArray names { "Studio", "Mixer", "Guitar Tabs", "Drum Studio", "Training", "Effects & Amps", "Library", "Tools", "Settings" };
-    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drums, training, fx, library, toolsPage.get(), settingsPage.get() };
+    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), training, fx, library, toolsPage.get(), settingsPage.get() };
     nav.names = names;
-    nav.implemented = { true, true, true, false, false, false, false, true, true };
+    nav.implemented = { true, true, true, true, false, false, false, true, true };
     nav.onSelect = [this] (int i) { showSection (i); };
     addAndMakeVisible (nav);
     for (auto* p : pages)
@@ -113,6 +111,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
         studioPage->rebind();
         mixerPage->rebind();
         tabPage->rebind();
+        drumPage->rebind();
         toolsPage->metronome.rebind();
     };
     transport->onRecord = [this] { session->toggleRecord(); };
@@ -162,9 +161,11 @@ MainComponent::~MainComponent()
 
     host.engine.stop();
     tabPage->setActive (false);
+    drumPage->setActive (false);
     transport.reset();
     pages.clear();
     tabPage.reset();
+    drumPage.reset();
     milestonePages.clear();
     studioPage.reset();
     toolsPage.reset();
@@ -178,8 +179,11 @@ MainComponent::~MainComponent()
 
 void MainComponent::showSection (int index)
 {
-    if (tabPage != nullptr)
-        tabPage->setActive (index == 2); // tab section drives the engine with the guitar synth
+    // the tab and drum sections drive the engine in score mode; switch the old one off first
+    if (tabPage != nullptr && index != 2) tabPage->setActive (false);
+    if (drumPage != nullptr && index != 3) drumPage->setActive (false);
+    if (tabPage != nullptr && index == 2) tabPage->setActive (true);
+    if (drumPage != nullptr && index == 3) drumPage->setActive (true);
     currentSection = index;
     nav.selected = index;
     nav.repaint();
@@ -496,7 +500,7 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdReveal: if (doc->hasLocation()) doc->getBundle().revealToUser(); return true;
         case cmdUndo: doc->undo().undo(); return true;
         case cmdRedo: doc->undo().redo(); return true;
-        case cmdPlayStop: if (currentSection == 2) tabPage->togglePlay(); else host.engine.togglePlay(); return true;
+        case cmdPlayStop: if (currentSection == 2) tabPage->togglePlay(); else if (currentSection == 3) drumPage->togglePlay(); else host.engine.togglePlay(); return true;
         case cmdReturnToZero: host.engine.returnToZero(); return true;
         case cmdToggleClick: transport->toggleClick(); return true;
         case cmdTapTempo: transport->tapTempo(); return true;

@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_data_structures/juce_data_structures.h>
+#include "DrumSynth.h"
 #include <vector>
 
 namespace ff
@@ -23,9 +24,14 @@ struct TabSequence
     struct Click { double sec = 0.0; bool accent = false; };
     std::vector<SynthNote> notes;   // sorted by startSec
     std::vector<Click> clicks;      // metronome beats following the score's meter and tempo changes
+    std::vector<DrumHit> drumHits;  // sorted by sec (drum studio / play-along)
+    float drumVolume = 0.8f;
     double lengthSec = 0.0;
     double secondsPerQuarter = 0.5; // at the start, after speed scaling
 };
+
+/** Drum studio playback: one pattern (or the whole song when `pattern` is invalid) at `bpm`. */
+std::unique_ptr<TabSequence> buildDrumSequence (const juce::ValueTree& drums, const juce::ValueTree& pattern, double bpm);
 
 /** Builds a sequence from a SCORE node. `speed` scales the tempo (0.5 = half speed, pitch unchanged). */
 std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, double speed);

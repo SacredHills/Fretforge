@@ -48,7 +48,7 @@ private:
     juce::TextButton addTrackButton { "+ Track" }, tuningButton { "Tuning..." }, trackMenuButton { "Track..." };
     juce::Slider tempoSlider;
     juce::Label tempoLabel, speedLabel;
-    juce::TextButton playButton { "Play" }, loopButton { "Loop" }, clickButton { "Click" }, countButton { "Count-in" };
+    juce::TextButton playButton { "Play" }, loopButton { "Loop" }, loopSongButton { "Loop song" }, clickButton { "Click" }, countButton { "Count-in" };
     juce::TextButton importButton { "Import..." }, exportButton { "Export..." };
     juce::TextButton notationButton { "Notation" }, midiButton { "MIDI In" };
     // row 2: entry palette
@@ -86,7 +86,7 @@ private:
     void message (const juce::String& title, const juce::String& text);
     void ensureCursorVisible();
 
-    void handleAsyncUpdate() override { rebuildSequence(); }
+    void handleAsyncUpdate() override { rebuildSequence(); pushEngineOverrides(); }
     void timerCallback() override;
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
     void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { structureChanged(); }

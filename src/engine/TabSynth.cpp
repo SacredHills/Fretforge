@@ -1,5 +1,6 @@
 #include "TabSynth.h"
 #include "core/TabModel.h"
+#include "core/DrumModel.h"
 #include "engine/PlaybackGraph.h"
 #include <cmath>
 
@@ -66,6 +67,26 @@ std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, dou
         for (int b = 0; b < num; ++b)
             seq->clicks.push_back ({ map.secondsAt (starts[(size_t) m] + b * beatQ), b == 0 });
     }
+    return seq;
+}
+
+std::unique_ptr<TabSequence> buildDrumSequence (const juce::ValueTree& d, const juce::ValueTree& pattern, double bpm)
+{
+    auto seq = std::make_unique<TabSequence>();
+    const double spq = 60.0 / juce::jlimit (10.0, 999.0, bpm);
+    seq->secondsPerQuarter = spq;
+    seq->drumVolume = (float) (double) d.getProperty (drums::ids::volume, 0.8);
+    const auto c = drums::compile (d, pattern, 1);
+    for (auto& e : c.events)
+        seq->drumHits.push_back ({ juce::jmax (0.0, e.q * spq + e.offsetSec), e.piece, e.velocity });
+    std::stable_sort (seq->drumHits.begin(), seq->drumHits.end(), [] (const DrumHit& a, const DrumHit& b) { return a.sec < b.sec; });
+    for (auto& b : c.bars)
+    {
+        const double beatQ = 4.0 / juce::jmax (1, b.den);
+        for (int i = 0; i < b.num; ++i)
+            seq->clicks.push_back ({ (b.q + i * beatQ) * spq, i == 0 });
+    }
+    seq->lengthSec = c.lengthQ * spq;
     return seq;
 }
 

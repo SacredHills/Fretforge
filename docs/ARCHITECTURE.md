@@ -100,7 +100,7 @@ Extension points for later: content packs (drum kits, IR packs, lesson plans as 
 | 1 | Foundation: shell, project system, device config, engine, metronome, tuner | **Done** |
 | 2 | Recording studio: tracks, recording, playback, waveforms, timeline, editing, mixer, export | **Done** (comping lanes, time-stretch, tempo map, automation still to come) |
 | 3 | Tab system: editor, notation, playback, MIDI, Guitar Pro import, PDF | **Done**: editor, techniques, synth playback, standard notation, Guitar Pro 3-7 and MusicXML import, MusicXML/MIDI/PDF export, tempo/key changes, chords, lyrics, MIDI-keyboard entry. Open: grace notes, multiple voices, repeat signs kept as signs |
-| 4 | Drum studio: sequencer, piano roll, drum instruments, generator, arrangement | Planned |
+| 4 | Drum studio: sequencer, piano roll, drum instruments, generator, arrangement | **Part 1 done**: grid sequencer, velocity, swing, humanize, 17-style generator, song arrangement, synthesized kit, MIDI I/O, render to audio. Open: sample kits, piano roll, articulations |
 | 5 | Effects & amps: built-ins, amp/cab sim, IRs, plugin hosting | Planned |
 | 6 | Training centre: exercise generator, lessons, progressive practice, stats | Planned |
 | 7 | Theory, songwriting, analysis, assistance, mastering | Planned |
@@ -190,3 +190,17 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
   cross-platform print API.
 - **MIDI entry:** with MIDI In on, notes struck within 90 ms form one chord; strings are chosen by `assignStrings`
   near the previous position, and each new chord advances the cursor.
+
+## 12. Milestone 4 design notes (part 1)
+
+- **Model:** `DRUMS` holds `PATTERN`s (meter, bars, editing grid, swing) with `HIT {lane, tick, vel}` children at 960
+  ticks per quarter, and a `SONG` of `SECTION {pattern, repeats}`. The grid is only an editing aid; hits keep exact ticks.
+- **Compile:** `drums::compile` expands a pattern or the song into quarter-note events, applies swing, and adds
+  humanize offsets from a hash of (repetition, tick, piece) so a humanized groove sounds the same on every playback.
+- **Generator:** rule-based per style (backbeat placement, cymbal pulse, kick vocabulary, ghost notes, blast types,
+  gallops, 3-over-4 groupings), shaped by complexity and half-time, with a fill and crash option; `juce::Random` with a
+  fixed seed makes every variation reproducible (unit-tested per style).
+- **Sound:** `DrumSynth` synthesizes every piece (pitch-swept sines, TPT state-variable filtered noise, six inharmonic
+  square oscillators for metal), with hi-hat choke groups, velocity and constant-power pan. Drum hits travel in the same
+  `TabSequence` snapshot as tab notes, so the engine's score mode renders guitars and drums sample-accurately with no
+  locks; `renderOffline` produces the audio for "Render to Studio".
