@@ -1,5 +1,7 @@
 #include "Exporter.h"
 #include "core/Timeline.h"
+#include "core/RigModel.h"
+#include "fx/RigBank.h"
 
 namespace ff
 {
@@ -58,9 +60,16 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
     GraphBuildOptions opt;
     opt.sampleRate = s.sampleRate;
     opt.waitForAudio = true;
+    juce::StringArray rigWarnings;
+    opt.rigFor = [&] (const juce::ValueTree& t) -> std::shared_ptr<fx::AmpRig> {
+        const auto r = rig::find (t);
+        return rig::isEnabled (r) ? fx::makeOfflineRig (r, s.sampleRate, 4096, rigWarnings) : nullptr;
+    };
+    juce::ScopedNoDenormals noDenormals;
     auto graph = buildPlaybackGraph (tracks, mediaBundle, cache, opt);
     if (graph->missingClips > 0)
         res.warnings.add (juce::String (graph->missingClips) + " clip(s) could not be loaded and are silent in the export.");
+    res.warnings.addArray (rigWarnings);
 
     const auto start = (juce::int64) std::llround (s.startSec * s.sampleRate);
     const auto total = (juce::int64) std::llround ((s.endSec - s.startSec) * s.sampleRate);
@@ -114,6 +123,8 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
         const auto& job = jobs[ji];
         juce::AudioBuffer<float> out (2, (int) total);
         out.clear();
+        for (int ti : job.trackIndices)
+            if (auto& rg = graph->tracks[(size_t) ti].rig) rg->reset();   // every render starts from silence
 
         for (juce::int64 done = 0; done < total; done += block)
         {
@@ -124,6 +135,7 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
                 std::fill (l.begin(), l.begin() + n, 0.0f);
                 std::fill (r.begin(), r.begin() + n, 0.0f);
                 renderTrackClips (t, start + done, n, l.data(), r.data());
+                if (t.rig != nullptr) t.rig->process (l.data(), r.data(), n);
                 out.addFrom (0, (int) done, l.data(), n, t.gainL);
                 out.addFrom (1, (int) done, r.data(), n, t.gainR);
             }

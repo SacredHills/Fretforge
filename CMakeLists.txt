@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(FretForgeStudio VERSION 0.5.0 LANGUAGES C CXX)
+project(FretForgeStudio VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,6 +51,26 @@ if(FF_ENABLE_ASIO AND WIN32)
     list(APPEND FF_COMMON_DEFS JUCE_ASIO=1)
 endif()
 
+# ---------------------------------------------------------------- Neural Amp Modeler core (vendored, MIT)
+file(GLOB FF_NAM_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nam/NAM/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nam/NAM/wavenet/*.cpp")
+add_library(ff_nam STATIC ${FF_NAM_SOURCES})
+target_include_directories(ff_nam SYSTEM PUBLIC
+    third_party/nam
+    third_party/nam/nlohmann
+    third_party/eigen)
+target_compile_definitions(ff_nam PUBLIC NAM_SAMPLE_FLOAT EIGEN_MPL2_ONLY PRIVATE NAM_ENABLE_A2_FAST)
+if(WIN32)
+    target_compile_definitions(ff_nam PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+if(MSVC)
+    target_compile_options(ff_nam PRIVATE /W0 /bigobj /O2)
+else()
+    target_compile_options(ff_nam PRIVATE -w -O2)
+endif()
+set_target_properties(ff_nam PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # ---------------------------------------------------------------- core + engine (static, UI-free)
 add_library(ff_core STATIC)
 target_sources(ff_core PRIVATE
@@ -63,6 +83,10 @@ target_sources(ff_core PRIVATE
     src/core/GuitarPro.cpp
     src/core/MusicXml.cpp
     src/core/DrumModel.cpp
+    src/core/RigModel.cpp
+    src/engine/fx/NamModel.cpp
+    src/engine/fx/AmpRig.cpp
+    src/engine/fx/RigBank.cpp
     src/engine/TabSynth.cpp
     src/engine/DrumSynth.cpp
     src/engine/AudioCache.cpp
@@ -78,6 +102,7 @@ if(FF_ENABLE_ASIO AND WIN32)
 endif()
 target_link_libraries(ff_core
     PUBLIC
+        ff_nam
         juce::juce_core
         juce::juce_data_structures
         juce::juce_events
@@ -114,6 +139,7 @@ target_sources(FretForgeStudio PRIVATE
     src/app/pages/tabs/NotationGlyphs.cpp
     src/app/pages/tabs/ScorePdf.cpp
     src/app/pages/drums/DrumPage.cpp
+    src/app/pages/fx/EffectsPage.cpp
     src/app/pages/tabs/TabPage.cpp
     src/app/pages/StudioPage.cpp
     src/app/pages/ToolsPage.cpp
@@ -149,6 +175,7 @@ if(FF_BUILD_TESTS)
         tests/GuitarProTests.cpp
         tests/MusicXmlTests.cpp
         tests/DrumTests.cpp
+        tests/AmpRigTests.cpp
         tests/PerfProbe.cpp)
     target_link_libraries(ff_tests PRIVATE ff_core juce::juce_recommended_config_flags)
     target_compile_definitions(ff_tests PRIVATE FF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")

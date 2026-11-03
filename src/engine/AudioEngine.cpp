@@ -54,6 +54,19 @@ bool AudioEngine::setDrumSample (int piece, std::unique_ptr<juce::AudioBuffer<fl
     return true;
 }
 
+void AudioEngine::setPrepareHook (std::function<void (double, int)> hook)
+{
+    const juce::ScopedLock sl (hookLock);
+    prepareHook = std::move (hook);
+}
+
+void AudioEngine::waitForAudioCallback()
+{
+    const auto start = callbackCounter.load();
+    for (int i = 0; i < 200 && deviceRunning.load() && callbackCounter.load() - start < 2; ++i)
+        juce::Thread::sleep (2);
+}
+
 void AudioEngine::submitTabSequence (std::unique_ptr<TabSequence> seq)
 {
     delete pendingTab.exchange (seq.release());
@@ -221,11 +234,16 @@ void AudioEngine::prepare (double sr, int maximumBlockSize)
     scratchL.assign ((size_t) scratch, 0.0f);
     scratchR.assign ((size_t) scratch, 0.0f);
     silence.assign ((size_t) scratch, 0.0f);
+    liveL.assign ((size_t) scratch, 0.0f);
+    liveR.assign ((size_t) scratch, 0.0f);
     playing = false;
     practiceRunning = false;
     playingState = false;
     countingIn = false;
     countInRemaining = 0;
+
+    const juce::ScopedLock sl (hookLock);
+    if (prepareHook) prepareHook (sr, maximumBlockSize);
 }
 
 double AudioEngine::beatsAt (juce::int64 samplePos) const noexcept
@@ -282,6 +300,8 @@ void AudioEngine::renderSegment (const float* const* inputs, int numInputs, floa
             meter.rms.store (0.0f, std::memory_order_relaxed);
             continue;
         }
+        if (t.rig != nullptr)
+            t.rig->process (sL, sR, len);
         juce::FloatVectorOperations::multiply (sL, t.gainL, len);
         juce::FloatVectorOperations::multiply (sR, t.gainR, len);
         meter.update (sL, len);
@@ -444,6 +464,26 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         done += len;
     }
 
+    // ---- live amp rig ----
+    if (auto* lr = liveRig.load (std::memory_order_acquire); lr != nullptr && liveRigOn.load (std::memory_order_relaxed) && numBus > 0)
+    {
+        const int li = liveInput.load (std::memory_order_relaxed);
+        const int ch = li >= 0 ? li : ach;
+        if (ch >= 0 && ch < numInputs && inputs[ch] != nullptr)
+        {
+            for (int done = 0; done < numSamples;)
+            {
+                const int len = juce::jmin (numSamples - done, (int) liveL.size());
+                std::copy (inputs[ch] + done, inputs[ch] + done + len, liveL.data());
+                std::copy (inputs[ch] + done, inputs[ch] + done + len, liveR.data());
+                lr->process (liveL.data(), liveR.data(), len);
+                juce::FloatVectorOperations::add (bus[0] + done, liveL.data(), len);
+                juce::FloatVectorOperations::add ((numBus > 1 ? bus[1] : bus[0]) + done, liveR.data(), len);
+                done += len;
+            }
+        }
+    }
+
     recordAck.store (playing && recordWanted, std::memory_order_relaxed);
     countingIn.store (playing && countInRemaining > 0, std::memory_order_relaxed);
     playingState.store (playing, std::memory_order_relaxed);
@@ -476,6 +516,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         const double tempo = metronome.rampEnabled.load() ? metronome.effectiveBpm.load() : metronome.bpm.load();
         positionPpq.store ((double) pos / sr * tempo / 60.0, std::memory_order_relaxed);
     }
+    callbackCounter.fetch_add (1, std::memory_order_release);
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs, float* const* outputs,
@@ -489,10 +530,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, 
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
     prepare (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples());
+    deviceRunning = true;
 }
 
 void AudioEngine::audioDeviceStopped()
 {
+    deviceRunning = false;
     playing = false;
     playingState = false;
     recordAck = false;

@@ -4,6 +4,7 @@
 #include "engine/AudioCache.h"
 #include "engine/Recorder.h"
 #include "engine/Exporter.h"
+#include "engine/fx/RigBank.h"
 #include "core/Timeline.h"
 
 namespace ff
@@ -18,6 +19,8 @@ public:
     ~SessionController() override;
 
     AudioCache cache;
+    /** Amp rigs (track inserts and the live rig). */
+    fx::RigBank& rigs() { return *rigBank; }
 
     void rebind();                     // project replaced
     void deviceChanged() { triggerAsyncUpdate(); }
@@ -69,6 +72,7 @@ private:
     juce::PropertiesFile& settings;
     juce::ValueTree root;
 
+    std::unique_ptr<fx::RigBank> rigBank;
     DiskWriter diskWriter;
     std::map<juce::String, std::shared_ptr<TrackRecorder>> recorders;
     bool sessionActive = false;

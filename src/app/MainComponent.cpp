@@ -80,17 +80,15 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
         { "Rule-based exercise generator (23 techniques)", "Exercises as editable tab with playback", "Progressive tempo practice with thresholds",
           "Structured plans (fundamentals to death-metal picking)", "Practice tracking, streaks and speed records", "Progress charts and weak-area analysis" },
         "Available now: Tools > Metronome already includes a tempo trainer, random missing-beat rhythm training and a practice timer."));
-    auto* fx = milestonePages.add (new MilestonePage ("Effects & Amps", 5, "Guitar effects",
-        { "25 built-in effects (gate to limiter)", "Original amp models: clean to metal, bass", "Cabinet simulation and IR loader (.wav)",
-          "Drag-and-drop pedalboard, presets", "VST3 hosting (out-of-process scan), AU on macOS", "CLAP hosting when practical" }));
+    effectsPage = std::make_unique<EffectsPage> (*doc, host, *session, settings);
     auto* library = milestonePages.add (new MilestonePage ("Library", 7, "Songwriting & library",
         { "Riff library with tags (genre, tuning, BPM, key...)", "Chord progression library", "Example tabs, drum patterns, tutorials",
           "Preset & IR browser", "Song structure timeline", "Cross-project riff reuse" }));
 
     const juce::StringArray names { "Studio", "Mixer", "Guitar Tabs", "Drum Studio", "Training", "Effects & Amps", "Library", "Tools", "Settings" };
-    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), training, fx, library, toolsPage.get(), settingsPage.get() };
+    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), training, effectsPage.get(), library, toolsPage.get(), settingsPage.get() };
     nav.names = names;
-    nav.implemented = { true, true, true, true, false, false, false, true, true };
+    nav.implemented = { true, true, true, true, false, true, false, true, true };
     nav.onSelect = [this] (int i) { showSection (i); };
     addAndMakeVisible (nav);
     for (auto* p : pages)
@@ -112,6 +110,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
         mixerPage->rebind();
         tabPage->rebind();
         drumPage->rebind();
+        effectsPage->rebind();
         toolsPage->metronome.rebind();
     };
     transport->onRecord = [this] { session->toggleRecord(); };
@@ -120,6 +119,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
         toolsPage->tuner.refreshInputs();
         session->deviceChanged();
         studioPage->arrange.deviceChanged();
+        effectsPage->setActive (currentSection == 5);
         if (auto xml = host.createStateXml())
             settings.setValue ("audioDeviceState", xml.get());
         updateTitleAndStatus();
@@ -166,6 +166,7 @@ MainComponent::~MainComponent()
     pages.clear();
     tabPage.reset();
     drumPage.reset();
+    effectsPage.reset();
     milestonePages.clear();
     studioPage.reset();
     toolsPage.reset();
@@ -184,6 +185,7 @@ void MainComponent::showSection (int index)
     if (drumPage != nullptr && index != 3) drumPage->setActive (false);
     if (tabPage != nullptr && index == 2) tabPage->setActive (true);
     if (drumPage != nullptr && index == 3) drumPage->setActive (true);
+    if (effectsPage != nullptr) effectsPage->setActive (index == 5);
     currentSection = index;
     nav.selected = index;
     nav.repaint();

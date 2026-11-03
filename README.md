@@ -4,7 +4,26 @@ A cross-platform guitar workstation (DAW + tab editor + drum studio + training c
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technology evaluation, architecture, audio-engine design,
 project format, plugin system, milestone plan, risks and licensing.
 
-## Status: Milestone 4 — Drum Studio (working)
+## Status: Milestone 5 (part 1) — Effects & Amps with Neural Amp Modeler (working)
+
+| Area | What works now |
+|---|---|
+| Amp | **Neural Amp Modeler** built in (the real NAM engine, vendored): load any `.nam` capture of an amp or pedal (WaveNet, LSTM, ConvNet, A2/slimmable); runs at the capture's own sample rate with automatic resampling when the interface runs at another rate; optional loudness normalisation; or a built-in two-stage preamp when no capture is loaded |
+| Model browser | Point it at your folder of captures (e.g. downloads from TONE3000): searchable list, one click loads; metadata (gear, tone type, architecture, rate, loudness) shown |
+| Cabinet | Impulse-response loader (.wav/.aif/.flac, mono or stereo, any rate; trimmed and normalised) or a built-in speaker filter; low/high cut |
+| Pedals | Noise gate (hysteresis), compressor, overdrive (2x oversampled), 4-band EQ, stereo chorus, delay (tone-controlled repeats), reverb; input and output level |
+| Chain | Drag blocks to reorder them, click a lamp to switch a block on/off; per-block help |
+| Live rig | Play through the rig with no track and no transport (practice mode), choose the input; always starts switched off |
+| Track rigs | Any Studio track can have its own rig: it shapes the track's clips and its live monitoring, recordings stay dry so you can change the amp afterwards (re-amping); exports render the rigs offline |
+| Presets | Five built-in presets (pedal and tone settings, they keep your loaded capture/IR) plus your own presets saved as `.ffrig` files (they include the model and IR paths); undo for track rigs |
+| Status | Per-rig CPU load, latency added by resampling, gate state, in/out meters |
+
+**Not yet in Milestone 5:** VST3 / Audio Unit plugin hosting, more built-in effects (wah, phaser, flanger, tremolo,
+pitch shifter, octaver), stereo IRs kept stereo, copying `.nam` / IR files into the project bundle on Save As (they are
+referenced by absolute path for now), tempo-synced delay. No amp captures ship with the app: each capture has its own
+licence, so you load your own.
+
+## Milestone 4 — Drum Studio (working)
 
 | Area | What works now |
 |---|---|
@@ -62,7 +81,7 @@ Ctrl+E export, Ctrl+D duplicate, Ctrl+C/X/V, Ctrl+A, Del, = / - zoom, F fit.
 tempo/meter changes along the timeline, track folders/groups, automation lanes, MIDI and instrument tracks, MP3 export
 (needs LAME), and disk streaming (audio is loaded into memory; fine for songs, not for hour-long sessions).
 
-Sections without working features (Training, Effects & Amps, Library) still show a labelled
+Sections without working features (Training, Library) still show a labelled
 "Not yet implemented — Milestone N" page with their planned scope and no controls.
 
 ## Building

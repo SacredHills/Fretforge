@@ -12,6 +12,19 @@ SessionController::SessionController (EngineHost& h, ProjectDocument& d, juce::P
         if (onArrangementChanged) onArrangementChanged();
     };
     cache.onError = [this] (const juce::String& e) { if (onError) onError ("Audio file problem", e); };
+    rigBank = std::make_unique<fx::RigBank> (host.engine);
+    if (auto xml = settings.getXmlValue ("liveRig"))
+    {
+        auto t = juce::ValueTree::fromXml (*xml);
+        t.setProperty (rig::ids::enabled, false, nullptr);   // live monitoring always starts off (no surprise feedback)
+        rigBank->setLiveTree (t);
+    }
+    rigBank->onRigsChanged = [this] { triggerAsyncUpdate(); };
+    rigBank->onLiveChanged = [this] {
+        auto t = rigBank->liveTree().createCopy();
+        t.setProperty (rig::ids::enabled, false, nullptr);
+        if (auto xml = t.createXml()) settings.setValue ("liveRig", xml.get());
+    };
     rebind();
     startTimerHz (30);
 }
@@ -36,6 +49,7 @@ void SessionController::rebind()
     root.removeListener (this);
     root = doc.tree();
     root.addListener (this);
+    rigBank->rebind (root);
     selectedTracks.clear();
     selectionAnchor = {};
     if (auto first = doc.tracks().getChild (0); first.isValid())
@@ -138,6 +152,7 @@ void SessionController::rebuildGraphNow()
     GraphBuildOptions opt;
     opt.sampleRate = host.engine.getSampleRate() > 0 ? host.engine.getSampleRate() : 48000.0;
     opt.recorders = &recorders;
+    opt.rigFor = [this] (const juce::ValueTree& t) { return rigBank->rigForTrack (t[ids::id].toString()); };
     host.engine.submitGraph (buildPlaybackGraph (doc.tracks(), doc.mediaBundle(), cache, opt));
 }
 

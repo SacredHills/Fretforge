@@ -1,0 +1,65 @@
+#pragma once
+#include <cmath>
+#include <juce_core/juce_core.h>
+
+namespace ff::fx
+{
+/** RBJ-cookbook biquad. Coefficients are computed in place (no allocation), so it can be retuned on the audio thread. */
+struct Biquad
+{
+    enum Type { lowPass, highPass, peak, lowShelf, highShelf };
+
+    float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+    float z1 = 0, z2 = 0;
+
+    void reset() noexcept { z1 = z2 = 0; }
+
+    void set (Type type, double sr, double freq, double q, double gainDb = 0.0) noexcept
+    {
+        freq = juce::jlimit (1.0, sr * 0.49, freq);
+        q = juce::jmax (0.05, q);
+        const double A = std::pow (10.0, gainDb / 40.0);
+        const double w = 2.0 * juce::MathConstants<double>::pi * freq / sr;
+        const double cw = std::cos (w), sw = std::sin (w);
+        const double alpha = sw / (2.0 * q);
+        double B0 = 1, B1 = 0, B2 = 0, A0 = 1, A1 = 0, A2 = 0;
+        switch (type)
+        {
+            case lowPass:  B0 = (1 - cw) / 2; B1 = 1 - cw; B2 = (1 - cw) / 2; A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha; break;
+            case highPass: B0 = (1 + cw) / 2; B1 = -(1 + cw); B2 = (1 + cw) / 2; A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha; break;
+            case peak:     B0 = 1 + alpha * A; B1 = -2 * cw; B2 = 1 - alpha * A; A0 = 1 + alpha / A; A1 = -2 * cw; A2 = 1 - alpha / A; break;
+            case lowShelf:
+            {
+                const double s = 2 * std::sqrt (A) * alpha;
+                B0 = A * ((A + 1) - (A - 1) * cw + s); B1 = 2 * A * ((A - 1) - (A + 1) * cw); B2 = A * ((A + 1) - (A - 1) * cw - s);
+                A0 = (A + 1) + (A - 1) * cw + s;       A1 = -2 * ((A - 1) + (A + 1) * cw);    A2 = (A + 1) + (A - 1) * cw - s;
+                break;
+            }
+            case highShelf:
+            {
+                const double s = 2 * std::sqrt (A) * alpha;
+                B0 = A * ((A + 1) + (A - 1) * cw + s); B1 = -2 * A * ((A - 1) + (A + 1) * cw); B2 = A * ((A + 1) + (A - 1) * cw - s);
+                A0 = (A + 1) - (A - 1) * cw + s;       A1 = 2 * ((A - 1) - (A + 1) * cw);      A2 = (A + 1) - (A - 1) * cw - s;
+                break;
+            }
+        }
+        b0 = (float) (B0 / A0); b1 = (float) (B1 / A0); b2 = (float) (B2 / A0);
+        a1 = (float) (A1 / A0); a2 = (float) (A2 / A0);
+    }
+
+    inline float process (float x) noexcept
+    {
+        const float y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+
+    void process (float* d, int n) noexcept
+    {
+        for (int i = 0; i < n; ++i) d[i] = process (d[i]);
+        if (std::abs (z1) < 1.0e-20f) z1 = 0;   // flush denormals left by silence
+        if (std::abs (z2) < 1.0e-20f) z2 = 0;
+    }
+};
+} // namespace ff::fx

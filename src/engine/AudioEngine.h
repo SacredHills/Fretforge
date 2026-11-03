@@ -5,6 +5,7 @@
 #include "core/Timeline.h"
 #include "PlaybackGraph.h"
 #include "TabSynth.h"
+#include "fx/AmpRig.h"
 #include <array>
 #include <atomic>
 
@@ -103,6 +104,16 @@ public:
     /** Starts playback after `countInSamples` of metronome count-in. */
     void playWithCountIn (juce::int64 countInSamples) noexcept { countInRequest = juce::jmax ((juce::int64) 0, countInSamples); playRequested = true; }
 
+    // ---- live amp rig (Effects & Amps: input -> rig -> output, whatever the transport does) ----
+    std::atomic<fx::AmpRig*> liveRig { nullptr };     // owned by the RigBank, which outlives its use here
+    std::atomic<bool> liveRigOn { false };
+    std::atomic<int> liveInput { -1 };                 // input channel, -1 = the analysis (tuner) input
+    /** Called from prepare() (device start, no audio callback running) so rig owners can re-prepare. */
+    void setPrepareHook (std::function<void (double, int)> hook);
+    /** Message thread: returns once the audio thread has finished at least one callback after this call
+        (or at once if no device is running), so a pointer it read before can no longer be in use. */
+    void waitForAudioCallback();
+
     // ---- driving ----
     void prepare (double sampleRate, int maximumBlockSize);
     void process (const float* const* inputs, int numInputs, float* const* outputs, int numOutputs, int numSamples) noexcept;
@@ -116,6 +127,8 @@ public:
     void audioDeviceError (const juce::String& message) override;
 
     std::atomic<juce::uint32> deviceErrorCounter { 0 };
+    std::atomic<juce::uint32> callbackCounter { 0 };
+    std::atomic<bool> deviceRunning { false };
 
 private:
     std::atomic<bool> playRequested { false }, recordRequested { false }, recordAck { false };
@@ -130,7 +143,9 @@ private:
     bool playing = false, practiceRunning = false, wasRecording = false;
     juce::int64 pos = 0, countInRemaining = 0;
     juce::SmoothedValue<float> smoothedGain;
-    std::vector<float> scratchL, scratchR, silence;
+    std::vector<float> scratchL, scratchR, silence, liveL, liveR;
+    juce::CriticalSection hookLock;
+    std::function<void (double, int)> prepareHook;
     PlaybackGraph* graph = nullptr;
 
     std::atomic<PlaybackGraph*> pendingGraph { nullptr };

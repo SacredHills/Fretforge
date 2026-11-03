@@ -101,7 +101,7 @@ Extension points for later: content packs (drum kits, IR packs, lesson plans as 
 | 2 | Recording studio: tracks, recording, playback, waveforms, timeline, editing, mixer, export | **Done** (comping lanes, time-stretch, tempo map, automation still to come) |
 | 3 | Tab system: editor, notation, playback, MIDI, Guitar Pro import, PDF | **Done**: editor, techniques, synth playback, standard notation, Guitar Pro 3-7 and MusicXML import, MusicXML/MIDI/PDF export, tempo/key changes, chords, lyrics, MIDI-keyboard entry. Open: grace notes, multiple voices, repeat signs kept as signs |
 | 4 | Drum studio: sequencer, piano roll, drum instruments, generator, arrangement | **Done**: grid sequencer, velocity, swing, humanize, 17-style generator, song arrangement, synthesized and sample kits, MIDI song import/export, Guitar Pro drum import, tab play-along, render to audio. Open: piano roll, articulations, velocity layers |
-| 5 | Effects & amps: built-ins, amp/cab sim, IRs, plugin hosting | Planned |
+| 5 | Effects & amps: built-ins, amp/cab sim, IRs, plugin hosting | **Part 1 done**: Neural Amp Modeler amp, IR cabinet, gate/comp/drive/EQ/chorus/delay/reverb, reorderable chain, live rig and per-track rigs, presets, offline export. Open: VST3/AU hosting, more effects |
 | 6 | Training centre: exercise generator, lessons, progressive practice, stats | Planned |
 | 7 | Theory, songwriting, analysis, assistance, mastering | Planned |
 | 8 | Release: installers, optimisation, docs, onboarding | Packaging scaffolding started (CPack) |
@@ -134,7 +134,11 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
   Guitar Pro is a trademark of Arobas Music; FretForge only reads the file format.
 - **SoundFont playback (later)**: FluidSynth (LGPL-2.1, dynamic linking) or a small built-in SF2 player; bundled instruments must be redistributable (e.g. GeneralUser GS licence or a self-made CC0 set).
 - **CLAP**: MIT.
-- Amp models are original and named by character ("Clean", "British Crunch", "Modern High Gain") — no trademarks.
+- **Neural Amp Modeler core** (Steven Atkinson, MIT) is vendored unmodified in `third_party/nam`, with the nlohmann/json
+  header it ships (MIT) and the Eigen 3.4 headers (MPL-2.0, built with `EIGEN_MPL2_ONLY`); see `third_party/README.md`.
+  No amp captures are bundled — `.nam` files are the users' own (each capture has its own licence). The test networks
+  in `tests/data/nam` come from NeuralAmpModelerCore's own examples (MIT).
+- The built-in amp is original and unnamed ("Built-in amp") — no trademarks.
 
 ## 9. Milestone 2 design notes
 
@@ -219,3 +223,30 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
   lock-free FIFO; the audio thread stops that piece's voices, swaps the pointer and returns the old buffer through a
   second FIFO to be freed on the message thread — no locks or allocation on the audio thread.
 - **Play-along:** `addDrumSong` adds the drum song to the tab `TabSequence`, timed through the score's tempo map.
+
+## 14. Milestone 5 design notes (part 1)
+
+- **Model:** a `RIG` node (on a `TRACK`, or standalone for the live rig kept in the app settings) stores one float per
+  parameter (defaults apply to missing properties), the block order as a list of ids, and the model / IR paths.
+- **`fx::AmpRig`** runs gate, compressor, overdrive, amp, EQ, cabinet, chorus, delay and reverb in the stored order.
+  Blocks before the first stereo block (chorus/delay/reverb) are mono; a mono block after a stereo one sums to mono.
+  Parameters are atomics; the order is packed into one `atomic<uint64>` (4 bits per slot). Filters use an in-place RBJ
+  biquad so retuning never allocates; gains are smoothed.
+- **`fx::NamModel`** wraps `nam::DSP`. The network always runs at its training rate (`Reset(modelRate, 4096)`); a
+  streaming Lagrange resampler converts in and out when the device runs at another rate (a 4th-order anti-alias
+  low-pass when decimating, 16 primed model samples so the output side never runs dry; reported latency is measured
+  exactly in the tests). NAM registers its architectures from static objects, which a static library would drop, so
+  `NamModel` references every factory (and registers them itself if needed).
+- **Hand-over:** models are loaded and prepared on a background thread (`RigBank`), handed to the audio thread through
+  an atomic pointer, and replaced models travel back through a lock-free FIFO to be freed on the message thread. A
+  model prepared for another device rate is never run: the rig flags it and the bank reloads it. IRs go through
+  `juce::dsp::Convolution`'s wait-free loader (shared message queue).
+- **Engine:** `PlayTrack::rig` (a `shared_ptr`, so a rig removed from the project lives until the graph that uses it
+  is freed on the message thread) is applied after clips and monitoring, before fader and pan. The live rig is a raw
+  pointer the bank keeps alive; on teardown the bank clears it and waits for one audio callback. `AudioEngine::prepare`
+  calls a hook so the bank re-prepares every rig when the device restarts.
+- **Export** builds its own rigs with `makeOfflineRig` (model and IR loaded synchronously) and resets them before
+  each render, so mixes and stems start from silence.
+- **Tests** check that the wrapper is bit-identical to NAM itself, the resampler's latency and quality at 32/44.1/96 kHz,
+  hand-over and garbage collection, the gate, delay timing, IR alignment, block order, the engine insert and live rig,
+  export, the bank following the tree, and (category `perf`) the real-time factor of a standard WaveNet.
