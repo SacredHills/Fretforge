@@ -1,0 +1,139 @@
+# Builds FretForge Studio for macOS, Windows and Linux on every push and on demand.
+# Download the results from the run's "Artifacts" section on GitHub (Actions tab).
+name: Build
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+          - name: Linux
+            os: ubuntu-24.04
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache JUCE download
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-8.0.4-${{ matrix.os }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libgl1-mesa-dev
+
+      - name: Configure (macOS, universal binary)
+        if: runner.os == 'macOS'
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -A x64
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Unit tests
+        shell: bash
+        run: |
+          t=$(find build -type f \( -name ff_tests -o -name ff_tests.exe \) -path "*Release*" | head -1)
+          echo "Running $t"
+          "$t"
+
+      - name: Package
+        shell: bash
+        run: |
+          cd build
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            codesign --force --deep --sign - "FretForgeStudio_artefacts/Release/FretForge Studio.app"
+            cpack -C Release -G DragNDrop
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            cpack -C Release -G ZIP
+          else
+            cpack -G TGZ
+          fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: FretForgeStudio-${{ matrix.name }}
+          path: |
+            build/FretForgeStudio-*.dmg
+            build/FretForgeStudio-*.zip
+            build/FretForgeStudio-*.tar.gz
+          if-no-files-found: error
+
+  # Collects the three platform builds into a single zip:
+  #   FretForgeStudio-<version>-all-platforms.zip
+  #     macOS/   FretForgeStudio-x.y.z-Darwin.dmg
+  #     Windows/ FretForgeStudio-x.y.z-win64.zip
+  #     Linux/   FretForgeStudio-x.y.z-Linux.tar.gz
+  # Pushing a tag such as v0.3.0 also publishes that zip as a GitHub Release.
+  bundle:
+    name: All platforms (one zip)
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the three builds
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Make one zip
+        id: zip
+        run: |
+          version=$(grep -oP 'project\(FretForgeStudio VERSION \K[0-9.]+' CMakeLists.txt)
+          mkdir -p out/FretForgeStudio
+          mv dist/FretForgeStudio-macOS   out/FretForgeStudio/macOS
+          mv dist/FretForgeStudio-Windows out/FretForgeStudio/Windows
+          mv dist/FretForgeStudio-Linux   out/FretForgeStudio/Linux
+          cat > out/FretForgeStudio/README.txt <<'TXT'
+          FretForge Studio builds
+          macOS:   open the .dmg and drag the app to Applications. First launch: right-click > Open > Open.
+          Windows: unzip and run "bin\FretForge Studio.exe". If SmartScreen warns: More info > Run anyway.
+          Linux:   extract the .tar.gz and run "bin/FretForge Studio".
+                   Needs ALSA (and JACK or PipeWire-JACK for low latency), FreeType, Fontconfig and X11 libraries.
+          TXT
+          name="FretForgeStudio-${version}-all-platforms.zip"
+          (cd out && zip -r "../$name" FretForgeStudio)
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          unzip -l "$name"
+
+      - name: Upload the combined zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: FretForgeStudio-AllPlatforms
+          path: ${{ steps.zip.outputs.name }}
+          compression-level: 0   # already a zip
+
+      - name: Publish a release for version tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" "${{ steps.zip.outputs.name }}" --title "FretForge Studio ${GITHUB_REF_NAME}" --generate-notes

@@ -47,6 +47,13 @@ Sections without working features (Guitar Tabs, Drum Studio, Training, Effects &
 
 ## Building
 
+**macOS:** install the Xcode Command Line Tools (`xcode-select --install`) and CMake (`brew install cmake`), then run
+`./build-mac.sh` in Terminal from the project folder. It builds a universal app (Apple Silicon + Intel), runs the tests
+and makes a `.dmg` in `build-mac/`. Options: `clean`, `native`.
+
+**GitHub Actions:** `.github/workflows/build.yml` builds macOS, Windows and Linux on every push; download the results from
+the run's Artifacts section.
+
 **Windows, one click:** install Visual Studio 2022+ ("Desktop development with C++") and Git, then double-click
 `build-windows.bat`. It finds the compiler, downloads JUCE, builds, runs the tests, makes a ZIP (and a setup .exe if
 NSIS is installed) and offers to launch the app. Options: `clean`, `debug`, `asio C:\path\to\asiosdk`.
