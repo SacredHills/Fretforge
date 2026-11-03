@@ -613,6 +613,10 @@ struct AmpRigTests : juce::UnitTest
             e.prepare (44100.0, 128);                         // device restart: every rig follows
             expect (rig->isPreparedFor (44100.0));
             expect (bank.liveRig().isPreparedFor (44100.0));
+            auto saved = rg::makeDefault();
+            rg::setPlugin (saved, 1, "<PLUGIN name=\"P\"/>", "P");
+            bank.setLiveTree (saved);                          // settings at start-up: plugins come along
+            expect (rg::pluginNode (bank.liveTree(), 1).isValid());
             auto live = bank.liveTree();
             live.setProperty (rg::ids::enabled, true, nullptr);
             expect (e.liveRigOn.load());
@@ -661,3 +665,138 @@ static RigModelTests rigModelTests;
 static NamModelTests namModelTests;
 static AmpRigTests ampRigTests;
 static AmpRigPerf ampRigPerf;
+
+// ---------------------------------------------------------------------------------------------- plugins
+
+namespace
+{
+/** Plugin host for tests: creates instances synchronously (tests run on the message thread). */
+struct TestPluginHost : fx::PluginHost
+{
+    juce::AudioPluginFormatManager formats;
+    TestPluginHost() { juce::addDefaultFormatsToManager (formats); }
+    void createAsync (const juce::String& xml, double sr, int bs,
+                      std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> done) override
+    {
+        juce::String err;
+        auto p = createBlocking (xml, sr, bs, err);
+        done (std::move (p), err);
+    }
+    std::unique_ptr<juce::AudioPluginInstance> createBlocking (const juce::String& xml, double sr, int bs, juce::String& err) override
+    {
+        juce::PluginDescription d;
+        if (auto x = juce::parseXML (xml)) d.loadFromXml (*x);
+        return formats.createPluginInstance (d, sr, bs, err);
+    }
+};
+}
+
+struct PluginSlotTests : juce::UnitTest
+{
+    PluginSlotTests() : juce::UnitTest ("Plugin slots", "fx") {}
+
+    void runTest() override
+    {
+        beginTest ("model: slots, order, labels, presets");
+        {
+            auto r = rg::makeDefault();
+            const auto o = rg::getOrder (r);   // an old order string: plugin blocks are appended
+            expectEquals (o[9], (int) rg::plug1);
+            expectEquals (o[12], (int) rg::plug4);
+            expect (rg::unpackOrder (rg::packOrder (o)) == o);
+            expectEquals (rg::freePluginSlot (r), 0);
+            rg::setPlugin (r, 0, "<PLUGIN name=\"X\"/>", "Big Verb");
+            rg::setPlugin (r, 2, "<PLUGIN name=\"Y\"/>", "Tape");
+            expectEquals (rg::freePluginSlot (r), 1);
+            expectEquals (rg::blockLabel (r, rg::plug1), juce::String ("Big Verb"));
+            expectEquals (rg::blockLabel (r, rg::plug2), juce::String ("Plugin 2"));
+            expect (rg::isToggle (rg::plug3On));
+            rg::pluginNode (r, 0).setProperty (rg::ids::state, "c3RhdGU=", nullptr);
+            const auto json = juce::JSON::toString (rg::toPreset (r, "P"));
+            auto b = rg::makeDefault();
+            rg::setPlugin (b, 3, "<PLUGIN/>", "Old");
+            rg::applyPreset (b, juce::JSON::parse (json));
+            expect (! rg::pluginNode (b, 3).isValid(), "the preset's plugins replace the rig's");
+            expectEquals (rg::pluginNode (b, 0)[rg::ids::state].toString(), juce::String ("c3RhdGU="));
+            expectEquals (rg::pluginNode (b, 2)[rg::ids::name].toString(), juce::String ("Tape"));
+            for (auto& f : rg::factoryPresets())   // built-in presets keep the plugins
+            {
+                rg::applyPreset (b, f.json);
+                expect (rg::pluginNode (b, 0).isValid());
+            }
+            rg::removePlugin (b, 0);
+            expect (! rg::pluginNode (b, 0).isValid());
+        }
+
+        beginTest ("offline rig without a plugin host reports the plugin");
+        {
+            auto r = rg::makeDefault();
+            rg::setPlugin (r, 1, "<PLUGIN name=\"Missing\"/>", "Missing");
+            juce::StringArray warnings;
+            auto rig = fx::makeOfflineRig (r, 48000.0, 512, warnings);
+            expect (warnings.joinIntoString (" ").contains ("Missing"));
+            auto out = runRig (*rig, sine (200.0, 48000.0, 4800), 512);
+            expect (allFinite (out));
+        }
+
+        const auto path = juce::SystemStats::getEnvironmentVariable ("FF_TEST_VST3", {});
+        if (path.isEmpty())
+        {
+            logMessage ("  (set FF_TEST_VST3 to the FF Test Gain .vst3 bundle to test real plugin hosting)");
+            return;
+        }
+
+        beginTest ("VST3: scan, load, process, bypass, state, offline");
+        {
+            TestPluginHost host;
+            fx::setPluginHost (&host);
+            juce::OwnedArray<juce::PluginDescription> found;
+            for (auto* f : host.formats.getFormats())
+                if (f->getName() == "VST3") f->findAllTypesForFile (found, path);
+            expectEquals (found.size(), 1);
+            if (found.isEmpty()) { fx::setPluginHost (nullptr); return; }
+            const auto desc = found[0]->createXml()->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());
+
+            juce::String err;
+            auto inst = host.createBlocking (desc, 48000.0, 512, err);
+            expect (inst != nullptr, err);
+            fx::preparePlugin (*inst, 48000.0, 512);
+            fx::AmpRig r;
+            r.prepare (48000.0, 512);
+            allOff (r);
+            r.setParam (rg::plug1On, 1);
+            std::shared_ptr<juce::AudioPluginInstance> shared (inst.release());
+            r.setPlugin (0, shared);
+            auto out = runRig (r, sine (300.0, 48000.0, 4800, 0.8f), 256);
+            expectWithinAbsoluteError (peakOf (out, 2400), 0.4f, 0.003f);   // default gain 0.5
+
+            shared->getParameters()[0]->setValueNotifyingHost (0.75f);   // normalised 0.75 of 0..2 -> gain 1.5
+            out = runRig (r, sine (300.0, 48000.0, 4800, 0.4f), 256);
+            expectWithinAbsoluteError (peakOf (out, 2400), 0.6f, 0.01f);
+            const auto state = fx::capturePluginState (*shared);
+            expect (state.isNotEmpty());
+
+            r.setParam (rg::plug1On, 0);   // bypassed
+            out = runRig (r, sine (300.0, 48000.0, 4800, 0.4f), 256);
+            expectWithinAbsoluteError (peakOf (out, 2400), 0.4f, 0.003f);
+
+            auto old = r.setPlugin (0, nullptr);
+            expect (old == shared);
+
+            // the project node carries the state into an offline (export) rig
+            auto tree = rg::makeDefault();
+            for (int b = 0; b < rg::numBlocks; ++b) rg::set (tree, rg::switchFor (b), 0.0f);
+            rg::setPlugin (tree, 0, desc, "FF Test Gain");
+            rg::pluginNode (tree, 0).setProperty (rg::ids::state, state, nullptr);
+            juce::StringArray warnings;
+            auto offline = fx::makeOfflineRig (tree, 48000.0, 512, warnings);
+            expect (warnings.isEmpty(), warnings.joinIntoString ("; "));
+            out = runRig (*offline, sine (300.0, 48000.0, 4800, 0.4f), 512);
+            expectWithinAbsoluteError (peakOf (out, 2400), 0.6f, 0.01f);
+            offline.reset();
+            fx::setPluginHost (nullptr);
+        }
+    }
+};
+
+static PluginSlotTests pluginSlotTests;

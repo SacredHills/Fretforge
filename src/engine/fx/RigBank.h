@@ -46,12 +46,20 @@ public:
         juce::String modelError, irError;
         juce::String irName;
         double irSeconds = 0.0;
+        struct Plugin { juce::String desc, name, error; bool loading = false, loaded = false; int latency = 0; };
+        std::array<Plugin, rig::numPluginSlots> plugins;
     };
     /** Load status for a RIG node (a track's or the live one). */
     Status statusFor (const juce::ValueTree& rigTree) const;
     /** The running rig for a RIG node (nullptr if none). */
     AmpRig* rigFor (const juce::ValueTree& rigTree) const;
 
+    /** The running plugin in a slot of a RIG node (for its editor window), nullptr if none. */
+    std::shared_ptr<juce::AudioPluginInstance> pluginFor (const juce::ValueTree& rigTree, int slot) const;
+    /** Copies every plugin's current state into its PLUGIN node (also done every two seconds). */
+    void captureAllPluginStates();
+
+    std::function<void (juce::AudioPluginInstance*)> onPluginRemoved;   // close its editor window before it is deleted
     std::function<void()> onRigsChanged;    // a track rig was created or removed (rebuild the playback graph)
     std::function<void()> onStatusChanged;  // a model / IR finished loading or failed
     std::function<void()> onLiveChanged;    // the live rig's settings changed (persist them)
@@ -63,6 +71,7 @@ private:
         juce::ValueTree tree;
         Status status;
         int generation = 0;
+        std::array<int, rig::numPluginSlots> pluginGeneration {};
     };
 
     AudioEngine& engine;
@@ -80,6 +89,12 @@ private:
     void syncEntry (Entry&);
     void requestModel (Entry&, bool force);
     void requestIr (Entry&, bool force);
+    void requestPlugin (Entry&, int slot);
+    void releasePlugin (std::shared_ptr<juce::AudioPluginInstance>);
+    void releaseEntryPlugins (Entry&);
+    Entry* entryByKey (const juce::String& key);
+    juce::String keyOf (const Entry&) const;
+    int ticks = 0;
     Entry* entryFor (const juce::ValueTree& rigTree);
     const Entry* entryFor (const juce::ValueTree& rigTree) const;
     std::shared_ptr<AmpRig> makeRig();

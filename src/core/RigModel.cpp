@@ -46,11 +46,17 @@ namespace
         { "reverbMix",     "Mix",          0.0f,   1.0f,   0.2f,  "%",  reverb, false, 0.5f },
         { "namCalibrate",  "Calibrate",    0.0f,   1.0f,   0.0f,  "",   amp,    false, 0.5f },
         { "calLevel",      "Interface",  -20.0f,  30.0f,  12.0f,  "dBu", amp,   false, 5.0f },
+        { "plug1On",       "Plugin 1",     0.0f,   1.0f,   1.0f,  "",   plug1,  true,  0.5f },
+        { "plug2On",       "Plugin 2",     0.0f,   1.0f,   1.0f,  "",   plug2,  true,  0.5f },
+        { "plug3On",       "Plugin 3",     0.0f,   1.0f,   1.0f,  "",   plug3,  true,  0.5f },
+        { "plug4On",       "Plugin 4",     0.0f,   1.0f,   1.0f,  "",   plug4,  true,  0.5f },
     };
 
-    const char* blockIds[numBlocks]   = { "gate", "comp", "drive", "amp", "eq", "cab", "chorus", "delay", "reverb" };
-    const char* blockNames[numBlocks] = { "Noise gate", "Compressor", "Overdrive", "Amp", "EQ", "Cabinet", "Chorus", "Delay", "Reverb" };
-    const int switches[numBlocks]     = { gateOn, compOn, driveOn, ampOn, eqOn, cabOn, chorusOn, delayOn, reverbOn };
+    const char* blockIds[numBlocks]   = { "gate", "comp", "drive", "amp", "eq", "cab", "chorus", "delay", "reverb", "plug1", "plug2", "plug3", "plug4" };
+    const char* blockNames[numBlocks] = { "Noise gate", "Compressor", "Overdrive", "Amp", "EQ", "Cabinet", "Chorus", "Delay", "Reverb",
+                                          "Plugin 1", "Plugin 2", "Plugin 3", "Plugin 4" };
+    const int switches[numBlocks]     = { gateOn, compOn, driveOn, ampOn, eqOn, cabOn, chorusOn, delayOn, reverbOn, plug1On, plug2On, plug3On, plug4On };
+    static_assert (numBlocks <= 16, "the block order is packed 4 bits per block");
 
     juce::Identifier pid (int p) { return juce::Identifier (params[p].id); }
 }
@@ -175,6 +181,46 @@ Order unpackOrder (juce::uint64 v) noexcept
     return o;
 }
 
+juce::ValueTree pluginNode (const juce::ValueTree& rig, int slot)
+{
+    for (auto c : rig)
+        if (c.hasType (ids::PLUGIN) && (int) c[ids::slot] == slot) return c;
+    return {};
+}
+
+void setPlugin (juce::ValueTree rig, int slot, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* um)
+{
+    if (! juce::isPositiveAndBelow (slot, numPluginSlots)) return;
+    if (auto old = pluginNode (rig, slot); old.isValid()) rig.removeChild (old, um);
+    juce::ValueTree p (ids::PLUGIN);
+    p.setProperty (ids::slot, slot, nullptr);
+    p.setProperty (ids::desc, descXml, nullptr);
+    p.setProperty (ids::name, displayName, nullptr);
+    p.setProperty (ids::state, juce::String(), nullptr);
+    rig.appendChild (p, um);
+    set (rig, switchFor (plug1 + slot), 1.0f, um);
+}
+
+void removePlugin (juce::ValueTree rig, int slot, juce::UndoManager* um)
+{
+    if (auto old = pluginNode (rig, slot); old.isValid()) rig.removeChild (old, um);
+}
+
+int freePluginSlot (const juce::ValueTree& rig)
+{
+    for (int s = 0; s < numPluginSlots; ++s)
+        if (! pluginNode (rig, s).isValid()) return s;
+    return -1;
+}
+
+juce::String blockLabel (const juce::ValueTree& rig, int block)
+{
+    if (isPluginBlock (block))
+        if (auto p = pluginNode (rig, pluginSlotOf (block)); p.isValid() && p[ids::name].toString().isNotEmpty())
+            return p[ids::name].toString();
+    return blockName (block);
+}
+
 juce::var toPreset (const juce::ValueTree& rig, const juce::String& presetName)
 {
     auto* o = new juce::DynamicObject();
@@ -188,6 +234,18 @@ juce::var toPreset (const juce::ValueTree& rig, const juce::String& presetName)
     auto* p = new juce::DynamicObject();
     for (int i = 0; i < numParams; ++i) p->setProperty (params[i].id, (double) get (rig, i));
     o->setProperty ("params", juce::var (p));
+    juce::Array<juce::var> plugins;
+    for (auto c : rig)
+        if (c.hasType (ids::PLUGIN))
+        {
+            auto* po = new juce::DynamicObject();
+            po->setProperty ("slot", (int) c[ids::slot]);
+            po->setProperty ("desc", c[ids::desc].toString());
+            po->setProperty ("name", c[ids::name].toString());
+            po->setProperty ("state", c[ids::state].toString());
+            plugins.add (juce::var (po));
+        }
+    if (! plugins.isEmpty()) o->setProperty ("plugins", plugins);
     return juce::var (o);
 }
 
@@ -211,6 +269,24 @@ juce::StringArray applyPreset (juce::ValueTree rig, const juce::var& preset, juc
         if (path.isNotEmpty() && ! exists) missing.add (juce::File (path).getFileName());
         rig.setProperty (juce::String (key) == "namFile" ? ids::namFile : ids::irFile, exists ? path : juce::String(), um);
     }
+    if (preset.hasProperty ("plugins"))   // user presets carry their plugins (built-in ones leave them alone)
+    {
+        for (int sl = 0; sl < numPluginSlots; ++sl) removePlugin (rig, sl, um);
+        if (auto* arr = preset["plugins"].getArray())
+            for (auto& pv : *arr)
+            {
+                const int sl = (int) pv["slot"];
+                if (! juce::isPositiveAndBelow (sl, numPluginSlots)) continue;
+                juce::ValueTree p (ids::PLUGIN);
+                p.setProperty (ids::slot, sl, nullptr);
+                p.setProperty (ids::desc, pv["desc"].toString(), nullptr);
+                p.setProperty (ids::name, pv["name"].toString(), nullptr);
+                p.setProperty (ids::state, pv["state"].toString(), nullptr);
+                rig.appendChild (p, um);
+            }
+    }
+    else if (preset.hasProperty ("namFile"))   // a user preset saved before plugins existed: it had none
+        for (int sl = 0; sl < numPluginSlots; ++sl) removePlugin (rig, sl, um);
     rig.setProperty (ids::rigName, preset["name"].toString(), um);
     return missing;
 }

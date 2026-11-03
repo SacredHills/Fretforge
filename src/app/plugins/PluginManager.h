@@ -1,0 +1,65 @@
+#pragma once
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_gui_extra/juce_gui_extra.h>
+#include "engine/fx/PluginHost.h"
+#include <map>
+
+namespace ff
+{
+/** Command-line id that turns an instance of the app into a plugin-scanning child process. */
+inline constexpr const char* pluginScannerProcessId = "fretforge-plugin-scanner";
+/** "VST3", or "VST3 / AU" on macOS. */
+inline const char* pluginFormatsLabel()
+{
+   #if JUCE_MAC
+    return "VST3 / AU";
+   #else
+    return "VST3";
+   #endif
+}
+
+/** Runs in the child process: scans one plugin file per request and answers with its descriptions. A plugin that
+    crashes while being scanned only takes this child process down; the main app marks it as failed and goes on. */
+class PluginScannerWorker;
+/** Returns a new worker (free it with destroyPluginScannerWorker) if this process was started as the scanner. */
+PluginScannerWorker* startPluginScannerWorker (const juce::String& commandLine);
+void destroyPluginScannerWorker (PluginScannerWorker*);
+struct PluginScannerWorkerDeleter { void operator() (PluginScannerWorker* w) const { destroyPluginScannerWorker (w); } };
+
+/** VST3 (and Audio Unit on macOS) hosting for the app: formats, the list of known plugins (scanned out of process,
+    saved in the settings), instance creation for the rigs, plugin editor windows and the plugin manager window. */
+class PluginManager : public fx::PluginHost, private juce::ChangeListener
+{
+public:
+    explicit PluginManager (juce::PropertiesFile&);
+    ~PluginManager() override;
+
+    juce::AudioPluginFormatManager formats;
+    juce::KnownPluginList known;
+
+    /** Menu of the known plugins (effects first, by manufacturer); item ids start at `firstId`. */
+    void addToMenu (juce::PopupMenu& menu, int firstId) const;
+    /** The plugin chosen from that menu, as description XML (empty if none). */
+    juce::String descriptionForMenuResult (int result, int firstId, juce::String& name) const;
+
+    void showManager();
+    void showEditor (std::shared_ptr<juce::AudioPluginInstance>, const juce::String& title);
+    void closeEditor (juce::AudioPluginInstance*);
+    void closeAllEditors();
+
+    // fx::PluginHost
+    void createAsync (const juce::String& descriptionXml, double sampleRate, int blockSize,
+                      std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> done) override;
+    std::unique_ptr<juce::AudioPluginInstance> createBlocking (const juce::String& descriptionXml, double sampleRate, int blockSize,
+                                                               juce::String& error) override;
+
+private:
+    juce::PropertiesFile& settings;
+    juce::File deadMansPedal;
+    std::unique_ptr<juce::DocumentWindow> managerWindow;
+    struct EditorWindow;
+    std::map<juce::AudioPluginInstance*, std::unique_ptr<EditorWindow>> editors;
+    std::shared_ptr<bool> alive = std::make_shared<bool> (true);
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+};
+} // namespace ff

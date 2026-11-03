@@ -220,6 +220,15 @@ void AudioEngine::collectGarbage()
             delete oldTabs[i];
 }
 
+void AudioEngine::dropGraphWhileStopped()
+{
+    if (deviceRunning.load()) return;
+    delete pendingGraph.exchange (nullptr);
+    collectGarbage();
+    delete graph;
+    graph = nullptr;
+}
+
 void AudioEngine::prepare (double sr, int maximumBlockSize)
 {
     sampleRate = sr;

@@ -53,7 +53,7 @@ jobs:
 
       - name: Configure (Linux)
         if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFF_BUILD_TEST_PLUGIN=ON
 
       - name: Build
         run: cmake --build build --config Release --parallel 4
@@ -63,6 +63,9 @@ jobs:
         run: |
           t=$(find build -type f \( -name ff_tests -o -name ff_tests.exe \) -path "*Release*" | head -1)
           echo "Running $t"
+          # Linux also builds a tiny VST3 effect to test plugin hosting for real
+          p=$(find build -type d -name "FF Test Gain.vst3" | head -1)
+          if [ -n "$p" ]; then export FF_TEST_VST3="$PWD/$p"; echo "Plugin hosting test with $FF_TEST_VST3"; fi
           "$t"
 
       - name: Smoke test (macOS) - universal binary and app launch

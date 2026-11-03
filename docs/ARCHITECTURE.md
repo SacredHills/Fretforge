@@ -101,7 +101,7 @@ Extension points for later: content packs (drum kits, IR packs, lesson plans as 
 | 2 | Recording studio: tracks, recording, playback, waveforms, timeline, editing, mixer, export | **Done** (comping lanes, time-stretch, tempo map, automation still to come) |
 | 3 | Tab system: editor, notation, playback, MIDI, Guitar Pro import, PDF | **Done**: editor, techniques, synth playback, standard notation, Guitar Pro 3-7 and MusicXML import, MusicXML/MIDI/PDF export, tempo/key changes, chords, lyrics, MIDI-keyboard entry. Open: grace notes, multiple voices, repeat signs kept as signs |
 | 4 | Drum studio: sequencer, piano roll, drum instruments, generator, arrangement | **Done**: grid sequencer, velocity, swing, humanize, 17-style generator, song arrangement, synthesized and sample kits, MIDI song import/export, Guitar Pro drum import, tab play-along, render to audio. Open: piano roll, articulations, velocity layers |
-| 5 | Effects & amps: built-ins, amp/cab sim, IRs, plugin hosting | **Part 1 done**: Neural Amp Modeler amp, IR cabinet, gate/comp/drive/EQ/chorus/delay/reverb, reorderable chain, live rig and per-track rigs, presets, offline export. Open: VST3/AU hosting, more effects |
+| 5 | Effects & amps: built-ins, amp/cab sim, IRs, plugin hosting | **Done**: VST3/AU hosting in the rig chain (out-of-process scanning), plus Neural Amp Modeler amp, IR cabinet, gate/comp/drive/EQ/chorus/delay/reverb, reorderable chain, live rig and per-track rigs, presets, offline export. Open: VST3/AU hosting, more effects |
 | 6 | Training centre: exercise generator, lessons, progressive practice, stats | Planned |
 | 7 | Theory, songwriting, analysis, assistance, mastering | Planned |
 | 8 | Release: installers, optimisation, docs, onboarding | Packaging scaffolding started (CPack) |
@@ -267,3 +267,23 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
   On Linux `juce::URL` needs libcurl (`JUCE_USE_CURL=1`).
 - **Play-along drums** repeat the compiled drum song (or the selected pattern when no song is arranged) until the end
   of the tab sequence, cutting the last pass at the tab's end.
+
+## 16. Milestone 5 design notes (plugin hosting)
+
+- **Scanning** uses JUCE's `KnownPluginList` with a custom scanner that sends each file to a child process: the app
+  re-launches its own executable with a command-line id (`fretforge-plugin-scanner`), which turns that copy into a
+  `ChildProcessWorker` (no window, single-instance check skipped). A crash or a 60 s hang marks the plugin as failed;
+  JUCE's dead-man's-pedal file covers a crash of the app itself during a scan. The list is saved in the settings.
+- **Slots:** each rig has four plugin blocks (`plug1..plug4`) in the same reorderable order as the built-in blocks
+  (4 bits per block, 13 blocks), with on/off parameters; `PLUGIN {slot, desc, state, name}` children hold the
+  `PluginDescription` XML and the base64 plugin state. Empty slots are hidden in the chain view.
+- **Engine:** `AmpRig` owns the instances (`shared_ptr`, message thread) and publishes raw pointers to the audio thread
+  through atomics; a plugin runs as a stereo block (mono plugins get the sum and feed both sides), under its callback
+  lock, with a pre-allocated 8-channel buffer. Replacing or removing a plugin closes its editor, swaps the pointer,
+  waits for one audio callback (`AudioEngine::waitForAudioCallback`) and only then releases it on the message thread.
+  `AmpRig::prepare` re-prepares plugins when the device restarts.
+- **Creation** goes through `fx::PluginHost` (implemented by the app's `PluginManager`): asynchronous on the message
+  thread for live rigs, blocking (waiting for the message thread) for offline export rigs.
+- **State** is copied into the PLUGIN nodes every two seconds and right before saving; presets carry plugins too.
+- **Tests:** `-DFF_BUILD_TEST_PLUGIN=ON` builds "FF Test Gain", a tiny VST3; with `FF_TEST_VST3` pointing to it the tests
+  scan, load, process, bypass, save/restore state and render it offline. Linux CI runs them.

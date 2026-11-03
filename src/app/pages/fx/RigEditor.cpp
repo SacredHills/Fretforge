@@ -21,6 +21,8 @@ namespace
             case chorus: return "Stereo chorus. From here on the signal is stereo.";
             case delay:  return "Echo with darker repeats as the tone is lowered. The right side repeats 11 ms later for width.";
             case reverb: return "Room / hall reverb.";
+            case plug1: case plug2: case plug3: case plug4:
+                return "A plugin in the chain (stereo). Drag its tile to move it; the lamp bypasses it. Settings made in its window are saved with the project.";
             default:     return "";
         }
     }
@@ -91,27 +93,38 @@ void ParamKnob::resized()
 
 // ================================================================ ChainView
 
+std::vector<int> ChainView::visible() const
+{
+    std::vector<int> v;
+    if (! tree.isValid()) return v;
+    for (int b : getOrder (tree))
+        if (! isPluginBlock (b) || pluginNode (tree, pluginSlotOf (b)).isValid()) v.push_back (b);
+    return v;
+}
+
 juce::Rectangle<float> ChainView::tileRect (int index) const
 {
+    const int n = juce::jmax (1, numTiles());
     const float gap = 12.0f;
-    const float w = ((float) getWidth() - gap * (float) (numBlocks - 1)) / (float) numBlocks;
+    const float w = ((float) getWidth() - gap * (float) (n - 1)) / (float) n;
     return { (float) index * (w + gap), 0.0f, w, (float) getHeight() };
 }
 
 int ChainView::indexAt (float x) const
 {
-    for (int i = 0; i < numBlocks; ++i)
+    const int n = numTiles();
+    for (int i = 0; i < n; ++i)
         if (x < tileRect (i).getRight() + 6.0f) return i;
-    return numBlocks - 1;
+    return juce::jmax (0, n - 1);
 }
 
 void ChainView::paint (juce::Graphics& g)
 {
     if (! tree.isValid()) return;
-    const auto order = getOrder (tree);
-    for (int i = 0; i < numBlocks; ++i)
+    const auto vis = visible();
+    for (int i = 0; i < (int) vis.size(); ++i)
     {
-        const int b = order[(size_t) i];
+        const int b = vis[(size_t) i];
         auto r = tileRect (i);
         if (i > 0)
         {
@@ -123,7 +136,7 @@ void ChainView::paint (juce::Graphics& g)
         const bool sel = b == selected;
         g.setColour (b == dragBlock ? palette::panelHi.brighter (0.1f) : (sel ? palette::panelHi : palette::panel));
         g.fillRoundedRectangle (r, 6.0f);
-        g.setColour (sel ? palette::accent : palette::outline);
+        g.setColour (sel ? palette::accent : (isPluginBlock (b) ? palette::info.withAlpha (0.6f) : palette::outline));
         g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, sel ? 2.0f : 1.0f);
 
         auto lamp = lampRect (i);
@@ -135,12 +148,13 @@ void ChainView::paint (juce::Graphics& g)
         auto text = r.reduced (8.0f, 6.0f);
         g.setColour (on ? palette::text : palette::textDim);
         g.setFont (uiFont (13.5f, true));
-        g.drawText (blockName (b), text.removeFromTop (20.0f).withTrimmedRight (16.0f), juce::Justification::centredLeft, true);
+        g.drawText (blockLabel (tree, b), text.removeFromTop (20.0f).withTrimmedRight (16.0f), juce::Justification::centredLeft, true);
         g.setFont (uiFont (11.5f));
         g.setColour (palette::textDim);
         juce::String sub;
         if (b == amp) sub = ampText;
         else if (b == cab) sub = cabText;
+        else if (isPluginBlock (b)) sub = pluginText[(size_t) pluginSlotOf (b)];
         else if (b == gate) sub = formatValue (gateThresh, get (tree, gateThresh));
         else if (b == drive) sub = "Drive " + formatValue (driveGain, get (tree, driveGain));
         else if (b == delay) sub = formatValue (delayTime, get (tree, delayTime));
@@ -149,6 +163,20 @@ void ChainView::paint (juce::Graphics& g)
         else if (b == comp) sub = formatValue (compRatio, get (tree, compRatio));
         else if (b == eq) sub = "4-band";
         g.drawFittedText (sub, text.toNearestInt(), juce::Justification::topLeft, 3, 0.9f);
+    }
+    if (canAddPlugin)
+    {
+        auto r = tileRect ((int) vis.size());
+        g.setColour (palette::outline);
+        const float dashes[] = { 4.0f, 4.0f };
+        juce::Path p;
+        p.addRoundedRectangle (r.reduced (1.0f), 6.0f);
+        juce::Path dashed;
+        juce::PathStrokeType (1.0f).createDashedStroke (dashed, p, dashes, 2);
+        g.fillPath (dashed);
+        g.setColour (palette::textDim);
+        g.setFont (uiFont (13.0f, true));
+        g.drawFittedText ("+ Plugin\n(" + juce::String (pluginFormatsLabel()) + ")", r.toNearestInt(), juce::Justification::centred, 2);
     }
     if (dragBlock >= 0 && dropIndex >= 0)
     {
@@ -161,26 +189,39 @@ void ChainView::paint (juce::Graphics& g)
 void ChainView::mouseDown (const juce::MouseEvent& e)
 {
     if (! tree.isValid()) return;
+    const auto vis = visible();
     const int i = indexAt ((float) e.x);
-    const int b = getOrder (tree)[(size_t) i];
     dragBlock = -1;
     dropIndex = -1;
+    if (i >= (int) vis.size()) { if (canAddPlugin && onAddPlugin) onAddPlugin(); return; }
+    const int b = vis[(size_t) i];
     if (lampRect (i).expanded (4.0f).contains (e.position)) { if (onToggle) onToggle (b); return; }
     if (onSelect) onSelect (b);
 }
 
 void ChainView::mouseDrag (const juce::MouseEvent& e)
 {
-    if (! tree.isValid() || e.getDistanceFromDragStartX() == 0 || std::abs (e.getDistanceFromDragStartX()) < 8) return;
+    if (! tree.isValid() || std::abs (e.getDistanceFromDragStartX()) < 8) return;
+    const auto vis = visible();
     const int from = indexAt ((float) e.getMouseDownX());
-    dragBlock = getOrder (tree)[(size_t) from];
-    dropIndex = indexAt ((float) e.x);
+    if (from >= (int) vis.size()) return;
+    dragBlock = vis[(size_t) from];
+    dropIndex = juce::jmin (indexAt ((float) e.x), (int) vis.size() - 1);
     repaint();
 }
 
 void ChainView::mouseUp (const juce::MouseEvent&)
 {
-    if (dragBlock >= 0 && dropIndex >= 0 && onMove) onMove (dragBlock, dropIndex);
+    if (dragBlock >= 0 && dropIndex >= 0 && onMove)
+    {
+        // a position among the shown tiles -> a position in the full order (hidden empty slots stay where they are)
+        const auto vis = visible();
+        const auto order = getOrder (tree);
+        const int targetBlock = vis[(size_t) juce::jlimit (0, (int) vis.size() - 1, dropIndex)];
+        int full = 0;
+        for (int i = 0; i < numBlocks; ++i) if (order[(size_t) i] == targetBlock) full = i;
+        onMove (dragBlock, full);
+    }
     dragBlock = dropIndex = -1;
     repaint();
 }
@@ -291,8 +332,44 @@ RigEditor::RigEditor (ProjectDocument& d, EngineHost& h, SessionController& s, j
     blockOnButton.onClick = [this] { if (chain.onToggle) chain.onToggle (chain.selected); };
     moveLeftButton.setTooltip ("Move this block earlier in the chain");
     moveRightButton.setTooltip ("Move this block later in the chain");
-    moveLeftButton.onClick = [this] { if (target.isValid()) { if (auto* u = um()) u->beginNewTransaction ("Move block"); moveBlock (target, chain.selected, -1, um()); } };
-    moveRightButton.onClick = [this] { if (target.isValid()) { if (auto* u = um()) u->beginNewTransaction ("Move block"); moveBlock (target, chain.selected, +1, um()); } };
+    // move past hidden (empty) plugin slots so every click visibly moves the block
+    auto stepBlock = [this] (int dir) {
+        if (! target.isValid()) return;
+        if (auto* u = um()) u->beginNewTransaction ("Move block");
+        for (int guard = 0; guard < numBlocks; ++guard)
+        {
+            const auto before = getOrder (target);
+            moveBlock (target, chain.selected, dir, um());
+            const auto after = getOrder (target);
+            if (after == before) break;
+            int pos = 0;
+            for (int i = 0; i < numBlocks; ++i) if (after[(size_t) i] == chain.selected) pos = i;
+            const int neighbour = after[(size_t) juce::jlimit (0, numBlocks - 1, pos - dir)];
+            if (! isPluginBlock (neighbour) || pluginNode (target, pluginSlotOf (neighbour)).isValid()) break;
+        }
+    };
+    moveLeftButton.onClick = [stepBlock] { stepBlock (-1); };
+    moveRightButton.onClick = [stepBlock] { stepBlock (+1); };
+
+    chain.onAddPlugin = [this] { if (target.isValid()) showAddPluginMenu (freePluginSlot (target)); };
+    pluginOpenButton.onClick = [this] {
+        if (plugins == nullptr || ! isPluginBlock (chain.selected)) return;
+        plugins->showEditor (session.rigs().pluginFor (target, pluginSlotOf (chain.selected)),
+                             blockLabel (target, chain.selected) + "  (" + titleLabel.getText() + ")");
+    };
+    pluginReplaceButton.onClick = [this] { if (isPluginBlock (chain.selected)) showAddPluginMenu (pluginSlotOf (chain.selected)); };
+    pluginRemoveButton.onClick = [this] {
+        if (! target.isValid() || ! isPluginBlock (chain.selected)) return;
+        if (auto* u = um()) u->beginNewTransaction ("Remove plugin");
+        removePlugin (target, pluginSlotOf (chain.selected), um());
+        selectBlock (amp);
+    };
+    pluginManagerButton.onClick = [this] { if (plugins != nullptr) plugins->showManager(); };
+    styleLabel (pluginInfo, 13.0f, palette::text);
+    pluginInfo.setJustificationType (juce::Justification::topLeft);
+    addChildComponent (pluginInfo);
+    for (auto* b : { &pluginOpenButton, &pluginReplaceButton, &pluginRemoveButton, &pluginManagerButton })
+        addChildComponent (b);
     for (auto* b : { &blockOnButton, &moveLeftButton, &moveRightButton, &loadModelButton, &clearModelButton,
                      &normaliseButton, &calibrateButton, &loadIrButton, &clearIrButton })
         addChildComponent (b);
@@ -470,14 +547,44 @@ void RigEditor::refreshAll()
 
     // selected block
     const int b = chain.selected;
-    blockTitle.setText (blockName (b), juce::dontSendNotification);
+    blockTitle.setText (has ? blockLabel (target, b) : juce::String (blockName (b)), juce::dontSendNotification);
     blockHelp.setText (blockHelpText (b), juce::dontSendNotification);
     const bool on = has && get (target, switchFor (b)) >= 0.5f;
     blockOnButton.setButtonText (on ? "On" : "Off");
     blockOnButton.setToggleState (on, juce::dontSendNotification);
     for (auto* c : { &blockOnButton, &moveLeftButton, &moveRightButton }) c->setVisible (has);
 
-    const bool isAmp = has && b == amp, isCab = has && b == cab;
+    const bool isAmp = has && b == amp, isCab = has && b == cab, isPlug = has && isPluginBlock (b);
+    for (auto* c : std::initializer_list<juce::Component*> { &pluginOpenButton, &pluginReplaceButton, &pluginRemoveButton, &pluginInfo })
+        c->setVisible (isPlug);
+    pluginManagerButton.setVisible (has && plugins != nullptr);
+    chain.canAddPlugin = has && plugins != nullptr && freePluginSlot (target) >= 0;
+    for (int sl = 0; sl < numPluginSlots; ++sl)
+    {
+        const auto& ps = status.plugins[(size_t) sl];
+        chain.pluginText[(size_t) sl] = ps.loading ? "Loading..." : (ps.error.isNotEmpty() ? "Not loaded" : (ps.loaded ? "Plugin" : ""));
+    }
+    if (isPlug)
+    {
+        const int sl = pluginSlotOf (b);
+        const auto& ps = status.plugins[(size_t) sl];
+        juce::String text;
+        juce::PluginDescription d;
+        if (auto xml = juce::parseXML (pluginNode (target, sl)[ids::desc].toString())) d.loadFromXml (*xml);
+        text << d.name << (d.manufacturerName.isNotEmpty() ? "  by " + d.manufacturerName : juce::String())
+             << (d.pluginFormatName.isNotEmpty() ? "  (" + d.pluginFormatName + (d.version.isNotEmpty() ? " " + d.version : juce::String()) + ")" : juce::String()) << "\n";
+        if (ps.loading) text << "Loading...";
+        else if (ps.error.isNotEmpty()) text << "Could not load it: " << ps.error << "\nThe slot passes the sound through unchanged.";
+        else if (ps.loaded)
+        {
+            text << "Running";
+            if (ps.latency > 0) text << ", latency " << ps.latency << " samples (not compensated)";
+        }
+        text << "\n" << d.fileOrIdentifier;
+        pluginInfo.setText (text, juce::dontSendNotification);
+        pluginInfo.setColour (juce::Label::textColourId, ps.error.isNotEmpty() ? palette::bad : palette::text);
+        pluginOpenButton.setEnabled (ps.loaded && plugins != nullptr);
+    }
     for (auto* c : std::initializer_list<juce::Component*> { &loadModelButton, &clearModelButton, &normaliseButton, &calibrateButton, &modelLabel,
                                                              &modelInfo, &models })
         c->setVisible (isAmp);
@@ -590,6 +697,44 @@ void RigEditor::setIrFile (const juce::File& f)
 juce::File RigEditor::presetFolder() const
 {
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("FretForge").getChildFile ("Rigs");
+}
+
+void RigEditor::showAddPluginMenu (int slot)
+{
+    if (plugins == nullptr || ! target.isValid()) return;
+    if (slot < 0)
+    {
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Plugins").withMessage ("All " + juce::String (numPluginSlots)
+                                          + " plugin slots of this rig are in use.").withButton ("OK").withAssociatedComponent (this), nullptr);
+        return;
+    }
+    juce::PopupMenu m;
+    plugins->addToMenu (m, 1);
+    if (m.getNumItems() == 0)
+        m.addItem (-1, "No plugins found yet", false);
+    m.addSeparator();
+    m.addItem (-2, "Scan for plugins / manage...");
+    juce::Component::SafePointer<RigEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&chain), [safe, slot] (int r) {
+        if (safe == nullptr || r == 0) return;
+        if (r == -2) { safe->plugins->showManager(); return; }
+        juce::String name;
+        const auto desc = safe->plugins->descriptionForMenuResult (r, 1, name);
+        if (desc.isEmpty() || ! safe->target.isValid()) return;
+        if (auto* u = safe->um()) u->beginNewTransaction ("Add plugin " + name);
+        const bool fresh = ! pluginNode (safe->target, slot).isValid();
+        setPlugin (safe->target, slot, desc, name, safe->um());
+        if (fresh)   // a new plugin goes at the end of the chain
+        {
+            auto o = getOrder (safe->target);
+            std::vector<int> v (o.begin(), o.end());
+            v.erase (std::find (v.begin(), v.end(), plug1 + slot));
+            v.push_back (plug1 + slot);
+            std::copy (v.begin(), v.end(), o.begin());
+            setOrder (safe->target, o, safe->um());
+        }
+        safe->selectBlock (plug1 + slot);
+    });
 }
 
 void RigEditor::rebuildPresets()
@@ -784,6 +929,19 @@ void RigEditor::layoutDetail (juce::Rectangle<int> r)
         irLabel.setBounds (r.removeFromTop (60));
         r.removeFromTop (6);
     }
+    if (isPluginBlock (b))
+    {
+        auto buttons = r.removeFromTop (30);
+        pluginOpenButton.setBounds (buttons.removeFromLeft (160));
+        buttons.removeFromLeft (6);
+        pluginReplaceButton.setBounds (buttons.removeFromLeft (100));
+        buttons.removeFromLeft (6);
+        pluginRemoveButton.setBounds (buttons.removeFromLeft (90));
+        r.removeFromTop (10);
+        pluginInfo.setBounds (r.removeFromTop (80));
+    }
+    if (pluginManagerButton.isVisible())
+        pluginManagerButton.setBounds (juce::Rectangle<int> (r.getRight() - 150, r.getBottom() - 30, 150, 30));
     auto knobRow = r.removeFromTop (110);
     for (auto* k : knobs)
     {
@@ -842,11 +1000,18 @@ void RigEditor::valueTreePropertyChanged (juce::ValueTree& node, const juce::Ide
 
 void RigEditor::valueTreeChildAdded (juce::ValueTree&, juce::ValueTree& child)
 {
+    if (child.hasType (ids::PLUGIN)) { refreshAll(); return; }
     if (child.hasType (tlids::TRACK) || child.hasType (ids::RIG)) selectTarget (targetTrackId);
 }
 
 void RigEditor::valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree& child, int)
 {
+    if (child.hasType (ids::PLUGIN))
+    {
+        if (isPluginBlock (chain.selected) && ! pluginNode (target, pluginSlotOf (chain.selected)).isValid()) selectBlock (amp);
+        else refreshAll();
+        return;
+    }
     if (trackMode && child.hasType (tlids::TRACK) && child[tlids::id].toString() == targetTrackId)
     {
         target = {};

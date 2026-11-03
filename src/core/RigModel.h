@@ -19,11 +19,14 @@ namespace ids
 {
     #define FF_RIG_ID(n) inline const juce::Identifier n { #n };
     FF_RIG_ID (RIG) FF_RIG_ID (enabled) FF_RIG_ID (order) FF_RIG_ID (namFile) FF_RIG_ID (irFile) FF_RIG_ID (rigName)
-    FF_RIG_ID (input)
+    FF_RIG_ID (input) FF_RIG_ID (PLUGIN) FF_RIG_ID (slot) FF_RIG_ID (desc) FF_RIG_ID (state) FF_RIG_ID (name)
     #undef FF_RIG_ID
 }
 
-enum Block { gate, comp, drive, amp, eq, cab, chorus, delay, reverb, numBlocks };
+enum Block { gate, comp, drive, amp, eq, cab, chorus, delay, reverb, plug1, plug2, plug3, plug4, numBlocks };
+constexpr int numPluginSlots = 4;
+inline bool isPluginBlock (int b) { return b >= plug1 && b <= plug4; }
+inline int pluginSlotOf (int b) { return b - plug1; }
 
 enum Param
 {
@@ -38,6 +41,7 @@ enum Param
     delayOn, delayTime, delayFeedback, delayTone, delayMix,
     reverbOn, reverbSize, reverbDamp, reverbMix,
     namCalibrate, calLevel,          // NAM input calibration: interface level (dBu at 0 dBFS)
+    plug1On, plug2On, plug3On, plug4On,
     numParams
 };
 
@@ -79,6 +83,17 @@ void moveBlock (juce::ValueTree rig, int block, int direction, juce::UndoManager
 /** 4 bits per slot, slot 0 in the low bits (for lock-free hand-over to the audio thread). */
 juce::uint64 packOrder (const Order&) noexcept;
 Order unpackOrder (juce::uint64) noexcept;
+
+// ---- plugin slots (VST3 / AU) ----
+/** PLUGIN {slot, desc (PluginDescription XML), state (base64 plugin state), name} children of a RIG. */
+juce::ValueTree pluginNode (const juce::ValueTree& rig, int slot);
+/** Puts a plugin in a slot (replacing what was there); the block keeps its place in the chain and is switched on. */
+void setPlugin (juce::ValueTree rig, int slot, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* = nullptr);
+void removePlugin (juce::ValueTree rig, int slot, juce::UndoManager* = nullptr);
+/** First empty slot, -1 if all are used. */
+int freePluginSlot (const juce::ValueTree& rig);
+/** Chain label of a block: the plugin's name for an occupied plugin slot. */
+juce::String blockLabel (const juce::ValueTree& rig, int block);
 
 // ---- presets ----
 /** All rig settings as JSON (a preset). Model and IR are stored as absolute paths. */

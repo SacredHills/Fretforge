@@ -4,6 +4,7 @@
 #include "core/SpscFifo.h"
 #include "NamModel.h"
 #include "Biquad.h"
+#include "PluginHost.h"
 #include <array>
 #include <atomic>
 
@@ -46,6 +47,13 @@ public:
     void collectGarbage();
     /** For offline rendering: finishes pending IR loads (call after setImpulseResponse, before processing). */
     void finishLoadingOffline();
+
+    // ---- plugin slots (message thread) ----
+    /** Puts a prepared plugin into a slot (nullptr empties it) and returns the previous one. The audio thread may still
+        be inside the previous plugin until the next audio callback: the caller frees it only after that
+        (AudioEngine::waitForAudioCallback), or at once if this rig is not playing. */
+    std::shared_ptr<juce::AudioPluginInstance> setPlugin (int slot, std::shared_ptr<juce::AudioPluginInstance> plugin);
+    std::shared_ptr<juce::AudioPluginInstance> getPlugin (int slot) const;
 
     // ---- audio thread ----
     /** Stereo in place. The rig's input is the mono sum of L and R. */
@@ -104,6 +112,16 @@ private:
     juce::SmoothedValue<float> dlTime;
     float dlLpL = 0, dlLpR = 0;
     juce::dsp::Reverb reverbFx;
+    // plugins
+    struct PluginSlot
+    {
+        std::shared_ptr<juce::AudioPluginInstance> owner;            // message thread
+        std::atomic<juce::AudioPluginInstance*> active { nullptr };  // audio thread
+    };
+    std::array<PluginSlot, rig::numPluginSlots> pluginSlots;
+    juce::AudioBuffer<float> pluginBuffer;
+    juce::MidiBuffer pluginMidi;
+    void runPlugin (int slot, float* L, float* R, int n) noexcept;
 
     void processChunk (float* L, float* R, int n) noexcept;
     void runGate (float* x, int n) noexcept;

@@ -1,6 +1,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "MainComponent.h"
 #include "AppInfo.h"
+#include "plugins/PluginManager.h"
 
 namespace ff
 {
@@ -37,10 +38,17 @@ class Application : public juce::JUCEApplication
 public:
     const juce::String getApplicationName() override { return FF_APP_NAME; }
     const juce::String getApplicationVersion() override { return FF_VERSION_STRING; }
-    bool moreThanOneInstanceAllowed() override { return false; }
+    // the plugin scanner runs as a second copy of the app
+    bool moreThanOneInstanceAllowed() override { return getCommandLineParameters().contains (pluginScannerProcessId); }
 
     void initialise (const juce::String& commandLine) override
     {
+        if (auto* w = startPluginScannerWorker (commandLine))
+        {
+            scanner.reset (w);
+            return;
+        }
+
         logger.reset (juce::FileLogger::createDateStampedLogger (FF_APP_NAME, "session", ".log",
                                                                  juce::String (FF_APP_NAME) + " " + FF_VERSION_STRING + " starting on "
                                                                      + juce::SystemStats::getOperatingSystemName()));
@@ -61,6 +69,7 @@ public:
 
     void shutdown() override
     {
+        if (scanner != nullptr) { scanner.reset(); return; }
         if (window != nullptr)
             properties.getUserSettings()->setValue ("windowState", window->getWindowStateAsString());
         window.reset();
@@ -72,6 +81,7 @@ public:
 
     void systemRequestedQuit() override
     {
+        if (scanner != nullptr) { quit(); return; }
         if (window != nullptr && window->content != nullptr)
             window->content->requestQuit ([] { juce::JUCEApplication::getInstance()->quit(); });
         else
@@ -84,6 +94,7 @@ private:
     juce::ApplicationProperties properties;
     std::unique_ptr<juce::FileLogger> logger;
     std::unique_ptr<MainWindow> window;
+    std::unique_ptr<PluginScannerWorker, PluginScannerWorkerDeleter> scanner;
 
     void openArgument (const juce::String& commandLine)
     {

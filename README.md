@@ -4,7 +4,14 @@ A cross-platform guitar workstation (DAW + tab editor + drum studio + training c
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technology evaluation, architecture, audio-engine design,
 project format, plugin system, milestone plan, risks and licensing.
 
-## Status: Milestone 5 (part 1) — Effects & Amps with Neural Amp Modeler (working)
+## Status: Milestone 5 — Effects & Amps with Neural Amp Modeler and plugin hosting (working)
+
+**Plugins (new):** VST3 plugins (and Audio Units on macOS) in any amp rig. Track > Plugins... (or "Manage plugins..." on
+the Effects page) scans for them in a separate process, so a plugin that crashes while being scanned cannot take the app
+down; it is just listed as failed. Click the "+ Plugin" tile at the end of a rig's chain to add one (up to four per rig);
+drag its tile to move it anywhere in the chain, click its lamp to bypass it, "Open plugin window" shows its own editor.
+Plugin settings are saved with the project (and with the live rig and rig presets), and exports render them.
+Plugin latency is not compensated yet; instruments are not listed (effects only).
 
 **Latest changes:** the transport bar is centred and has a live tuner readout (click it for the tuner window);
 right-click the click button (or Transport > Metronome...) for the metronome window — the Tools section is gone.

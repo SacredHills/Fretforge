@@ -66,6 +66,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     std::unique_ptr<juce::XmlElement> savedDevice (settings.getXmlValue ("audioDeviceState"));
     host.initialise (savedDevice.get());
 
+    pluginManager = std::make_unique<PluginManager> (settings);
     doc = std::make_unique<ProjectDocument> (host, settings);
     session = std::make_unique<SessionController> (host, *doc, settings);
     transport = std::make_unique<TransportBar> (host, *doc, &settings);
@@ -122,6 +123,8 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     transport->onRecord = [this] { session->toggleRecord(); };
     transport->onOpenTuner = [this] { openTuner(); };
     session->onOpenRig = [this] (juce::ValueTree t) { openRigWindow (t); };
+    session->rigs().onPluginRemoved = [this] (juce::AudioPluginInstance* p) { if (pluginManager != nullptr) pluginManager->closeEditor (p); };
+    effectsPage->setPluginManager (pluginManager.get());
     transport->onOpenMetronome = [this] { openMetronome(); };
     session->onError = [this] (const juce::String& t, const juce::String& m) { showError (t, m); };
     host.onDeviceChanged = [this] {
@@ -188,8 +191,12 @@ MainComponent::~MainComponent()
     metronomePanel.reset();
     mixerPage.reset();
     settingsPage.reset();
+    pluginManager->closeAllEditors();
+    host.deviceManager.closeAudioDevice();
+    host.engine.dropGraphWhileStopped();   // plugins held by track rigs go before their formats
     session.reset();
     doc.reset();
+    pluginManager.reset();
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
@@ -300,6 +307,7 @@ void MainComponent::saveThen (std::function<void()> continuation)
         saveAsThen (continuation);
         return;
     }
+    session->rigs().captureAllPluginStates();
     const auto r = doc->save();
     if (r.failed())
         showError ("Could not save project", r.getErrorMessage());
@@ -325,6 +333,7 @@ void MainComponent::saveAsThen (std::function<void()> continuation)
                                                    bundle.getFullPathName() + " already exists. Choose another name.");
                                   return;
                               }
+                              safe->session->rigs().captureAllPluginStates();
                               const auto r = safe->doc->saveTo (bundle);
                               if (r.failed())
                                   safe->showError ("Could not save project", r.getErrorMessage());
@@ -430,6 +439,7 @@ void MainComponent::openRigWindow (juce::ValueTree track)
     {
         w.editor = std::make_unique<RigEditor> (*doc, host, *session, settings, id);
         w.editor->setActive (true);
+        w.editor->setPluginManager (pluginManager.get());
         w.editor->setTone3000Handler ([this, ed = juce::Component::SafePointer<RigEditor> (w.editor.get())] (bool cab) {
             if (ed != nullptr) openTone3000 (*ed, cab);
         });
@@ -491,7 +501,7 @@ void MainComponent::showShortcutEditor()
 void MainComponent::getAllCommands (juce::Array<juce::CommandID>& c)
 {
     c.addArray ({ cmdNew, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo, cmdPlayStop, cmdReturnToZero,
-                  cmdToggleClick, cmdTapTempo, cmdPracticeMetronome, cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow,
+                  cmdToggleClick, cmdTapTempo, cmdPracticeMetronome, cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow, cmdPlugins,
                   cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdDelete,
                   cmdCopy, cmdCut, cmdPaste, cmdSelectAll, cmdAddMarker, cmdZoomIn, cmdZoomOut, cmdZoomFit });
     for (int i = 0; i < numSections; ++i)
@@ -525,6 +535,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdReturnToZero: info.setInfo ("Return to Start", "Move the playhead to bar 1", "Transport", 0); info.addDefaultKeypress (KP::homeKey, 0); info.addDefaultKeypress (KP::returnKey, 0); break;
         case cmdToggleClick: info.setInfo ("Metronome Click", "Click while playing", "Transport", 0); info.setTicked ((bool) doc->metronome()[project::ids::enabled]); info.addDefaultKeypress ('c', 0); break;
         case cmdTapTempo: info.setInfo ("Tap Tempo", "Tap to set the tempo", "Transport", 0); info.addDefaultKeypress ('t', 0); break;
+        case cmdPlugins: info.setInfo ("Plugins...", "Scan for and manage VST3 / Audio Unit plugins", "Track", 0); break;
         case cmdTunerWindow: info.setInfo ("Tuner...", "Open the tuner window", "Transport", 0); info.addDefaultKeypress ('u', cmd | shift); break;
         case cmdMetronomeWindow: info.setInfo ("Metronome...", "Open the metronome window (practice metronome, tempo trainer)", "Transport", 0); info.addDefaultKeypress ('m', cmd | shift); break;
         case cmdPracticeMetronome: info.setInfo ("Practice Metronome", "Start/stop the free-running metronome", "Transport", 0); info.setTicked (host.engine.practiceMetronome.load()); info.addDefaultKeypress ('m', 0); break;
@@ -576,6 +587,7 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdTapTempo: transport->tapTempo(); return true;
         case cmdPracticeMetronome: metronomePanel->togglePractice(); return true;
         case cmdTunerWindow: openTuner(); return true;
+        case cmdPlugins: pluginManager->showManager(); return true;
         case cmdMetronomeWindow: openMetronome(); return true;
         case cmdShortcuts: showShortcutEditor(); return true;
         case cmdRecord: session->toggleRecord(); return true;
@@ -663,6 +675,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
         case 2:
             m.addCommandItem (cm, cmdAddTrack);
             m.addCommandItem (cm, cmdImport);
+            m.addSeparator();
+            m.addCommandItem (cm, cmdPlugins);
             m.addSeparator();
             m.addCommandItem (cm, cmdExport);
             break;

@@ -7,6 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(FF_BUILD_TESTS  "Build the unit test runner" ON)
 option(FF_BUILD_APP    "Build the GUI application" ON)
+option(FF_BUILD_TEST_PLUGIN "Build a tiny VST3 effect used to test plugin hosting (FF_TEST_VST3=<path> runs the tests)" OFF)
 option(FF_ENABLE_ASIO  "Enable ASIO on Windows (requires the Steinberg ASIO SDK)" OFF)
 set(FF_ASIO_SDK_DIR "" CACHE PATH "Path to the ASIO SDK root (contains common/iasiodrv.h)")
 set(FF_JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/JUCE" CACHE PATH "Local JUCE checkout (fetched automatically if missing)")
@@ -88,6 +89,7 @@ target_sources(ff_core PRIVATE
     src/engine/fx/NamModel.cpp
     src/engine/fx/AmpRig.cpp
     src/engine/fx/RigBank.cpp
+    src/engine/fx/PluginHost.cpp
     src/engine/TabSynth.cpp
     src/engine/DrumSynth.cpp
     src/engine/AudioCache.cpp
@@ -112,6 +114,7 @@ target_link_libraries(ff_core
         juce::juce_audio_devices
         juce::juce_audio_formats
         juce::juce_dsp
+        juce::juce_audio_processors
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
@@ -144,6 +147,7 @@ target_sources(FretForgeStudio PRIVATE
     src/app/pages/fx/RigEditor.cpp
     src/app/tone3000/Tone3000.cpp
     src/app/tone3000/Tone3000Panel.cpp
+    src/app/plugins/PluginManager.cpp
     src/app/pages/tabs/TabPage.cpp
     src/app/pages/StudioPage.cpp
     src/app/pages/TunerPanel.cpp
@@ -205,3 +209,19 @@ else()
     set(CPACK_DEBIAN_PACKAGE_SUGGESTS "libjack-jackd2-0 | pipewire-jack")
 endif()
 include(CPack)
+
+# ---------------------------------------------------------------- test plugin (hosting tests only)
+if(FF_BUILD_TEST_PLUGIN)
+    juce_add_plugin(ff_test_plugin
+        PRODUCT_NAME "FF Test Gain"
+        COMPANY_NAME "FretForge"
+        PLUGIN_MANUFACTURER_CODE Frfg
+        PLUGIN_CODE Fftg
+        FORMATS VST3
+        IS_SYNTH FALSE NEEDS_MIDI_INPUT FALSE NEEDS_MIDI_OUTPUT FALSE
+        COPY_PLUGIN_AFTER_BUILD FALSE)
+    target_sources(ff_test_plugin PRIVATE tests/plugin/TestGainPlugin.cpp)
+    target_compile_definitions(ff_test_plugin PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
+                               JUCE_DISPLAY_SPLASH_SCREEN=0)
+    target_link_libraries(ff_test_plugin PRIVATE juce::juce_audio_utils juce::juce_recommended_config_flags)
+endif()

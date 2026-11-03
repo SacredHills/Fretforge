@@ -21,7 +21,7 @@ namespace
         if (v > a.load (std::memory_order_relaxed)) a.store (v, std::memory_order_relaxed);
     }
 
-    bool isStereoBlock (int b) noexcept { return b == chorus || b == delay || b == reverb; }
+    bool isStereoBlock (int b) noexcept { return b == chorus || b == delay || b == reverb || isPluginBlock (b); }
 }
 
 AmpRig::AmpRig (juce::dsp::ConvolutionMessageQueue* queue)
@@ -151,6 +151,10 @@ void AmpRig::prepare (double rate, int block)
     if (auto* p = pendingModel.load()) p->prepare (rate, maxBlock);
 
     reset();
+    pluginBuffer.setSize (8, maxBlock);
+    pluginMidi.ensureSize (256);
+    for (auto& ps : pluginSlots)
+        if (ps.owner != nullptr) preparePlugin (*ps.owner, rate, maxBlock);
     preparedRate = rate;
 }
 
@@ -247,6 +251,7 @@ void AmpRig::processChunk (float* L, float* R, int n) noexcept
                 break;
             }
             case delay: runDelay (m, r, n); break;
+            case plug1: case plug2: case plug3: case plug4: runPlugin (pluginSlotOf (b), m, r, n); break;
             case reverb:
             {
                 juce::dsp::Reverb::Parameters p;
@@ -274,6 +279,43 @@ void AmpRig::processChunk (float* L, float* R, int n) noexcept
         R[i] = r[i] * g;
     }
     storeMax (outPeak, juce::jmax (peakOf (L, n), peakOf (R, n)));
+}
+
+std::shared_ptr<juce::AudioPluginInstance> AmpRig::setPlugin (int slot, std::shared_ptr<juce::AudioPluginInstance> p)
+{
+    if (! juce::isPositiveAndBelow (slot, rig::numPluginSlots)) return p;
+    auto& ps = pluginSlots[(size_t) slot];
+    auto old = std::move (ps.owner);
+    ps.owner = std::move (p);
+    ps.active.store (ps.owner.get(), std::memory_order_release);
+    return old;
+}
+
+std::shared_ptr<juce::AudioPluginInstance> AmpRig::getPlugin (int slot) const
+{
+    return juce::isPositiveAndBelow (slot, rig::numPluginSlots) ? pluginSlots[(size_t) slot].owner : nullptr;
+}
+
+void AmpRig::runPlugin (int slot, float* L, float* R, int n) noexcept
+{
+    auto* p = pluginSlots[(size_t) slot].active.load (std::memory_order_acquire);
+    if (p == nullptr || n > pluginBuffer.getNumSamples()) return;
+    const int ins = p->getTotalNumInputChannels(), outs = p->getTotalNumOutputChannels();
+    const int ch = juce::jmin (pluginBuffer.getNumChannels(), juce::jmax (ins, outs, 1));
+    float* const* chans = pluginBuffer.getArrayOfWritePointers();
+    if (ins >= 2) { std::copy (L, L + n, chans[0]); std::copy (R, R + n, chans[1]); }
+    else for (int i = 0; i < n; ++i) chans[0][i] = 0.5f * (L[i] + R[i]);
+    for (int c = ins >= 2 ? 2 : 1; c < ch; ++c)
+        juce::FloatVectorOperations::clear (chans[c], n);
+    juce::AudioBuffer<float> view (chans, ch, n);
+    pluginMidi.clear();
+    {
+        const juce::ScopedLock sl (p->getCallbackLock());
+        if (p->isSuspended()) return;
+        p->processBlock (view, pluginMidi);
+    }
+    if (outs >= 2) { std::copy (chans[0], chans[0] + n, L); std::copy (chans[1], chans[1] + n, R); }
+    else if (outs == 1) { std::copy (chans[0], chans[0] + n, L); std::copy (chans[0], chans[0] + n, R); }
 }
 
 void AmpRig::runGate (float* x, int n) noexcept

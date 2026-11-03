@@ -77,6 +77,21 @@ std::shared_ptr<AmpRig> makeOfflineRig (const juce::ValueTree& t, double sr, int
         }
         else warnings.add (err + " The built-in cabinet filter was used instead.");
     }
+    for (auto c : t)
+    {
+        if (! c.hasType (rig::ids::PLUGIN)) continue;
+        const int slot = (int) c[rig::ids::slot];
+        const auto name = c[rig::ids::name].toString();
+        if (! juce::isPositiveAndBelow (slot, rig::numPluginSlots) || c[rig::ids::desc].toString().isEmpty()) continue;
+        auto* host = pluginHost();
+        if (host == nullptr) { warnings.add ("Plugin \"" + name + "\" was skipped (plugin hosting is not available here)."); continue; }
+        juce::String err;
+        auto inst = host->createBlocking (c[rig::ids::desc].toString(), sr, block, err);
+        if (inst == nullptr) { warnings.add ("Plugin \"" + name + "\" could not be loaded" + (err.isNotEmpty() ? ": " + err : juce::String()) + "; it was skipped."); continue; }
+        restorePluginState (*inst, c[rig::ids::state].toString());
+        preparePlugin (*inst, sr, block);
+        rig->setPlugin (slot, std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
+    }
     rig->reset();
     return rig;
 }
@@ -99,6 +114,8 @@ RigBank::RigBank (AudioEngine& e) : engine (e)
 RigBank::~RigBank()
 {
     stopTimer();
+    releaseEntryPlugins (liveEntry);
+    for (auto& [k, e] : tracks) releaseEntryPlugins (e);
     *alive = false;
     engine.setPrepareHook (nullptr);
     engine.liveRigOn.store (false);
@@ -137,6 +154,8 @@ void RigBank::setLiveTree (juce::ValueTree t)
 {
     if (! t.hasType (rig::ids::RIG)) return;
     live.copyPropertiesFrom (t, nullptr);   // keeps the same node (listeners, UI) and fires property changes
+    live.removeAllChildren (nullptr);
+    for (auto c : t) live.appendChild (c.createCopy(), nullptr);   // plugin slots
 }
 
 std::shared_ptr<AmpRig> RigBank::rigForTrack (const juce::String& id) const
@@ -189,6 +208,8 @@ void RigBank::syncAll()
         {
             if (auto w = wanted.find (it->first); w == wanted.end() || w->second != it->second.tree)
             {
+                for (int sl = 0; sl < rig::numPluginSlots; ++sl)   // editors close; the plugins die with the rig
+                    if (auto p = it->second.rig->getPlugin (sl); p != nullptr && onPluginRemoved) onPluginRemoved (p.get());
                 it = tracks.erase (it);   // the playback graph may still hold the rig; it dies with the graph
                 changed = true;
             }
@@ -221,6 +242,126 @@ void RigBank::syncEntry (Entry& e)
     }
     if (e.tree[rig::ids::namFile].toString() != e.status.modelPath) requestModel (e, false);
     if (e.tree[rig::ids::irFile].toString() != e.status.irPath) requestIr (e, false);
+    for (int sl = 0; sl < rig::numPluginSlots; ++sl)
+    {
+        const auto node = rig::pluginNode (e.tree, sl);
+        if (node[rig::ids::desc].toString() != e.status.plugins[(size_t) sl].desc) requestPlugin (e, sl);
+        else e.status.plugins[(size_t) sl].name = node[rig::ids::name].toString();
+    }
+}
+
+juce::String RigBank::keyOf (const Entry& e) const
+{
+    return (&e == &liveEntry) ? liveKey : e.tree.getParent()[timeline::ids::id].toString();
+}
+
+RigBank::Entry* RigBank::entryByKey (const juce::String& key)
+{
+    if (key == liveKey) return &liveEntry;
+    if (auto it = tracks.find (key); it != tracks.end()) return &it->second;
+    return nullptr;
+}
+
+void RigBank::releasePlugin (std::shared_ptr<juce::AudioPluginInstance> old)
+{
+    if (old == nullptr) return;
+    if (onPluginRemoved) onPluginRemoved (old.get());
+    engine.waitForAudioCallback();   // the audio thread may still be inside it
+    old->releaseResources();
+    old.reset();
+}
+
+void RigBank::releaseEntryPlugins (Entry& e)
+{
+    for (int sl = 0; sl < rig::numPluginSlots; ++sl)
+    {
+        std::shared_ptr<juce::AudioPluginInstance> old;
+        {
+            const juce::ScopedLock lk (lock);
+            old = e.rig->setPlugin (sl, nullptr);
+        }
+        releasePlugin (std::move (old));
+    }
+}
+
+void RigBank::requestPlugin (Entry& e, int slot)
+{
+    auto& st = e.status.plugins[(size_t) slot];
+    const auto node = rig::pluginNode (e.tree, slot);
+    st = {};
+    st.desc = node[rig::ids::desc].toString();
+    st.name = node[rig::ids::name].toString();
+    const int gen = ++generationCounter;
+    e.pluginGeneration[(size_t) slot] = gen;
+    if (st.desc.isEmpty())
+    {
+        std::shared_ptr<juce::AudioPluginInstance> old;
+        {
+            const juce::ScopedLock lk (lock);
+            old = e.rig->setPlugin (slot, nullptr);
+        }
+        releasePlugin (std::move (old));
+        if (onStatusChanged) onStatusChanged();
+        return;
+    }
+    auto* host = pluginHost();
+    if (host == nullptr)
+    {
+        st.error = "Plugin hosting is not available.";
+        if (onStatusChanged) onStatusChanged();
+        return;
+    }
+    st.loading = true;
+    const auto [sr, bs] = engineFormat (engine);
+    std::weak_ptr<bool> token = alive;
+    const auto key = keyOf (e);
+    host->createAsync (st.desc, sr, bs, [this, token, key, slot, gen] (std::unique_ptr<juce::AudioPluginInstance> inst, juce::String err) {
+        if (token.expired()) return;
+        auto* en = entryByKey (key);
+        if (en == nullptr || en->pluginGeneration[(size_t) slot] != gen) return;   // superseded; inst is freed here
+        auto& s2 = en->status.plugins[(size_t) slot];
+        s2.loading = false;
+        if (inst == nullptr)
+        {
+            s2.error = err.isNotEmpty() ? err : juce::String ("The plugin could not be loaded.");
+            if (onStatusChanged) onStatusChanged();
+            return;
+        }
+        restorePluginState (*inst, rig::pluginNode (en->tree, slot)[rig::ids::state].toString());
+        const auto [r, b] = engineFormat (engine);
+        std::shared_ptr<juce::AudioPluginInstance> old;
+        {
+            const juce::ScopedLock lk (lock);   // not while the device re-prepares the rigs
+            preparePlugin (*inst, en->rig->getPreparedRate() > 0 ? en->rig->getPreparedRate() : r, juce::jmax (b, 512));
+            s2.latency = inst->getLatencySamples();
+            old = en->rig->setPlugin (slot, std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
+        }
+        s2.loaded = true;
+        releasePlugin (std::move (old));
+        if (onStatusChanged) onStatusChanged();
+    });
+    if (onStatusChanged) onStatusChanged();
+}
+
+std::shared_ptr<juce::AudioPluginInstance> RigBank::pluginFor (const juce::ValueTree& t, int slot) const
+{
+    auto* e = entryFor (t);
+    return e != nullptr ? e->rig->getPlugin (slot) : nullptr;
+}
+
+void RigBank::captureAllPluginStates()
+{
+    auto capture = [] (Entry& e) {
+        for (int sl = 0; sl < rig::numPluginSlots; ++sl)
+            if (auto p = e.rig->getPlugin (sl))
+                if (auto node = rig::pluginNode (e.tree, sl); node.isValid())
+                {
+                    const auto st = capturePluginState (*p);
+                    if (st != node[rig::ids::state].toString()) node.setProperty (rig::ids::state, st, nullptr);
+                }
+    };
+    capture (liveEntry);
+    for (auto& [k, e] : tracks) capture (e);
 }
 
 void RigBank::requestModel (Entry& e, bool)
@@ -336,10 +477,16 @@ void RigBank::timerCallback()
     };
     service (liveEntry);
     for (auto& [id, e] : tracks) service (e);
+    if (++ticks % 20 == 0) captureAllPluginStates();
 }
 
 void RigBank::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& prop)
 {
+    if (node.hasType (rig::ids::PLUGIN))
+    {
+        if (node.getParent() == live && onLiveChanged) onLiveChanged();   // keep the live rig's plugin state saved
+        return;
+    }
     if (! node.hasType (rig::ids::RIG)) return;
     if (node == live)
     {
@@ -351,13 +498,25 @@ void RigBank::valueTreePropertyChanged (juce::ValueTree& node, const juce::Ident
     if (auto* e = entryFor (node)) syncEntry (*e);
 }
 
-void RigBank::valueTreeChildAdded (juce::ValueTree&, juce::ValueTree& child)
+void RigBank::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child)
 {
+    if (child.hasType (rig::ids::PLUGIN))
+    {
+        if (parent == live) { syncEntry (liveEntry); if (onLiveChanged) onLiveChanged(); }
+        else if (auto* e = entryFor (parent)) syncEntry (*e);
+        return;
+    }
     if (child.hasType (rig::ids::RIG) || child.hasType (timeline::ids::TRACK) || child.hasType (project::ids::TRACKS)) syncAll();
 }
 
-void RigBank::valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree& child, int)
+void RigBank::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int)
 {
+    if (child.hasType (rig::ids::PLUGIN))
+    {
+        if (parent == live) { syncEntry (liveEntry); if (onLiveChanged) onLiveChanged(); }
+        else if (auto* e = entryFor (parent)) syncEntry (*e);
+        return;
+    }
     if (child.hasType (rig::ids::RIG) || child.hasType (timeline::ids::TRACK) || child.hasType (project::ids::TRACKS)) syncAll();
 }
 } // namespace ff::fx

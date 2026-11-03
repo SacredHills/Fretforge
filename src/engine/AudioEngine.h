@@ -91,6 +91,8 @@ public:
     void submitGraph (std::unique_ptr<PlaybackGraph> graph);
     /** Message thread: frees snapshots the audio thread has finished with. */
     void collectGarbage();
+    /** Frees the playback snapshot (and the plugins its rigs hold) while no device is running (shutdown). */
+    void dropGraphWhileStopped();
 
     // ---- tablature playback ----
     /** When true the engine plays the tab sequence (guitar synth) instead of the arrangement. */

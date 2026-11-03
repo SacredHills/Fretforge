@@ -6,6 +6,7 @@
 #include "../../Widgets.h"
 #include "core/RigModel.h"
 #include "FileBrowserList.h"
+#include "../../plugins/PluginManager.h"
 
 namespace ff
 {
@@ -35,8 +36,11 @@ public:
     void setRig (juce::ValueTree rigTree) { tree = rigTree; repaint(); }
     int selected = rig::amp;
     juce::String ampText, cabText;     // subtitles of the amp and cabinet tiles
+    std::array<juce::String, rig::numPluginSlots> pluginText;
+    bool canAddPlugin = false;         // shows a "+ Plugin" tile at the end
     std::function<void (int block)> onSelect, onToggle;
-    std::function<void (int block, int newIndex)> onMove;
+    std::function<void (int block, int newIndex)> onMove;   // newIndex: position in the full block order
+    std::function<void()> onAddPlugin;
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -45,6 +49,8 @@ public:
 private:
     juce::ValueTree tree;
     int dragBlock = -1, dropIndex = -1;
+    std::vector<int> visible() const;          // blocks shown, in order (empty plugin slots hidden)
+    int numTiles() const { return (int) visible().size() + (canAddPlugin ? 1 : 0); }
     juce::Rectangle<float> tileRect (int index) const;
     int indexAt (float x) const;
     juce::Rectangle<float> lampRect (int index) const { return tileRect (index).removeFromTop (26.0f).removeFromRight (26.0f).reduced (7.0f); }
@@ -106,6 +112,11 @@ private:
     juce::Label modelLabel, modelInfo;
     FileBrowserList models { settings, "namFolder", "*.nam", "models" };
     FileBrowserList irs { settings, "irFolder", "*.wav;*.aif;*.aiff;*.flac", "impulse responses" };
+    // plugin slots
+    juce::TextButton pluginOpenButton { "Open plugin window" }, pluginReplaceButton { "Replace..." }, pluginRemoveButton { "Remove" },
+                     pluginManagerButton { "Manage plugins..." };
+    juce::Label pluginInfo;
+    void showAddPluginMenu (int slot);
     // cab: impulse response
     juce::TextButton loadIrButton { "Load IR..." }, clearIrButton { "Use built-in cabinet" };
     juce::Label irLabel;
@@ -129,10 +140,12 @@ private:
     void setOnTarget (const juce::Identifier&, const juce::var&, const juce::String& undoName);
 
     std::function<void (bool cab)> onBrowseTone3000;   // set by the app: opens the TONE3000 browser
+    PluginManager* plugins = nullptr;
 public:
     /** Loads a downloaded file into this rig (amp model or cabinet IR). */
     void loadDownloaded (const juce::File& f, bool cab) { if (cab) setIrFile (f); else setModelFile (f); }
     void setTone3000Handler (std::function<void (bool cab)> fn) { onBrowseTone3000 = std::move (fn); refreshAll(); }
+    void setPluginManager (PluginManager* pm) { plugins = pm; refreshAll(); }
 private:
 
     void timerCallback() override;

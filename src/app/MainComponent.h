@@ -11,6 +11,7 @@
 #include "pages/MetronomePanel.h"
 #include "ToolWindow.h"
 #include "tone3000/Tone3000Panel.h"
+#include "plugins/PluginManager.h"
 #include "pages/MixerPage.h"
 #include "pages/SettingsPage.h"
 #include "pages/MilestonePage.h"
@@ -48,7 +49,7 @@ public:
     {
         cmdNew = 0x2000, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo,
         cmdPlayStop, cmdReturnToZero, cmdToggleClick, cmdTapTempo, cmdPracticeMetronome,
-        cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow,
+        cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow, cmdPlugins,
         cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdDelete,
         cmdCopy, cmdCut, cmdPaste, cmdSelectAll, cmdAddMarker, cmdZoomIn, cmdZoomOut, cmdZoomFit,
         cmdSectionBase = 0x2100 // + section index
@@ -84,6 +85,7 @@ private:
     juce::PropertiesFile& settings;
     StudioLookAndFeel lnf;
     EngineHost host;
+    std::unique_ptr<PluginManager> pluginManager;   // before the session: rigs load plugins through it
     std::unique_ptr<ProjectDocument> doc;
     std::unique_ptr<SessionController> session;
 
