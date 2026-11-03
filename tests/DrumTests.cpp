@@ -1,4 +1,6 @@
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_events/juce_events.h>
 #include "core/DrumModel.h"
 #include "engine/DrumSynth.h"
 #include "engine/TabSynth.h"
@@ -272,3 +274,39 @@ struct DrumTests : juce::UnitTest
 };
 
 static DrumTests drumTests;
+
+// Listening aid: FF_DRUM_DEMO=/path/demo.wav ff_tests renders a few generated grooves.
+static struct DrumDemo
+{
+    DrumDemo()
+    {
+        const auto path = juce::SystemStats::getEnvironmentVariable ("FF_DRUM_DEMO", {});
+        if (path.isEmpty()) return;
+        juce::ScopedJuceInitialiser_GUI init;
+        std::vector<DrumHit> hits;
+        double t = 0.0;
+        const std::pair<int, double> styles[] = { { d::genreRock, 110 }, { d::genreFunk, 100 }, { d::genreMetal, 140 },
+                                                   { d::genreDBeat, 170 }, { d::genreBlackMetal, 190 }, { d::genreDjent, 120 } };
+        juce::ValueTree project ("PROJECT");
+        auto dr = d::getOrCreate (project);
+        for (auto [g, bpm] : styles)
+        {
+            d::GenOptions o;
+            o.genre = g;
+            o.bars = 2;
+            o.complexity = 0.6;
+            auto p = d::generate (o);
+            const auto c = d::compile (dr, p, 2);
+            for (auto& e : c.events) hits.push_back ({ t + e.q * 60.0 / bpm, e.piece, e.velocity });
+            t += c.lengthQ * 60.0 / bpm + 0.5;
+        }
+        juce::AudioBuffer<float> buf;
+        DrumSynth::renderOffline (hits, 44100.0, t + 1.0, 0.8f, buf);
+        juce::File f (path);
+        f.deleteFile();
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> os (f.createOutputStream());
+        if (auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (44100.0).withNumChannels (2).withBitsPerSample (16)))
+            w->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+    }
+} drumDemo;

@@ -241,22 +241,41 @@ float DrumSynth::sample (Voice& v) noexcept
 void DrumSynth::render (float* left, float* right, int n) noexcept
 {
     const float vol = juce::jlimit (0.0f, 1.5f, volume);
-    for (auto& v : voices)
+    constexpr int chunk = 128;
+    float bl[chunk], br[chunk];
+    for (int start = 0; start < n; start += chunk)
     {
-        if (! v.active) continue;
-        for (int i = 0; i < n; ++i)
+        const int len = juce::jmin (chunk, n - start);
+        std::fill (bl, bl + len, 0.0f);
+        std::fill (br, br + len, 0.0f);
+        for (auto& v : voices)
         {
-            float s = sample (v) * vol;
-            if (v.chokeRate > 0.0f)
+            if (! v.active) continue;
+            for (int i = 0; i < len; ++i)
             {
-                v.choke -= v.chokeRate;
-                if (v.choke <= 0.0f) { v.active = false; break; }
-                s *= v.choke;
+                float s = sample (v) * vol;
+                if (v.chokeRate > 0.0f)
+                {
+                    v.choke -= v.chokeRate;
+                    if (v.choke <= 0.0f) { v.active = false; break; }
+                    s *= v.choke;
+                }
+                bl[i] += s * v.gainL;
+                br[i] += s * v.gainR;
+                v.t += 1.0;
+                if (v.t / sr > v.length) { v.active = false; break; }
             }
-            left[i] += s * v.gainL;
-            right[i] += s * v.gainR;
-            v.t += 1.0;
-            if (v.t / sr > v.length) { v.active = false; break; }
+        }
+        // soft knee above -2 dB so stacked hits (blasts, crash + kick) never clip hard
+        auto knee = [] (float x) {
+            const float a = std::abs (x);
+            if (a <= 0.8f) return x;
+            return std::copysign (0.8f + 0.2f * std::tanh ((a - 0.8f) / 0.2f), x);
+        };
+        for (int i = 0; i < len; ++i)
+        {
+            left[start + i] += knee (bl[i]);
+            right[start + i] += knee (br[i]);
         }
     }
 }
