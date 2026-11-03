@@ -25,7 +25,12 @@ Tone3000Panel::Tone3000Panel (t3k::Client& c) : client (c)
 
     keyEditor.setTextToShowWhenEmpty ("t3k_pub_...", palette::textDim);
     keyEditor.setText (client.clientId(), false);
-    keyEditor.onReturnKey = [this] { client.setClientId (keyEditor.getText()); refreshAccount(); };
+    keyEditor.onReturnKey = [this] {
+        client.setClientId (keyEditor.getText());
+        keyEditor.setText (client.clientId(), false);
+        if (auto p = t3k::Client::keyProblem (client.clientId()); p.isNotEmpty() && client.clientId().isNotEmpty()) setStatus (p, true);
+        refreshAccount();
+    };
     keyEditor.onFocusLost = keyEditor.onReturnKey;
     keyEditor.setTooltip ("Your TONE3000 publishable API key (client ID). Create one in your TONE3000 account settings under API keys.");
     addAndMakeVisible (keyEditor);
@@ -35,7 +40,9 @@ Tone3000Panel::Tone3000Panel (t3k::Client& c) : client (c)
     signButton.onClick = [this] {
         if (client.isConnected()) { client.disconnect(); return; }
         client.setClientId (keyEditor.getText());
-        setStatus ("Sign in in your browser, then come back here...");
+        keyEditor.setText (client.clientId(), false);
+        setStatus ("Sign in in your browser, then come back here. If the page says \"Unknown client_id\", TONE3000 does not know this key: "
+                   "copy the publishable key again from your TONE3000 account settings > API keys (and check that it is active).");
         client.signIn ([safe = juce::Component::SafePointer<Tone3000Panel> (this)] (juce::String err) {
             if (safe == nullptr) return;
             if (err.isNotEmpty() && err != "cancelled") safe->setStatus (err, true);
@@ -47,7 +54,9 @@ Tone3000Panel::Tone3000Panel (t3k::Client& c) : client (c)
     browseButton.setTooltip ("Opens TONE3000's catalogue in your browser (search, filters, previews). Pick a tone there and it appears here.");
     browseButton.onClick = [this] {
         client.setClientId (keyEditor.getText());
-        setStatus ("Pick a tone on the TONE3000 page in your browser...");
+        keyEditor.setText (client.clientId(), false);
+        setStatus ("Pick a tone on the TONE3000 page in your browser. If it says \"Unknown client_id\", copy the publishable key again "
+                   "from your TONE3000 account settings > API keys.");
         client.selectTone (format(), cabMode ? "cab" : "", [safe = juce::Component::SafePointer<Tone3000Panel> (this)] (int toneId, juce::String err) {
             if (safe == nullptr) return;
             safe->refreshAccount();

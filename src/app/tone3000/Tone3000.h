@@ -63,6 +63,10 @@ public:
 
     // ---- configuration / session ----
     juce::String clientId() const;
+    /** Why `key` cannot be a publishable key (empty if it looks right). */
+    static juce::String keyProblem (const juce::String& key);
+    /** Removes spaces, line breaks and quotes picked up when copying the key. */
+    static juce::String cleanKey (const juce::String& key);
     void setClientId (const juce::String&);
     bool isConnected() const;
     juce::String userName() const { return user; }

@@ -169,10 +169,30 @@ Client::~Client()
 }
 
 juce::String Client::clientId() const { return id; }
-void Client::setClientId (const juce::String& k)
+
+juce::String Client::cleanKey (const juce::String& k)
 {
-    if (k.trim() == id) return;
-    id = k.trim();
+    return k.removeCharacters (" \t\r\n\"'`");
+}
+
+juce::String Client::keyProblem (const juce::String& raw)
+{
+    const auto k = cleanKey (raw);
+    if (k.isEmpty()) return "Enter your TONE3000 publishable key first.";
+    if (k.startsWith ("t3k_cs_"))
+        return "That is your SECRET key (t3k_cs_...). Never paste it into an app: use the PUBLISHABLE key (t3k_pub_...) "
+               "from the same page, and consider regenerating the secret key on tone3000.com.";
+    if (! k.startsWith ("t3k_pub_"))
+        return "That does not look like a TONE3000 publishable key: those start with t3k_pub_. Copy it from your TONE3000 "
+               "account settings > API keys.";
+    return {};
+}
+
+void Client::setClientId (const juce::String& raw)
+{
+    const auto k = cleanKey (raw);
+    if (k == id) return;
+    id = k;
     settings.setValue ("t3kClientId", id);
     disconnect();   // tokens belong to the old key
 }
@@ -299,7 +319,7 @@ void Client::run (std::function<T (juce::String& error)> job, std::function<void
 
 void Client::startFlow (const juce::StringPairArray& extra, std::function<void (int, juce::String)> done)
 {
-    if (id.isEmpty()) { done (0, "Enter your TONE3000 publishable key (client ID) first."); return; }
+    if (auto problem = keyProblem (id); problem.isNotEmpty()) { done (0, problem); return; }
     if (flowActive) cancelFlow();
     if (! server.start()) { done (0, "Could not open a local port for the TONE3000 sign-in."); return; }
 
