@@ -447,17 +447,24 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
     volumeSlider.setTooltip ("Drum kit volume");
     volumeSlider.onValueChange = [this] { if (! updating) doc.set (drums, dids::volume, volumeSlider.getValue() / 100.0, false); };
 
-    importButton.setTooltip ("Import a MIDI drum file as a new pattern (General MIDI drum notes)");
+    importButton.setTooltip ("Import a whole MIDI drum file: repeating parts become patterns, arranged as song sections");
     importButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Import MIDI drums", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.mid;*.midi");
         juce::Component::SafePointer<DrumPage> safe (this);
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc) {
             if (safe == nullptr || fc.getResult() == juce::File()) return;
-            juce::String id;
             safe->doc.undo().beginNewTransaction ("Import MIDI drums");
-            auto r = drums::importMidi (safe->drums, fc.getResult(), &safe->doc.undo(), id);
-            if (id.isNotEmpty()) safe->selectPattern (id);
-            if (r.failed()) safe->message (id.isNotEmpty() ? "Imported with warnings" : "Import failed", r.getErrorMessage());
+            auto r = drums::importMidi (safe->drums, fc.getResult(), &safe->doc.undo());
+            if (r.result.failed()) { safe->message ("Import failed", r.result.getErrorMessage()); return; }
+            if (r.tempo > 0.0) safe->doc.setTempo (r.tempo);
+            safe->selectPattern (r.firstPatternId);
+            juce::String msg;
+            msg << "Imported " << r.bars << " bars (" << r.hits << " hits) as " << r.patterns << (r.patterns == 1 ? " pattern" : " patterns")
+                << " arranged in " << r.sections << (r.sections == 1 ? " song section" : " song sections") << ".";
+            if (r.tempo > 0.0) msg << "\nTempo set to " << juce::String (r.tempo, 1) << " BPM.";
+            msg << "\nUse \"Play song\" to hear the whole file.";
+            if (! r.warnings.isEmpty()) msg << "\n\n" << r.warnings.joinIntoString ("\n");
+            safe->message ("Import complete", msg);
         });
     };
     exportButton.setTooltip ("Export the current pattern or the whole song as a General MIDI drum file");

@@ -14,7 +14,7 @@ project format, plugin system, milestone plan, risks and licensing.
 | Humanize | Timing (ms) and velocity (%) variation, identical on every playback |
 | Song | Arrange patterns into sections with repeats; reorder; play the song with a moving playhead |
 | Sound | Built-in synthesized kit (no samples needed; hi-hat choke, velocity, stereo placement); click follows the pattern meter |
-| Output | MIDI export (pattern or song, General MIDI drums) and import; render the song to an audio track in the Studio |
+| Output | MIDI export (pattern or song, General MIDI drums); MIDI import of whole drum songs of any length (repeating phrases become patterns, arranged as song sections, meter changes followed, tempo adopted); render the song to an audio track in the Studio |
 
 **Not yet in Milestone 4:** sample-based kits (load your own drum samples), a piano roll for melodic MIDI, flams/drags and
 cymbal chokes as articulations, drum tracks inside the tab editor (and Guitar Pro drum tracks), tempo changes inside a drum song.

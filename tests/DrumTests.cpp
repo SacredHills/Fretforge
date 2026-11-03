@@ -183,10 +183,10 @@ struct DrumTests : juce::UnitTest
             d::patterns (dr).appendChild (g, nullptr);
             auto f = juce::File::createTempFile ("mid");
             expect (d::exportMidi (dr, g, 100.0, f).wasOk());
-            juce::String id;
-            auto r = d::importMidi (dr, f, nullptr, id);
-            expect (r.wasOk(), r.getErrorMessage());
-            auto back = d::patternById (dr, id);
+            auto r = d::importMidi (dr, f, nullptr);
+            expect (r.result.wasOk(), r.result.getErrorMessage());
+            expectEquals (r.tempo, 100.0);
+            auto back = d::patternById (dr, r.firstPatternId);
             expect (back.isValid());
             expectEquals ((int) back[d::ids::bars], 2);
             std::set<std::tuple<int, int, int>> a, b;
@@ -194,6 +194,70 @@ struct DrumTests : juce::UnitTest
             for (auto h : back) b.insert ({ (int) h[d::ids::lane], (int) h[d::ids::tick], (int) h[d::ids::vel] });
             expect (a == b, "hits survive the round trip");
             f.deleteFile();
+        }
+
+        beginTest ("MIDI import of a whole song: long files, repeats, meter changes, shared patterns");
+        {
+            juce::ValueTree src ("PROJECT");
+            auto sd = d::getOrCreate (src);
+            auto mk = [&] (int genre, int bars, int num, int den, bool fill) {
+                d::GenOptions o;
+                o.genre = genre; o.bars = bars; o.tsNum = num; o.tsDen = den; o.fill = fill; o.crashOnOne = false;
+                auto p = d::generate (o);
+                d::patterns (sd).appendChild (p, nullptr);
+                return p[d::ids::id].toString();
+            };
+            const auto a = mk (d::genreRock, 1, 4, 4, false);
+            const auto b = mk (d::genreMetal, 2, 4, 4, true);
+            const auto c = mk (d::genreRock, 1, 3, 4, false);
+            d::addSection (sd, a, 8, -1, nullptr);
+            d::addSection (sd, b, 30, -1, nullptr);
+            d::addSection (sd, c, 4, -1, nullptr);
+            d::addSection (sd, a, 8, -1, nullptr);
+            const auto original = d::compile (sd, {}, 1);
+            expectEquals ((int) original.bars.size(), 80);
+            auto f = juce::File::createTempFile ("mid");
+            expect (d::exportMidi (sd, {}, 140.0, f).wasOk());
+
+            juce::ValueTree dst ("PROJECT");
+            auto dd = d::getOrCreate (dst);
+            auto r = d::importMidi (dd, f, nullptr);
+            expect (r.result.wasOk(), r.result.getErrorMessage());
+            expectEquals (r.bars, 80);
+            expectEquals (r.tempo, 140.0);
+            expectEquals (r.patterns, 3, "one pattern per distinct phrase");
+            expectEquals (r.sections, 4);
+            expectEquals (d::song (dd).getChild (0)[d::ids::pattern].toString(), d::song (dd).getChild (3)[d::ids::pattern].toString(),
+                          "the returning intro reuses its pattern");
+            expectEquals ((int) d::song (dd).getChild (1)[d::ids::repeats], 30);
+            const auto imported = d::compile (dd, {}, 1);
+            expectEquals (imported.lengthQ, original.lengthQ);
+            expectEquals ((int) imported.events.size(), (int) original.events.size());
+            std::multiset<std::pair<long long, int>> x, y;
+            for (auto& e : original.events) x.insert ({ std::llround (e.q * 960), e.piece });
+            for (auto& e : imported.events) y.insert ({ std::llround (e.q * 960), e.piece });
+            expect (x == y, "every hit is in the same place");
+            f.deleteFile();
+
+            // notes outside the kit are reported, the rest imports
+            juce::MidiMessageSequence seq;
+            for (int i = 0; i < 8; ++i)
+            {
+                seq.addEvent (juce::MidiMessage::noteOn (10, i % 2 ? 38 : 36, (juce::uint8) 100), i * 480.0);
+                seq.addEvent (juce::MidiMessage::noteOn (10, 70, (juce::uint8) 100), i * 480.0);
+            }
+            juce::MidiFile mf;
+            mf.setTicksPerQuarterNote (480);
+            mf.addTrack (seq);
+            auto g = juce::File::createTempFile ("mid");
+            { juce::FileOutputStream os (g); mf.writeTo (os); }
+            juce::ValueTree p3 ("PROJECT");
+            auto d3 = d::getOrCreate (p3);
+            auto r3 = d::importMidi (d3, g, nullptr);
+            expect (r3.result.wasOk());
+            expectEquals (r3.hits, 8);
+            expect (r3.warnings.joinIntoString (" ").contains ("70"), "unmapped note numbers are listed");
+            g.deleteFile();
         }
 
         beginTest ("synth: every piece sounds, stays bounded, hats choke");

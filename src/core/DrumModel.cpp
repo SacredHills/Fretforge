@@ -45,6 +45,9 @@ int pieceForGmNote (int note)
         case 43: return tomFloor;   // high floor tom
         case 59: return ride;       // ride 2
         case 58: return cowbell;
+        case 21: return hhPedal;    // extended kits (e.g. Guitar Pro / EZdrummer style hi-hat articulations)
+        case 22: return hhClosed;
+        case 23: case 24: case 25: case 26: return hhOpen;
         default: return -1;
     }
 }
@@ -592,51 +595,179 @@ juce::Result exportMidi (const juce::ValueTree& d, const juce::ValueTree& patter
     return juce::Result::ok();
 }
 
-juce::Result importMidi (juce::ValueTree d, const juce::File& file, juce::UndoManager* um, juce::String& createdId)
+MidiImport importMidi (juce::ValueTree d, const juce::File& file, juce::UndoManager* um)
 {
+    MidiImport res;
     juce::FileInputStream in (file);
     juce::MidiFile mf;
-    if (! in.openedOk() || ! mf.readFrom (in)) return juce::Result::fail ("Not a readable MIDI file.");
-    if (mf.getTimeFormat() <= 0) return juce::Result::fail ("SMPTE-timed MIDI files are not supported.");
+    if (! in.openedOk() || ! mf.readFrom (in)) { res.result = juce::Result::fail ("Not a readable MIDI file."); return res; }
+    if (mf.getTimeFormat() <= 0) { res.result = juce::Result::fail ("SMPTE-timed MIDI files are not supported."); return res; }
     const double scale = (double) ppq / mf.getTimeFormat();
-    int num = 4, den = 4;
+
+    struct Sig { int tick, num, den; };
     struct N { int tick, note, vel; };
+    std::vector<Sig> sigs;
+    std::vector<std::pair<int, double>> tempos;
     std::vector<N> all, ch10;
     for (int t = 0; t < mf.getNumTracks(); ++t)
         for (auto* ev : *mf.getTrack (t))
         {
             const auto& m = ev->message;
-            if (m.isTimeSignatureMetaEvent() && m.getTimeStamp() < 1.0) m.getTimeSignatureInfo (num, den);
-            if (! m.isNoteOn()) continue;
-            N n { juce::roundToInt (m.getTimeStamp() * scale), m.getNoteNumber(), m.getVelocity() };
-            all.push_back (n);
-            if (m.getChannel() == 10) ch10.push_back (n);
+            const int tick = juce::roundToInt (m.getTimeStamp() * scale);
+            if (m.isTimeSignatureMetaEvent()) { int n = 4, dd = 4; m.getTimeSignatureInfo (n, dd); sigs.push_back ({ tick, juce::jlimit (1, 32, n), juce::jlimit (1, 32, dd) }); }
+            else if (m.isTempoMetaEvent()) tempos.push_back ({ tick, 60.0 / m.getTempoSecondsPerQuarterNote() });
+            else if (m.isNoteOn())
+            {
+                N n { tick, m.getNoteNumber(), m.getVelocity() };
+                all.push_back (n);
+                if (m.getChannel() == 10) ch10.push_back (n);
+            }
         }
     auto& notes = ch10.empty() ? all : ch10;
-    if (notes.empty()) return juce::Result::fail ("The MIDI file contains no notes.");
+    if (notes.empty()) { res.result = juce::Result::fail ("The MIDI file contains no notes."); return res; }
+    std::stable_sort (sigs.begin(), sigs.end(), [] (const Sig& a, const Sig& b) { return a.tick < b.tick; });
+    std::stable_sort (tempos.begin(), tempos.end());
+    std::stable_sort (notes.begin(), notes.end(), [] (const N& a, const N& b) { return a.tick < b.tick; });
 
-    int lastTick = 0;
-    bool triplets = false, fine = false;
-    for (auto& n : notes)
+    // tempo
+    if (! tempos.empty())
     {
-        lastTick = juce::jmax (lastTick, n.tick);
-        if (n.tick % (ppq / 4) != 0 && n.tick % (ppq / 6) == 0) triplets = true;
-        else if (n.tick % (ppq / 4) != 0) fine = true;
+        res.tempo = std::round (juce::jlimit (10.0, 999.0, tempos.front().second) * 100.0) / 100.0;  // MIDI stores whole microseconds
+        bool changes = false;
+        for (auto& [tick, bpm] : tempos) changes = changes || std::abs (bpm - tempos.front().second) > 0.05;
+        if (changes) res.warnings.add ("The file changes tempo; the drum song plays at " + juce::String (res.tempo, 1)
+                                       + " BPM throughout (tempo changes in drum songs are not supported yet).");
     }
-    auto p = makePattern (file.getFileNameWithoutExtension(), num, den, 1, triplets ? 6 : (fine ? 8 : 4));
-    const int bars = juce::jlimit (1, 64, lastTick / barTicks (p) + 1);
-    p.setProperty (ids::bars, bars, nullptr);
-    int unmapped = 0;
+
+    // bar grid following the meter changes
+    struct Bar { int start, len, num, den; };
+    std::vector<Bar> bars;
+    const int lastTick = notes.back().tick;
+    int num = 4, den = 4, pos = 0;
+    size_t si = 0;
+    while (pos <= lastTick && bars.size() < 4000)
+    {
+        while (si < sigs.size() && sigs[si].tick <= pos) { num = sigs[si].num; den = sigs[si].den; ++si; }
+        const int len = num * ppq * 4 / den;
+        bars.push_back ({ pos, len, num, den });
+        pos += len;
+    }
+    if (bars.size() >= 4000) res.warnings.add ("Only the first 4000 bars were imported.");
+
+    // hits per bar (mapped to kit pieces)
+    std::map<int, int> unmapped;
+    std::vector<std::vector<std::array<int, 3>>> barHits (bars.size());
+    size_t bi = 0;
     for (auto& n : notes)
     {
+        while (bi + 1 < bars.size() && n.tick >= bars[bi].start + bars[bi].len) ++bi;
+        if (n.tick >= bars[bi].start + bars[bi].len) continue;
         const int piece = pieceForGmNote (n.note);
-        if (piece < 0 || n.tick >= lengthTicks (p)) { ++unmapped; continue; }
-        setHit (p, piece, n.tick, n.vel, nullptr);
+        if (piece < 0) { ++unmapped[n.note]; continue; }
+        barHits[bi].push_back ({ piece, n.tick - bars[bi].start, juce::jlimit (1, 127, n.vel) });
+        ++res.hits;
     }
-    patterns (d).appendChild (p, um);
-    createdId = p[ids::id].toString();
-    if (unmapped > 0)
-        return juce::Result::fail (juce::String (unmapped) + " note(s) were not General MIDI drum sounds or were past bar 64 and were skipped.");
-    return juce::Result::ok();
+    if (! unmapped.empty())
+    {
+        juce::StringArray list;
+        int count = 0;
+        for (auto& [note, c] : unmapped) { list.add (juce::String (note)); count += c; }
+        res.warnings.add (juce::String (count) + " note(s) use sounds this kit doesn't have (MIDI notes " + list.joinIntoString (", ")
+                          + ", e.g. tambourine or Latin percussion) and were skipped.");
+    }
+    // trailing empty bars after the last hit are not useful
+    while (! bars.empty() && barHits.back().empty()) { bars.pop_back(); barHits.pop_back(); }
+    if (bars.empty()) { res.result = juce::Result::fail ("No playable drum notes were found."); return res; }
+
+    // content key per bar (velocities compared in coarse steps so tiny humanised differences still match)
+    std::vector<juce::String> keys;
+    for (size_t b = 0; b < bars.size(); ++b)
+    {
+        auto h = barHits[b];
+        std::sort (h.begin(), h.end(), [] (auto& x, auto& y) { return x[1] != y[1] ? x[1] < y[1] : x[0] < y[0]; });
+        juce::String k;
+        k << bars[b].num << "/" << bars[b].den << ":";
+        for (auto& x : h) k << x[0] << "@" << x[1] << "v" << x[2] / 16 << ",";
+        keys.push_back (k);
+    }
+    auto phraseKey = [&] (size_t from, size_t len) { juce::String k; for (size_t i = from; i < from + len; ++i) k << keys[i] << "|"; return k; };
+    auto sameMeter = [&] (size_t from, size_t len) {
+        for (size_t i = from; i < from + len; ++i) if (bars[i].num != bars[from].num || bars[i].den != bars[from].den) return false;
+        return true;
+    };
+
+    std::map<juce::String, juce::String> patternForPhrase;
+    const auto base = file.getFileNameWithoutExtension();
+    auto letterName = [] (int i) { juce::String s; do { s = juce::String::charToString ((juce::juce_wchar) ('A' + i % 26)) + s; i = i / 26 - 1; } while (i >= 0); return s; };
+    juce::ValueTree lastSection;
+    juce::String lastPattern;
+
+    size_t i = 0;
+    while (i < bars.size())
+    {
+        // choose the phrase length that covers the most bars by repeating; otherwise group up to 4 bars
+        size_t bestLen = 0, bestReps = 1, bestCover = 0;
+        for (size_t len : { (size_t) 1, (size_t) 2, (size_t) 4, (size_t) 8 })   // shortest phrase wins a tie
+        {
+            if (i + len > bars.size() || ! sameMeter (i, len)) continue;
+            const auto k = phraseKey (i, len);
+            size_t reps = 1;
+            while (i + (reps + 1) * len <= bars.size() && sameMeter (i + reps * len, len) && bars[i + reps * len].num == bars[i].num
+                   && phraseKey (i + reps * len, len) == k)
+                ++reps;
+            const bool known = patternForPhrase.count (k) > 0;
+            if ((reps >= 2 || known) && len * reps > bestCover) { bestLen = len; bestReps = reps; bestCover = len * reps; }
+        }
+        if (bestLen == 0)
+        {
+            bestLen = 1;
+            while (bestLen < 4 && i + bestLen < bars.size() && sameMeter (i, bestLen + 1)) ++bestLen;
+            // stop before a bar that starts a repeat or a known phrase
+            for (size_t l = 1; l < bestLen; ++l)
+                if ((i + l + 1 < bars.size() && keys[i + l] == keys[i + l + 1]) || patternForPhrase.count (phraseKey (i + l, 1)) > 0)
+                { bestLen = l; break; }
+            bestReps = 1;
+        }
+
+        const auto k = phraseKey (i, bestLen);
+        juce::String pid;
+        if (auto it = patternForPhrase.find (k); it != patternForPhrase.end()) pid = it->second;
+        else
+        {
+            bool triplets = false, fine = false;
+            for (size_t b = i; b < i + bestLen; ++b)
+                for (auto& x : barHits[b])
+                {
+                    if (x[1] % (ppq / 4) != 0 && x[1] % (ppq / 6) == 0) triplets = true;
+                    else if (x[1] % (ppq / 4) != 0) fine = true;
+                }
+            auto p = makePattern (base + " " + letterName (res.patterns), bars[i].num, bars[i].den, (int) bestLen, triplets ? 6 : (fine ? 8 : 4));
+            for (size_t b = i; b < i + bestLen; ++b)
+                for (auto& x : barHits[b])
+                    setHit (p, x[0], (int) (b - i) * bars[i].len + x[1], x[2], nullptr);
+            patterns (d).appendChild (p, um);
+            pid = p[ids::id].toString();
+            patternForPhrase[k] = pid;
+            if (res.patterns == 0) res.firstPatternId = pid;
+            ++res.patterns;
+        }
+        if (pid == lastPattern && lastSection.isValid() && (int) lastSection[ids::repeats] + (int) bestReps <= 64)
+            lastSection.setProperty (ids::repeats, (int) lastSection[ids::repeats] + (int) bestReps, um);
+        else
+        {
+            int reps = (int) bestReps;
+            while (reps > 0)
+            {
+                lastSection = addSection (d, pid, juce::jmin (64, reps), -1, um);
+                reps -= 64;
+                ++res.sections;
+            }
+        }
+        lastPattern = pid;
+        i += bestLen * bestReps;
+    }
+    res.bars = (int) bars.size();
+    return res;
 }
+
 } // namespace ff::drums

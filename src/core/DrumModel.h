@@ -112,6 +112,17 @@ juce::ValueTree generate (const GenOptions&);
 // ---- MIDI ----
 /** Standard MIDI File on channel 10 (pattern or whole song). */
 juce::Result exportMidi (const juce::ValueTree& drums, const juce::ValueTree& patternOrInvalid, double tempo, const juce::File&);
-/** Adds a pattern from the drum notes of a MIDI file (all channel-10 notes, or all notes if none are on 10). */
-juce::Result importMidi (juce::ValueTree drums, const juce::File&, juce::UndoManager*, juce::String& createdId);
+/** Imports a whole MIDI drum file (channel-10 notes, or all notes if none are on 10). Bars are split into
+    patterns: repeated phrases (1, 2, 4 or 8 bars) become one pattern used by a section with repeats, identical
+    phrases anywhere in the song share a pattern, and the sections are appended to the song arrangement.
+    Meter changes are followed; the first tempo is returned for the caller to adopt. */
+struct MidiImport
+{
+    juce::Result result = juce::Result::ok();
+    juce::StringArray warnings;
+    juce::String firstPatternId;
+    int patterns = 0, sections = 0, bars = 0, hits = 0;
+    double tempo = 0.0;
+};
+MidiImport importMidi (juce::ValueTree drums, const juce::File&, juce::UndoManager*);
 } // namespace ff::drums
