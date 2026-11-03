@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_data_structures/juce_data_structures.h>
+#include <array>
 #include <vector>
 
 /** Drum studio model.
@@ -125,4 +126,14 @@ struct MidiImport
     double tempo = 0.0;
 };
 MidiImport importMidi (juce::ValueTree drums, const juce::File&, juce::UndoManager*);
+
+/** One bar of hits to arrange: {piece, tick within the bar, velocity}. */
+struct ImportBar
+{
+    int num = 4, den = 4;
+    std::vector<std::array<int, 3>> hits;
+};
+/** Turns a sequence of bars into patterns (repeated phrases shared) and appends song sections (used by MIDI and
+    Guitar Pro import). `hits` in the result counts the hits of the input bars. */
+MidiImport arrangeBars (juce::ValueTree drums, std::vector<ImportBar> bars, const juce::String& baseName, juce::UndoManager*);
 } // namespace ff::drums

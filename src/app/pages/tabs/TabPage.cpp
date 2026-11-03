@@ -4,6 +4,7 @@
 #include "core/GuitarPro.h"
 #include "core/MusicXml.h"
 #include "ScorePdf.h"
+#include "core/DrumModel.h"
 
 namespace ff
 {
@@ -70,13 +71,17 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
     notationButton.setClickingTogglesState (true);
     notationButton.setTooltip ("Show standard notation above the tab");
     notationButton.onClick = [this] { doc.set (score, tids::notation, notationButton.getToggleState(), false); editor.grabKeyboardFocus(); };
+    drumsButton.setClickingTogglesState (true);
+    drumsButton.setToggleState (settings.getBoolValue ("tabDrums", false), juce::dontSendNotification);
+    drumsButton.setTooltip ("Play the Drum Studio song along with the tab (bar 1 of the drum song = bar 1 of the score)");
+    drumsButton.onClick = [this] { settings.setValue ("tabDrums", drumsButton.getToggleState()); rebuildSequence(); editor.grabKeyboardFocus(); };
     midiButton.setClickingTogglesState (true);
     midiButton.setTooltip ("Enter notes from a MIDI keyboard or MIDI guitar: play a note or chord to write it at the cursor");
     midiButton.onClick = [this] { setMidiInput (midiButton.getToggleState()); editor.grabKeyboardFocus(); };
 
     for (auto* c : std::initializer_list<juce::Component*> { &trackCombo, &addTrackButton, &tuningButton, &trackMenuButton, &tempoSlider,
                                                              &speedCombo, &playButton, &loopButton, &loopSongButton, &clickButton, &countButton,
-                                                             &importButton, &exportButton, &notationButton, &midiButton })
+                                                             &importButton, &exportButton, &notationButton, &midiButton, &drumsButton })
     {
         c->setWantsKeyboardFocus (false);
         addAndMakeVisible (c);
@@ -324,7 +329,10 @@ void TabPage::restoreEngine()
 void TabPage::rebuildSequence()
 {
     playMap = tab::tempoMap (score, speed);
-    host.engine.submitTabSequence (buildTabSequence (score, speed));
+    auto seq = buildTabSequence (score, speed);
+    if (drumsButton.getToggleState())
+        addDrumSong (*seq, drums::find (root), playMap);
+    host.engine.submitTabSequence (std::move (seq));
 }
 
 void TabPage::togglePlay()
@@ -762,11 +770,11 @@ void TabPage::resized()
 {
     auto r = getLocalBounds();
     auto row1 = r.removeFromTop (42).reduced (8, 7);
-    const bool roomy = row1.getWidth() >= 1410;
+    const bool roomy = row1.getWidth() >= 1480;
     tempoLabel.setVisible (roomy);
     speedLabel.setVisible (roomy);
     if (roomy && tempoLabel.getParentComponent() == nullptr) { addAndMakeVisible (tempoLabel); addAndMakeVisible (speedLabel); }
-    trackCombo.setBounds (row1.removeFromLeft (roomy ? 230 : 190));
+    trackCombo.setBounds (row1.removeFromLeft (roomy ? 230 : 156));
     row1.removeFromLeft (6);
     addTrackButton.setBounds (row1.removeFromLeft (72));
     row1.removeFromLeft (4);
@@ -788,7 +796,7 @@ void TabPage::resized()
     row1.removeFromLeft (4);
     clickButton.setBounds (row1.removeFromLeft (50));
     row1.removeFromLeft (4);
-    countButton.setBounds (row1.removeFromLeft (72));
+    countButton.setBounds (row1.removeFromLeft (64));
     exportButton.setBounds (row1.removeFromRight (70));
     row1.removeFromRight (4);
     importButton.setBounds (row1.removeFromRight (70));
@@ -796,6 +804,8 @@ void TabPage::resized()
     midiButton.setBounds (row1.removeFromRight (64));
     row1.removeFromRight (4);
     notationButton.setBounds (row1.removeFromRight (76));
+    row1.removeFromRight (4);
+    drumsButton.setBounds (row1.removeFromRight (58));
 
     auto row2 = r.removeFromTop (42).reduced (8, 8);
     for (auto* b : durButtons) { b->setBounds (row2.removeFromLeft (34)); row2.removeFromLeft (2); }

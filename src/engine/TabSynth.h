@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_data_structures/juce_data_structures.h>
 #include "DrumSynth.h"
+#include "core/TabModel.h"
 #include <vector>
 
 namespace ff
@@ -32,6 +33,9 @@ struct TabSequence
 
 /** Drum studio playback: one pattern (or the whole song when `pattern` is invalid) at `bpm`. */
 std::unique_ptr<TabSequence> buildDrumSequence (const juce::ValueTree& drums, const juce::ValueTree& pattern, double bpm);
+
+/** Adds the drum song (play-along) to a tab sequence, timed through the score's tempo map. */
+void addDrumSong (TabSequence&, const juce::ValueTree& drums, const tab::TempoMap& map);
 
 /** Builds a sequence from a SCORE node. `speed` scales the tempo (0.5 = half speed, pitch unchanged). */
 std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, double speed);

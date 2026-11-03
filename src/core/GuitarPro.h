@@ -18,6 +18,7 @@ struct Note
     bool tie = false, hammer = false, dead = false, ghost = false, palmMute = false, letRing = false;
     bool vibrato = false, staccato = false, accent = false, tap = false, prebend = false;
     int slide = slideNone, harmonic = harmNone;
+    int drumNote = -1;                  // percussion tracks: General MIDI drum note
     float bend = 0.0f;                  // semitones (highest point)
 };
 
@@ -80,8 +81,12 @@ juce::MemoryBlock extractGpxFile (const juce::MemoryBlock& container, const juce
 std::vector<int> playbackOrder (const std::vector<MasterBar>& bars, int maxBars = 4000);
 
 /** Writes the song into `score`. With `replace`, the existing tab tracks and bars are removed first and the
-    song's title, tempo and meter are adopted; otherwise its tracks are added to the existing score. */
+    song's title, tempo and meter are adopted; otherwise its tracks are added to the existing score.
+    Drum tracks go into the project's Drum Studio (patterns + song sections; `replace` replaces the drum song). */
 ImportResult applySong (juce::ValueTree score, const Song& song, bool replace, juce::UndoManager*);
+
+/** General MIDI drum note for a Guitar Pro 6 drum element / variation. */
+int gp6DrumNote (int element, int variation);
 
 /** Convenience: readFile + applySong. */
 ImportResult importFile (juce::ValueTree score, const juce::File& file, bool replace, juce::UndoManager*);

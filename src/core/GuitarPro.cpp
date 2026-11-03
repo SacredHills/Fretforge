@@ -1,5 +1,6 @@
 #include "GuitarPro.h"
 #include "Timeline.h"
+#include "DrumModel.h"
 #include <array>
 #include <cstring>
 #include <map>
@@ -349,6 +350,11 @@ private:
             Note n;
             const bool keep = readNote (n);
             n.string = ns - 1 - stringIndex;
+            if (keep && t.drums && ! n.tie)
+            {
+                b.notes.push_back (n);
+                continue;
+            }
             if (! keep || stringIndex >= ns || t.drums) continue;
             if (beatHarmonic != harmNone) n.harmonic = beatHarmonic;
             if (beatVibrato) n.vibrato = true;
@@ -507,6 +513,7 @@ private:
         if (hasFret)
         {
             const int f = r.s8();
+            n.drumNote = f;                       // raw value: percussion tracks store the MIDI drum note here
             if (f < 0) n.dead = true;
             n.fret = juce::jlimit (0, maxFret, f);
         }
@@ -683,6 +690,7 @@ private:
     Song& song;
     std::map<juce::String, const juce::XmlElement*> rhythms, notes, beats, voices, bars;
     std::vector<std::map<juce::String, std::pair<juce::String, juce::String>>> chordsPerTrack; // id -> (name, frets)
+    std::vector<std::vector<int>> drumArticulations;  // per track: articulation index -> MIDI note
     Counters counters;
 
     static void index (const juce::XmlElement* parent, const juce::String& tag, std::map<juce::String, const juce::XmlElement*>& out)
@@ -736,6 +744,14 @@ private:
                                 + " " + (t->getChildByName ("Instrument") != nullptr ? t->getChildByName ("Instrument")->getStringAttribute ("ref") : juce::String()))
                                    .toLowerCase();
         tr.drums = instrType.contains ("drum") || instrType.contains ("percussion");
+        std::vector<int> artic;
+        if (auto* set = t->getChildByName ("InstrumentSet"))
+            if (auto* elems = set->getChildByName ("Elements"))
+                for (auto* el : elems->getChildWithTagNameIterator ("Element"))
+                    if (auto* arts = el->getChildByName ("Articulations"))
+                        for (auto* a : arts->getChildWithTagNameIterator ("Articulation"))
+                            artic.push_back (childText (a, "OutputMidiNumber").getIntValue());
+        drumArticulations.push_back (artic);
         tr.bass = instrType.contains ("bass") || (! tr.tuning.empty() && tr.tuning.size() <= 6 && tr.tuning.front() <= 33);
         const auto state = childText (t, "PlaybackState");
         tr.solo = state == "Solo";
@@ -881,12 +897,40 @@ private:
         for (auto& nid : juce::StringArray::fromTokens (childText (e, "Notes"), " ", ""))
         {
             auto ne = notes.find (nid);
-            if (ne == notes.end() || tr.drums) continue;
+            if (ne == notes.end()) continue;
+            if (tr.drums)
+            {
+                Note dn;
+                if (readDrumNote (ne->second, dn, drumArticulations[(size_t) trackIndex])) b.notes.push_back (dn);
+                continue;
+            }
             Note n;
             if (readNote (ne->second, n, (int) tr.tuning.size()))
                 b.notes.push_back (n);
         }
         return b;
+    }
+
+    static bool readDrumNote (const juce::XmlElement* e, Note& n, const std::vector<int>& artic)
+    {
+        if (auto* tie = e->getChildByName ("Tie"); tie != nullptr && tie->getStringAttribute ("destination").equalsIgnoreCase ("true"))
+            return false;   // a tied drum note does not sound again
+        if (e->getChildByName ("AntiAccent") != nullptr) n.ghost = true;
+        if (auto* acc = e->getChildByName ("Accent")) n.accent = (acc->getAllSubText().getIntValue() & 0x0c) != 0;
+        if (auto* ia = e->getChildByName ("InstrumentArticulation"))
+        {
+            const int idx = ia->getAllSubText().getIntValue();
+            if (juce::isPositiveAndBelow (idx, (int) artic.size()) && artic[(size_t) idx] > 0) { n.drumNote = artic[(size_t) idx]; return true; }
+        }
+        int element = -1, variation = 0;
+        if (auto* props = e->getChildByName ("Properties"))
+        {
+            if (auto* p = findProperty (props, "Element")) element = childText (p, "Element").getIntValue();
+            if (auto* p = findProperty (props, "Variation")) variation = childText (p, "Variation").getIntValue();
+        }
+        if (element < 0) return false;
+        n.drumNote = gp6DrumNote (element, variation);
+        return n.drumNote > 0;
     }
 
     bool readNote (const juce::XmlElement* e, Note& n, int stringCount)
@@ -1117,6 +1161,18 @@ juce::Result readGpx (const juce::MemoryBlock& data, Song& out)
     return readGpif (gpif.toString(), out);
 }
 
+int gp6DrumNote (int element, int variation)
+{
+    // Guitar Pro 6 drum kit: element -> notes for variations 0..2 (GM numbers; rim shot, half-open hat, ride edge
+    // and choked cymbals use the nearest General MIDI sound)
+    static const int table[17][3] = {
+        { 35, 35, 35 }, { 38, 38, 37 }, { 56, 56, 56 }, { 56, 56, 56 }, { 56, 56, 56 }, { 41, 41, 41 }, { 45, 45, 45 },
+        { 47, 47, 47 }, { 48, 48, 48 }, { 50, 50, 50 }, { 42, 46, 46 }, { 44, 44, 44 }, { 57, 57, 57 }, { 49, 49, 49 },
+        { 55, 55, 55 }, { 51, 51, 53 }, { 52, 52, 52 } };
+    if (! juce::isPositiveAndBelow (element, 17)) return 38;
+    return table[element][juce::jlimit (0, 2, variation)];
+}
+
 bool isGuitarProFile (const juce::File& f)
 {
     return f.hasFileExtension ("gp3;gp4;gp5;gpx;gp");
@@ -1237,12 +1293,63 @@ ImportResult applySong (juce::ValueTree score, const Song& song, bool replace, j
         if (t.tuning.empty()) { ++empty; continue; }
         usable.push_back (&t);
     }
-    if (drums > 0) res.warnings.add (juce::String (drums) + " drum track(s) were skipped (the Drum Studio arrives in a later milestone).");
     if (empty > 0) res.warnings.add (juce::String (empty) + " track(s) without a string tuning were skipped.");
-    if (usable.empty())
+
+    // drum tracks -> Drum Studio patterns and song sections
+    int drumHits = 0;
+    std::vector<drums::ImportBar> drumBars;
+    if (drums > 0 && score.getParent().isValid())
     {
-        res.result = juce::Result::fail ("The file has no guitar or bass tracks to import.");
+        std::map<int, int> unmapped;
+        for (size_t i = 0; i < order.size(); ++i)
+        {
+            const auto& mb = song.masterBars[(size_t) order[i]];
+            drums::ImportBar ib;
+            ib.num = mb.num;
+            ib.den = mb.den;
+            for (auto& t : song.tracks)
+            {
+                if (! t.drums || order[i] >= (int) t.bars.size()) continue;
+                double q = 0.0;
+                for (auto& b : t.bars[(size_t) order[i]].beats)
+                {
+                    for (auto& n : b.notes)
+                    {
+                        const int piece = drums::pieceForGmNote (n.drumNote);
+                        if (piece < 0) { ++unmapped[n.drumNote]; continue; }
+                        ib.hits.push_back ({ piece, juce::roundToInt (q * drums::ppq), n.ghost ? 45 : n.accent ? 127 : 100 });
+                        ++drumHits;
+                    }
+                    q += beatLengthQ (b.dur, b.dots, b.tuplet);
+                }
+            }
+            drumBars.push_back (std::move (ib));
+        }
+        if (! unmapped.empty())
+        {
+            juce::StringArray list;
+            for (auto& [note, c] : unmapped) list.add (juce::String (note));
+            res.warnings.add ("Some drum sounds are not in the kit and were skipped (MIDI notes " + list.joinIntoString (", ") + ").");
+        }
+    }
+    if (usable.empty() && drumHits == 0)
+    {
+        res.result = juce::Result::fail (drums > 0 ? "The file's drum tracks contain no notes, and there are no guitar or bass tracks."
+                                                   : "The file has no guitar or bass tracks to import.");
         return res;
+    }
+    if (drumHits > 0)
+    {
+        auto drumsNode = drums::getOrCreate (score.getParent());
+        if (replace) drums::song (drumsNode).removeAllChildren (um);
+        auto arranged = drums::arrangeBars (drumsNode, drumBars, song.title.isNotEmpty() ? song.title : juce::String ("Drums"), um);
+        if (arranged.result.wasOk())
+        {
+            drumsNode.setProperty (drums::ids::selected, arranged.firstPatternId, nullptr);
+            res.warnings.add ("Drums: " + juce::String (drums) + " drum track(s) went into the Drum Studio as " + juce::String (arranged.patterns)
+                              + " pattern(s) in " + juce::String (arranged.sections) + " song section(s). In Guitar Tabs, turn on "
+                              "\"Drums\" to play along.");
+        }
     }
 
     if (replace)

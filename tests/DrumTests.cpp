@@ -2,6 +2,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_events/juce_events.h>
 #include "core/DrumModel.h"
+#include "core/TabModel.h"
 #include "engine/DrumSynth.h"
 #include "engine/TabSynth.h"
 #include "engine/AudioEngine.h"
@@ -258,6 +259,26 @@ struct DrumTests : juce::UnitTest
             expectEquals (r3.hits, 8);
             expect (r3.warnings.joinIntoString (" ").contains ("70"), "unmapped note numbers are listed");
             g.deleteFile();
+        }
+
+        beginTest ("play-along: drum song follows the tab score's tempo changes");
+        {
+            juce::ValueTree pr ("PROJECT");
+            auto sc = ff::tab::getOrCreateScore (pr);
+            sc.setProperty (ff::tab::ids::tempo, 120.0, nullptr);
+            ff::tab::measures (sc).getChild (1).setProperty (ff::tab::ids::tempo, 60.0, nullptr);
+            auto dr = d::getOrCreate (pr);
+            auto pat = d::addPattern (dr, "K", 4, 4, 1, nullptr);
+            d::setHit (pat, d::kick, 0, 100, nullptr);
+            d::addSection (dr, pat[d::ids::id].toString(), 3, -1, nullptr);
+            TabSequence seq;
+            addDrumSong (seq, dr, ff::tab::tempoMap (sc, 1.0));
+            expectEquals ((int) seq.drumHits.size(), 3);
+            expectWithinAbsoluteError (seq.drumHits[1].sec, 2.0, 1e-9);
+            expectWithinAbsoluteError (seq.drumHits[2].sec, 6.0, 1e-9);
+            TabSequence slow;
+            addDrumSong (slow, dr, ff::tab::tempoMap (sc, 0.5));
+            expectWithinAbsoluteError (slow.drumHits[2].sec, 12.0, 1e-9);
         }
 
         beginTest ("synth: every piece sounds, stays bounded, hats choke");

@@ -2,6 +2,7 @@
 #include "core/GuitarPro.h"
 #include "core/TabModel.h"
 #include "core/MusicXml.h"
+#include "core/DrumModel.h"
 
 using namespace ff;
 namespace t = ff::tab;
@@ -261,7 +262,16 @@ struct GuitarProTests : juce::UnitTest
             auto res = g::applySong (score, song, true, nullptr);
             expect (res.result.wasOk());
             expectEquals (res.tracksAdded, 1);
-            expect (res.warnings.joinIntoString ("\n").contains ("drum"));
+            expect (res.warnings.joinIntoString ("\n").contains ("Drum Studio"));
+            auto drumsNode = ff::drums::find (project);
+            expect (drumsNode.isValid());
+            expect (ff::drums::song (drumsNode).getNumChildren() > 0);
+            auto dc = ff::drums::compile (drumsNode, {}, 1);
+            expectEquals ((int) dc.bars.size(), 4, "drum song follows the written-out repeats");
+            expectEquals ((int) dc.events.size(), 4, "one kick per bar");
+            expectEquals (dc.events[0].piece, (int) ff::drums::kick2);
+            expectEquals (ff::tab::gp::gp6DrumNote (10, 2), 46);
+            expectEquals (ff::tab::gp::gp6DrumNote (15, 2), 53);
             expectEquals (t::numMeasures (score), 4);                  // 1 2 1 2
             auto tr0 = t::tracks (score).getChild (0);
             expectEquals (tr0.getChild (0).getChild (0)[t::ids::lyric].toString(), juce::String ("hel-"));

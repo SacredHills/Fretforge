@@ -70,6 +70,17 @@ std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, dou
     return seq;
 }
 
+void addDrumSong (TabSequence& seq, const juce::ValueTree& d, const tab::TempoMap& map)
+{
+    if (! d.isValid()) return;
+    const auto c = drums::compile (d, {}, 1);
+    seq.drumVolume = (float) (double) d.getProperty (drums::ids::volume, 0.8);
+    for (auto& e : c.events)
+        seq.drumHits.push_back ({ juce::jmax (0.0, map.secondsAt (e.q) + e.offsetSec), e.piece, e.velocity });
+    std::stable_sort (seq.drumHits.begin(), seq.drumHits.end(), [] (const DrumHit& a, const DrumHit& b) { return a.sec < b.sec; });
+    seq.lengthSec = juce::jmax (seq.lengthSec, map.secondsAt (c.lengthQ));
+}
+
 std::unique_ptr<TabSequence> buildDrumSequence (const juce::ValueTree& d, const juce::ValueTree& pattern, double bpm)
 {
     auto seq = std::make_unique<TabSequence>();

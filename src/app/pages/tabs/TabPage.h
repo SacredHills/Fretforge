@@ -50,7 +50,7 @@ private:
     juce::Label tempoLabel, speedLabel;
     juce::TextButton playButton { "Play" }, loopButton { "Loop" }, loopSongButton { "Loop song" }, clickButton { "Click" }, countButton { "Count-in" };
     juce::TextButton importButton { "Import..." }, exportButton { "Export..." };
-    juce::TextButton notationButton { "Notation" }, midiButton { "MIDI In" };
+    juce::TextButton notationButton { "Notation" }, midiButton { "MIDI In" }, drumsButton { "Drums" };
     // row 2: entry palette
     juce::OwnedArray<juce::TextButton> durButtons;
     juce::TextButton dotButton { "." }, tripletButton { "3" }, restButton { "Rest" };
