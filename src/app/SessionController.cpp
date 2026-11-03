@@ -1,0 +1,429 @@
+#include "SessionController.h"
+
+namespace ff
+{
+using namespace timeline;
+
+SessionController::SessionController (EngineHost& h, ProjectDocument& d, juce::PropertiesFile& s)
+    : host (h), doc (d), settings (s)
+{
+    cache.onLoaded = [this] {
+        triggerAsyncUpdate();
+        if (onArrangementChanged) onArrangementChanged();
+    };
+    cache.onError = [this] (const juce::String& e) { if (onError) onError ("Audio file problem", e); };
+    rebind();
+    startTimerHz (30);
+}
+
+SessionController::~SessionController()
+{
+    stopTimer();
+    root.removeListener (this);
+    if (sessionActive)
+    {
+        host.engine.stop();
+        for (auto& [id, r] : recorders)
+        {
+            diskWriter.remove (r);
+            r->finish();
+        }
+    }
+}
+
+void SessionController::rebind()
+{
+    root.removeListener (this);
+    root = doc.tree();
+    root.addListener (this);
+    selectedTracks.clear();
+    selectionAnchor = {};
+    if (auto first = doc.tracks().getChild (0); first.isValid())
+        setSelectedTracks ({ first });
+    selectionChanged.sendChangeMessage();
+    rebuildGraphNow();
+}
+
+void SessionController::valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree& child, int)
+{
+    if (child.hasType (ids::TRACK) && selectedTracks.contains (child))
+    {
+        selectedTracks.removeAllInstancesOf (child);
+        if (selectionAnchor == child) selectionAnchor = selectedTracks.getFirst();
+        selectionChanged.sendChangeMessage();
+    }
+    triggerAsyncUpdate();
+}
+
+// ------------------------------------------------------------------ selection
+
+void SessionController::setSelectedTracks (const juce::Array<juce::ValueTree>& tracks)
+{
+    selectedTracks = tracks;
+    if (! selectedTracks.contains (selectionAnchor))
+        selectionAnchor = selectedTracks.getFirst();
+    selectionChanged.sendChangeMessage();
+}
+
+void SessionController::selectTrackRange (const juce::ValueTree& from, const juce::ValueTree& to)
+{
+    auto tracks = doc.tracks();
+    int a = tracks.indexOf (from), b = tracks.indexOf (to);
+    if (a < 0) a = b;
+    if (b < 0) return;
+    juce::Array<juce::ValueTree> range;
+    for (int i = juce::jmin (a, b); i <= juce::jmax (a, b); ++i)
+        range.add (tracks.getChild (i));
+    selectedTracks = range;
+    selectionAnchor = from.isValid() ? from : to;
+    selectionChanged.sendChangeMessage();
+}
+
+void SessionController::clickTrack (const juce::ValueTree& t, juce::ModifierKeys mods)
+{
+    if (! t.isValid()) return;
+    if (mods.isShiftDown() && selectionAnchor.isValid())
+    {
+        const auto anchor = selectionAnchor;
+        selectTrackRange (anchor, t);
+        selectionAnchor = anchor;
+        return;
+    }
+    if (mods.isCommandDown() || mods.isCtrlDown())
+    {
+        if (selectedTracks.contains (t)) selectedTracks.removeAllInstancesOf (t);
+        else selectedTracks.add (t);
+        selectionAnchor = t;
+        selectionChanged.sendChangeMessage();
+        return;
+    }
+    if (selectedTracks.size() == 1 && selectedTracks[0] == t) return;
+    selectedTracks = { t };
+    selectionAnchor = t;
+    selectionChanged.sendChangeMessage();
+}
+
+juce::Array<juce::ValueTree> SessionController::tracksForEdit (const juce::ValueTree& clicked) const
+{
+    if (selectedTracks.contains (clicked) && selectedTracks.size() > 1)
+        return selectedTracks;
+    return { clicked };
+}
+
+juce::ValueTree SessionController::primaryTrack()
+{
+    for (auto t : doc.tracks())
+        if (selectedTracks.contains (t))
+            return t;
+    return {};
+}
+
+void SessionController::setOnTracks (const juce::ValueTree& clicked, const juce::Identifier& id, const juce::var& value,
+                                     bool undoable, const juce::String& undoName)
+{
+    if (undoable) doc.undo().beginNewTransaction (undoName);
+    for (auto t : tracksForEdit (clicked))
+        doc.set (t, id, value, undoable);
+}
+
+void SessionController::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier&)
+{
+    if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP))
+        triggerAsyncUpdate();
+}
+
+void SessionController::rebuildGraphNow()
+{
+    cancelPendingUpdate();
+    GraphBuildOptions opt;
+    opt.sampleRate = host.engine.getSampleRate() > 0 ? host.engine.getSampleRate() : 48000.0;
+    opt.recorders = &recorders;
+    host.engine.submitGraph (buildPlaybackGraph (doc.tracks(), doc.mediaBundle(), cache, opt));
+}
+
+juce::File SessionController::fileFor (const juce::ValueTree& clip) const
+{
+    return project::Bundle::fromPortablePath (doc.mediaBundle(), clip[ids::file].toString());
+}
+
+std::shared_ptr<const CachedAudio> SessionController::audioFor (const juce::ValueTree& clip)
+{
+    const auto f = fileFor (clip);
+    return f == juce::File() ? nullptr : cache.get (f);
+}
+
+// ------------------------------------------------------------------ tracks
+
+juce::ValueTree SessionController::addTrack (const juce::String& nameIn, int insertIndex)
+{
+    auto tracks = doc.tracks();
+    if (tracks.getNumChildren() >= maxTracks)
+    {
+        if (onError) onError ("Track limit", "This version supports up to " + juce::String (maxTracks) + " tracks.");
+        return {};
+    }
+    const auto name = nameIn.isNotEmpty() ? nameIn : "Track " + juce::String (tracks.getNumChildren() + 1);
+    auto t = createTrack (name, tracks.getNumChildren());
+    const auto inputs = host.activeInputChannelNames();
+    t.setProperty (ids::inputChannel, inputs.isEmpty() ? -1 : 0, nullptr);
+    doc.undo().beginNewTransaction ("Add track");
+    tracks.addChild (t, insertIndex, &doc.undo());
+    setSelectedTracks ({ t });
+    return t;
+}
+
+void SessionController::deleteTrack (juce::ValueTree track)
+{
+    if (sessionActive && recorders.count (track[ids::id].toString()) > 0)
+    {
+        if (onError) onError ("Track is recording", "Stop recording before deleting this track.");
+        return;
+    }
+    doc.undo().beginNewTransaction ("Delete track");
+    doc.tracks().removeChild (track, &doc.undo());
+}
+
+juce::ValueTree SessionController::duplicateTrack (juce::ValueTree track)
+{
+    auto copy = track.createCopy();
+    copy.setProperty (ids::id, newId(), nullptr);
+    copy.setProperty (ids::name, track[ids::name].toString() + " copy", nullptr);
+    copy.setProperty (ids::armed, false, nullptr);
+    for (auto c : copy)
+        c.setProperty (ids::id, newId(), nullptr);
+    doc.undo().beginNewTransaction ("Duplicate track");
+    doc.tracks().addChild (copy, doc.tracks().indexOf (track) + 1, &doc.undo());
+    return copy;
+}
+
+juce::ValueTree SessionController::findTrack (const juce::String& id)
+{
+    for (auto t : doc.tracks())
+        if (t[ids::id].toString() == id)
+            return t;
+    return {};
+}
+
+juce::StringArray SessionController::inputChoiceNames (juce::Array<std::pair<int, bool>>& values) const
+{
+    juce::StringArray names;
+    values.clear();
+    names.add ("No input");
+    values.add ({ -1, false });
+    const auto ch = host.activeInputChannelNames();
+    for (int i = 0; i < ch.size(); ++i)
+    {
+        names.add ("In " + juce::String (i + 1) + "  (" + ch[i] + ")");
+        values.add ({ i, false });
+    }
+    for (int i = 0; i + 1 < ch.size(); i += 2)
+    {
+        names.add ("In " + juce::String (i + 1) + "+" + juce::String (i + 2) + "  stereo");
+        values.add ({ i, true });
+    }
+    return names;
+}
+
+// ------------------------------------------------------------------ import
+
+juce::Result SessionController::importFiles (const juce::Array<juce::File>& files, juce::ValueTree track, double atSec)
+{
+    if (! track.isValid())
+        track = addTrack();
+    if (! track.isValid())
+        return juce::Result::fail ("No track to import onto.");
+
+    const auto bundle = doc.mediaBundle();
+    auto r = project::Bundle::createStructure (bundle);
+    if (r.failed())
+        return r;
+
+    juce::StringArray problems;
+    double pos = atSec;
+    doc.undo().beginNewTransaction ("Import audio");
+    for (const auto& f : files)
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader (cache.formats().createReaderFor (f));
+        if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate <= 0)
+        {
+            problems.add (f.getFileName() + ": not a supported audio file (WAV, AIFF, FLAC, OGG, MP3).");
+            continue;
+        }
+        const double len = (double) reader->lengthInSamples / reader->sampleRate;
+        reader.reset();
+
+        auto dst = bundle.getChildFile ("Audio").getChildFile (f.getFileName());
+        if (! f.isAChildOf (bundle))
+        {
+            dst = dst.getNonexistentSibling (false);
+            if (! f.copyFileTo (dst))
+            {
+                problems.add (f.getFileName() + ": could not be copied into the project.");
+                continue;
+            }
+        }
+        else
+        {
+            dst = f;
+        }
+        auto clip = createClip (project::Bundle::toPortablePath (bundle, dst), f.getFileNameWithoutExtension(), pos, len, 0.0);
+        track.appendChild (clip, &doc.undo());
+        cache.get (dst);
+        pos += len;
+        juce::Logger::writeToLog ("Imported " + f.getFullPathName() + " as " + dst.getFullPathName());
+    }
+    return problems.isEmpty() ? juce::Result::ok() : juce::Result::fail (problems.joinIntoString ("\n"));
+}
+
+// ------------------------------------------------------------------ recording
+
+juce::StringArray SessionController::recordingTrackIds() const
+{
+    juce::StringArray ids_;
+    for (auto& [id, r] : recorders)
+        ids_.add (id);
+    return ids_;
+}
+
+void SessionController::toggleRecord()
+{
+    auto& e = host.engine;
+    if (sessionActive)
+    {
+        if (e.isRecordRequested())
+            e.setRecording (false); // punch out; playback continues, clips are created when the engine confirms
+        return;
+    }
+
+    if (! host.hasDevice() || e.getSampleRate() <= 0.0)
+    {
+        if (onError) onError ("Cannot record", "No audio device is running. Choose your interface in Settings.");
+        return;
+    }
+
+    juce::Array<juce::ValueTree> armed;
+    for (auto t : doc.tracks())
+        if ((bool) t[ids::armed])
+            armed.add (t);
+    if (armed.isEmpty())
+    {
+        if (onError) onError ("No track armed", "Arm at least one track for recording (the R button in its header), "
+                                                "and choose its input.");
+        return;
+    }
+
+    const auto inputs = host.activeInputChannelNames();
+    const auto bundle = doc.mediaBundle();
+    project::Bundle::createStructure (bundle);
+    const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
+    recordRate = e.getSampleRate();
+
+    std::map<juce::String, std::shared_ptr<TrackRecorder>> created;
+    for (auto& t : armed)
+    {
+        const int inL = (int) t[ids::inputChannel];
+        const bool stereo = (bool) t[ids::inputStereo];
+        if (inL < 0 || inL >= inputs.size() || (stereo && inL + 1 >= inputs.size()))
+        {
+            if (onError) onError ("Input not available", "Track \"" + t[ids::name].toString()
+                                                           + "\" has no valid input. Pick one in the track header.");
+            return;
+        }
+        auto file = bundle.getChildFile ("Audio").getChildFile (juce::File::createLegalFileName (t[ids::name].toString())
+                                                                 + " " + stamp + ".wav").getNonexistentSibling (false);
+        juce::String err;
+        auto rec = TrackRecorder::create (file, stereo ? 2 : 1, inL, stereo ? inL + 1 : -1, recordRate, 24, err);
+        if (rec == nullptr)
+        {
+            for (auto& [id, r] : created) r->finish(), r->file.deleteFile();
+            if (onError) onError ("Cannot record", err);
+            return;
+        }
+        created[t[ids::id].toString()] = rec;
+    }
+
+    recorders = std::move (created);
+    for (auto& [id, r] : recorders)
+        diskWriter.add (r);
+    rebuildGraphNow(); // the graph now carries the recorders
+
+    if (auto* dev = host.deviceManager.getCurrentAudioDevice())
+        latencySamples = dev->getInputLatencyInSamples() + dev->getOutputLatencyInSamples();
+
+    juce::int64 countIn = 0;
+    if (! e.isPlaying())
+    {
+        const int bars = (int) doc.metronome()[project::ids::countInBars];
+        countIn = (juce::int64) (bars * doc.tsNum() * MetronomeDsp::beatLengthSamples (recordRate, doc.tempo(), doc.tsDen()));
+    }
+    recordStartSec = e.getPositionSeconds();
+    sessionActive = true;
+    e.setRecording (true, countIn);
+    juce::Logger::writeToLog ("Recording started on " + juce::String ((int) recorders.size()) + " track(s), latency compensation "
+                              + juce::String (latencySamples) + " samples");
+    if (onArrangementChanged) onArrangementChanged();
+}
+
+void SessionController::timerCallback()
+{
+    host.engine.collectGarbage();
+    if (! sessionActive)
+        return;
+    auto& e = host.engine;
+    if (! e.isRecordRequested() && (! e.isRecordingActive() || ! host.hasDevice()))
+        finishRecording();
+    else if (diskWriter.diskErrorFlag.exchange (false))
+        if (onError) onError ("Disk problem", "Writing the recording to disk failed. Check free space.");
+}
+
+void SessionController::finishRecording()
+{
+    sessionActive = false;
+    auto finished = std::move (recorders);
+    recorders.clear();
+    rebuildGraphNow();
+
+    juce::StringArray problems;
+    int clipsMade = 0;
+    doc.undo().beginNewTransaction ("Record");
+    for (auto& [trackId, rec] : finished)
+    {
+        diskWriter.remove (rec);
+        auto res = rec->finish();
+        if (res.failed())
+            problems.add (res.getErrorMessage());
+
+        auto track = findTrack (trackId);
+        const auto written = rec->samplesWritten();
+        if (! track.isValid() || written <= 0 || rec->getNumSegments() == 0)
+        {
+            rec->file.deleteFile();
+            continue;
+        }
+
+        const auto group = newId();
+        int take = 0;
+        for (int s = 0; s < rec->getNumSegments(); ++s)
+        {
+            const auto& seg = rec->segment (s);
+            const auto fileOffset = seg.fileOffset.load() + latencySamples;
+            const auto len = juce::jmin (seg.length.load(), written - fileOffset);
+            if (len < (juce::int64) (0.02 * recordRate))
+                continue;
+            auto clip = createClip (project::Bundle::toPortablePath (doc.mediaBundle(), rec->file),
+                                    track[ids::name].toString() + " take " + juce::String (++take),
+                                    (double) seg.timelineStart.load() / recordRate, (double) len / recordRate,
+                                    (double) fileOffset / recordRate);
+            clip.setProperty (ids::takeGroup, group, nullptr);
+            track.appendChild (clip, &doc.undo());
+            ++clipsMade;
+        }
+        cache.invalidate (rec->file);
+        cache.get (rec->file);
+    }
+    juce::Logger::writeToLog ("Recording finished: " + juce::String (clipsMade) + " clip(s)");
+    if (! problems.isEmpty() && onError)
+        onError ("Recording problem", problems.joinIntoString ("\n"));
+    if (onArrangementChanged) onArrangementChanged();
+}
+} // namespace ff

@@ -1,0 +1,310 @@
+#include "ProjectDocument.h"
+
+namespace ff
+{
+using namespace project;
+
+juce::File ProjectDocument::appDataDir()
+{
+    auto d = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("FretForge Studio");
+    d.createDirectory();
+    return d;
+}
+
+ProjectDocument::ProjectDocument (EngineHost& h, juce::PropertiesFile& s) : host (h), settings (s)
+{
+    recent.setMaxNumberOfItems (12);
+    recent.restoreFromString (settings.getValue ("recentProjects"));
+    autosaveSeconds = settings.getIntValue ("autosaveSeconds", 120);
+    newUntitled();
+    startTimer (5000);
+}
+
+ProjectDocument::~ProjectDocument()
+{
+    stopTimer();
+    root.removeListener (this);
+}
+
+juce::String ProjectDocument::displayName() const
+{
+    return root[ids::name].toString() + (dirty ? " *" : "");
+}
+
+void ProjectDocument::replaceTree (juce::ValueTree newTree, const juce::File& newBundle, bool markAsDirty)
+{
+    root.removeListener (this);
+    root = newTree;
+    bundle = newBundle;
+    undoManager.clearUndoHistory();
+    root.addListener (this);
+    dirty = markAsDirty;
+    autosaveDirty = markAsDirty;
+    pushAllToEngine();
+    writeSessionLock();
+    if (onTreeReplaced) onTreeReplaced();
+    if (onStateChanged) onStateChanged();
+}
+
+void ProjectDocument::wipeUntitledMedia()
+{
+    // The untitled scratch bundle holds media for unsaved projects; only clear it once the
+    // user has discarded that project (never at startup, before crash recovery is offered).
+    if (sessionStarted)
+        untitledRecoveryBundle().getChildFile ("Audio").deleteRecursively();
+}
+
+juce::File ProjectDocument::mediaBundle() const
+{
+    return hasLocation() ? bundle : untitledRecoveryBundle();
+}
+
+void ProjectDocument::newUntitled()
+{
+    wipeUntitledMedia();
+    replaceTree (createDefault ("Untitled"), {}, false);
+    juce::Logger::writeToLog ("New untitled project");
+}
+
+juce::Result ProjectDocument::openBundle (const juce::File& dir)
+{
+    auto r = Bundle::load (dir);
+    if (r.result.failed())
+    {
+        juce::Logger::writeToLog ("Open failed: " + dir.getFullPathName() + " - " + r.result.getErrorMessage());
+        return r.result;
+    }
+    for (auto& w : r.warnings)
+        juce::Logger::writeToLog ("Project repair: " + w);
+
+    replaceTree (r.tree, dir, ! r.warnings.isEmpty());
+    addToRecent (dir);
+    juce::Logger::writeToLog ("Opened project " + dir.getFullPathName());
+    return r.warnings.isEmpty() ? juce::Result::ok()
+                                : juce::Result::fail ("The project was repaired while loading:\n" + r.warnings.joinIntoString ("\n"));
+}
+
+juce::Result ProjectDocument::saveTo (const juce::File& dirIn)
+{
+    const auto dir = Bundle::normaliseBundlePath (dirIn);
+    const bool renaming = dir != bundle;
+    if (renaming && root[ids::name].toString() == "Untitled")
+        root.setProperty (ids::name, dir.getFileNameWithoutExtension(), nullptr);
+
+    auto r = Bundle::createStructure (dir);
+    if (r.wasOk() && dir != mediaBundle())
+        r = copyMediaTo (dir);
+    if (r.wasOk())
+        r = Bundle::save (root, dir, settings.getIntValue ("backupsToKeep", 10));
+    if (r.failed())
+    {
+        juce::Logger::writeToLog ("Save failed: " + r.getErrorMessage());
+        return r;
+    }
+
+    if (! hasLocation())
+    {
+        Bundle::discardAutosave (untitledRecoveryBundle());
+        untitledRecoveryBundle().getChildFile ("Audio").deleteRecursively();
+    }
+
+    bundle = dir;
+    dirty = false;
+    autosaveDirty = false;
+    addToRecent (dir);
+    writeSessionLock();
+    juce::Logger::writeToLog ("Saved project " + dir.getFullPathName());
+    if (onStateChanged) onStateChanged();
+    return r;
+}
+
+juce::Result ProjectDocument::copyMediaTo (const juce::File& newBundle)
+{
+    // Every clip file referenced by the project is copied so the new bundle is self-contained.
+    juce::StringArray done;
+    const auto from = mediaBundle();
+    for (const auto& track : root.getChildWithName (ids::TRACKS))
+        for (const auto& clip : track)
+        {
+            const auto rel = clip["file"].toString();
+            if (rel.isEmpty() || done.contains (rel))
+                continue;
+            done.add (rel);
+            const auto src = Bundle::fromPortablePath (from, rel);
+            const auto dst = Bundle::fromPortablePath (newBundle, rel);
+            if (src == juce::File() || dst == juce::File() || ! src.existsAsFile() || dst.existsAsFile())
+                continue;
+            dst.getParentDirectory().createDirectory();
+            if (! src.copyFileTo (dst))
+                return juce::Result::fail ("Could not copy " + src.getFullPathName() + " into the new project folder.");
+        }
+    return juce::Result::ok();
+}
+
+juce::Result ProjectDocument::save()
+{
+    jassert (hasLocation());
+    return saveTo (bundle);
+}
+
+void ProjectDocument::set (juce::ValueTree node, const juce::Identifier& id, const juce::var& value, bool undoable)
+{
+    node.setProperty (id, value, undoable ? &undoManager : nullptr);
+}
+
+void ProjectDocument::setTempo (double bpm)
+{
+    set (transport(), ids::bpm, juce::jlimit (10.0, 999.0, std::round (bpm * 100.0) / 100.0));
+}
+
+void ProjectDocument::setTimeSignature (int num, int den)
+{
+    undoManager.beginNewTransaction ("Time signature");
+    set (transport(), ids::tsNum, juce::jlimit (1, 16, num));
+    set (transport(), ids::tsDen, den);
+}
+
+void ProjectDocument::pushAllToEngine()
+{
+    auto& e = host.engine;
+    e.setTempo (tempo());
+    e.setTimeSignature (tsNum(), tsDen());
+
+    auto m = metronome();
+    e.clickWhilePlaying = (bool) m[ids::enabled];
+    e.metronome.volume = (float) (double) m[ids::volume];
+    e.metronome.subdivision = (int) m[ids::subdivision];
+    e.metronome.sound = (int) m[ids::sound];
+    auto t = transport();
+    e.loopEnabled = (bool) t[ids::loopEnabled];
+    e.punchEnabled = (bool) t[ids::punchEnabled];
+    e.loopStartSec = (double) t[ids::loopStart];
+    e.loopEndSec = (double) t[ids::loopEnd];
+
+    const auto accents = m[ids::accents].toString();
+    for (int i = 0; i < MetronomeDsp::maxBeats; ++i)
+    {
+        const auto c = i < accents.length() ? accents[i] : '1';
+        e.metronome.beatLevels[(size_t) i] = juce::jlimit (0, 2, (int) (c - '0'));
+    }
+}
+
+void ProjectDocument::markDirty()
+{
+    autosaveDirty = true;
+    if (! dirty)
+    {
+        dirty = true;
+        if (onStateChanged) onStateChanged();
+    }
+}
+
+void ProjectDocument::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& id)
+{
+    if (node.getType() == ids::TRANSPORT || node.getType() == ids::METRONOME)
+        pushAllToEngine();
+    if (id == ids::name && onStateChanged)
+        onStateChanged();
+    markDirty();
+}
+
+// ------------------------------------------------------------------ autosave / recovery
+
+void ProjectDocument::setAutosaveIntervalSeconds (int seconds)
+{
+    autosaveSeconds = seconds;
+    settings.setValue ("autosaveSeconds", seconds);
+}
+
+juce::File ProjectDocument::untitledRecoveryBundle() const
+{
+    return appDataDir().getChildFile ("Recovery").getChildFile ("Untitled.ffproj");
+}
+
+juce::File ProjectDocument::sessionLockFile() const
+{
+    return appDataDir().getChildFile ("session.lock");
+}
+
+void ProjectDocument::timerCallback()
+{
+    if (autosaveSeconds <= 0 || ! autosaveDirty)
+        return;
+    if (lastAutosaveTime != juce::Time() && (juce::Time::getCurrentTime() - lastAutosaveTime).inSeconds() < autosaveSeconds)
+        return;
+
+    const auto target = hasLocation() ? bundle : untitledRecoveryBundle();
+    auto r = Bundle::createStructure (target);
+    if (r.wasOk())
+        r = Bundle::writeAutosave (root, target);
+
+    lastAutosaveTime = juce::Time::getCurrentTime();
+    if (r.wasOk())
+    {
+        autosaveDirty = false;
+        juce::Logger::writeToLog ("Autosaved to " + Bundle::autosaveFile (target).getFullPathName());
+    }
+    else
+    {
+        juce::Logger::writeToLog ("Autosave failed: " + r.getErrorMessage());
+    }
+    if (onStateChanged) onStateChanged();
+}
+
+void ProjectDocument::writeSessionLock()
+{
+    if (! sessionStarted)
+        return;
+    juce::DynamicObject::Ptr o = new juce::DynamicObject();
+    o->setProperty ("bundle", hasLocation() ? bundle.getFullPathName() : juce::String());
+    o->setProperty ("started", juce::Time::getCurrentTime().toISO8601 (true));
+    writeFileAtomically (sessionLockFile(), juce::JSON::toString (juce::var (o.get())));
+}
+
+void ProjectDocument::endSession()
+{
+    wipeUntitledMedia();
+    sessionStarted = false;
+    Bundle::discardAutosave (untitledRecoveryBundle());
+    sessionLockFile().deleteFile();
+}
+
+std::optional<ProjectDocument::Recovery> ProjectDocument::findCrashRecovery()
+{
+    const auto lock = sessionLockFile();
+    if (! lock.existsAsFile())
+        return std::nullopt;
+
+    const auto v = juce::JSON::parse (lock.loadFileAsString());
+    const auto path = v.getProperty ("bundle", {}).toString();
+
+    if (path.isNotEmpty() && juce::File::isAbsolutePath (path))
+    {
+        const juce::File b (path);
+        if (Bundle::hasNewerAutosave (b))
+            return Recovery { b, false };
+    }
+    else if (Bundle::autosaveFile (untitledRecoveryBundle()).existsAsFile())
+    {
+        return Recovery { untitledRecoveryBundle(), true };
+    }
+    return std::nullopt;
+}
+
+juce::Result ProjectDocument::recoverFrom (const Recovery& rec)
+{
+    auto r = Bundle::loadAutosave (rec.bundle);
+    if (r.result.failed())
+        return r.result;
+    replaceTree (r.tree, rec.untitled ? juce::File() : rec.bundle, true);
+    juce::Logger::writeToLog ("Recovered project from autosave in " + rec.bundle.getFullPathName());
+    return juce::Result::ok();
+}
+
+void ProjectDocument::addToRecent (const juce::File& f)
+{
+    recent.addFile (f);
+    settings.setValue ("recentProjects", recent.toString());
+    settings.saveIfNeeded();
+}
+} // namespace ff

@@ -1,0 +1,245 @@
+#include "MixerPage.h"
+#include "core/Timeline.h"
+
+namespace ff
+{
+using namespace timeline;
+
+static void setupFader (juce::Slider& f)
+{
+    f.setSliderStyle (juce::Slider::LinearVertical);
+    f.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 20);
+    f.setRange (-60.0, 6.0, 0.1);
+    f.setSkewFactorFromMidPoint (-12.0);
+    f.setDoubleClickReturnValue (true, 0.0);
+    f.textFromValueFunction = [] (double v) { return v <= -59.95 ? juce::String ("-inf dB") : juce::String (v, 1) + " dB"; };
+    f.valueFromTextFunction = [] (const juce::String& t) { return t.retainCharacters ("-0123456789.").getDoubleValue(); };
+}
+
+// ------------------------------------------------------------------ strip
+
+ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController& sc, juce::ValueTree t, int s)
+    : doc (d), host (h), session (sc), track (t), slot (s)
+{
+    setupFader (fader);
+    fader.onDragStart = [this] { doc.undo().beginNewTransaction ("Track volume"); };
+    fader.onValueChange = [this] {
+        if (updating) return;
+        const double before = juce::jmax (-60.0, (double) track[ids::gainDb]);
+        const double now = fader.getValue();
+        doc.set (track, ids::gainDb, now <= -59.95 ? -96.0 : now);
+        for (auto other : session.tracksForEdit (track)) // grouped move for a multi-selection
+            if (other != track)
+            {
+                const double v = juce::jlimit (-60.0, 6.0, juce::jmax (-60.0, (double) other[ids::gainDb]) + (now - before));
+                doc.set (other, ids::gainDb, v <= -59.95 ? -96.0 : v);
+            }
+    };
+    addAndMakeVisible (fader);
+
+    pan.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    pan.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    pan.setRange (-1.0, 1.0, 0.01);
+    pan.setDoubleClickReturnValue (true, 0.0);
+    pan.setPopupDisplayEnabled (true, true, nullptr);
+    pan.onDragStart = [this] { doc.undo().beginNewTransaction ("Track pan"); };
+    pan.onValueChange = [this] {
+        if (updating) return;
+        const double delta = pan.getValue() - (double) track[ids::pan];
+        doc.set (track, ids::pan, pan.getValue());
+        for (auto other : session.tracksForEdit (track))
+            if (other != track)
+                doc.set (other, ids::pan, juce::jlimit (-1.0, 1.0, (double) other[ids::pan] + delta));
+    };
+    addAndMakeVisible (pan);
+
+    auto setup = [this] (juce::TextButton& b, juce::Colour c, const juce::Identifier& id) {
+        b.setColour (juce::TextButton::buttonOnColourId, c);
+        b.setWantsKeyboardFocus (false);
+        b.onClick = [this, &id] { session.setOnTracks (track, id, ! (bool) track[id], false); };
+        addAndMakeVisible (b);
+    };
+    setup (mute, palette::accent, ids::mute);
+    setup (solo, palette::warn, ids::solo);
+    setup (arm, palette::bad, ids::armed);
+    track.addListener (this);
+    refresh();
+}
+
+ChannelStrip::~ChannelStrip() { track.removeListener (this); }
+
+void ChannelStrip::refresh()
+{
+    const juce::ScopedValueSetter<bool> svs (updating, true);
+    fader.setValue (juce::jmax (-60.0, (double) track[ids::gainDb]), juce::dontSendNotification);
+    pan.setValue ((double) track[ids::pan], juce::dontSendNotification);
+    mute.setToggleState ((bool) track[ids::mute], juce::dontSendNotification);
+    solo.setToggleState ((bool) track[ids::solo], juce::dontSendNotification);
+    arm.setToggleState ((bool) track[ids::armed], juce::dontSendNotification);
+    repaint();
+}
+
+void ChannelStrip::tick()
+{
+    auto& m = host.engine.trackMeters[(size_t) juce::jlimit (0, maxTracks - 1, slot)];
+    m.uiTake();
+    const float db = gainToDb (m.uiPeak);
+    level = db > level ? db : juce::jmax (db, level - 1.6f);
+    if (db >= hold) { hold = db; holdTicks = 45; }
+    else if (--holdTicks <= 0) hold = juce::jmax (-100.0f, hold - 1.5f);
+    repaint();
+}
+
+void ChannelStrip::mouseDown (const juce::MouseEvent& e)
+{
+    session.clickTrack (track, e.mods); // click the strip (name area / background) to select; Shift/Ctrl extend
+}
+
+void ChannelStrip::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().reduced (3, 0);
+    const bool selected = session.isTrackSelected (track);
+    g.setColour (selected ? palette::panelHi : palette::panel);
+    g.fillRoundedRectangle (r.toFloat(), 5.0f);
+    if (selected)
+    {
+        g.setColour (palette::accent.withAlpha (0.8f));
+        g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 5.0f, 1.0f);
+    }
+    const auto colour = juce::Colour::fromString (track[ids::colour].toString());
+    g.setColour (colour);
+    g.fillRoundedRectangle (r.removeFromTop (6).toFloat(), 3.0f);
+    g.setColour (palette::text);
+    g.setFont (uiFont (12.5f, true));
+    g.drawFittedText (track[ids::name].toString(), r.removeFromTop (24).reduced (4, 0), juce::Justification::centred, 1);
+
+    auto meter = getLocalBounds().reduced (3, 0).withTrimmedTop (150).withTrimmedBottom (34).removeFromRight (16).reduced (3, 0);
+    g.setColour (palette::well);
+    g.fillRect (meter);
+    auto norm = [] (float db) { return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f); };
+    g.setColour (level > -0.5f ? palette::bad : (level > -9.0f ? palette::warn : palette::good));
+    g.fillRect (meter.withTop (meter.getBottom() - juce::roundToInt (norm (level) * meter.getHeight())));
+    if (hold > -60.0f)
+    {
+        g.setColour (palette::text);
+        g.fillRect (meter.getX(), meter.getBottom() - juce::roundToInt (norm (hold) * meter.getHeight()), meter.getWidth(), 1);
+    }
+    g.setColour (palette::textDim);
+    g.setFont (uiFont (10.0f));
+    g.drawText ("PAN", getLocalBounds().withTrimmedTop (30).withHeight (14), juce::Justification::centred);
+}
+
+void ChannelStrip::resized()
+{
+    auto r = getLocalBounds().reduced (8, 0).withTrimmedTop (44);
+    pan.setBounds (r.removeFromTop (40).withSizeKeepingCentre (40, 40));
+    r.removeFromTop (6);
+    auto buttons = r.removeFromTop (24);
+    const int w = buttons.getWidth() / 3;
+    arm.setBounds (buttons.removeFromLeft (w).reduced (1));
+    mute.setBounds (buttons.removeFromLeft (w).reduced (1));
+    solo.setBounds (buttons.reduced (1));
+    r.removeFromTop (30);
+    r.removeFromBottom (6);
+    fader.setBounds (r.withTrimmedRight (16));
+}
+
+// ------------------------------------------------------------------ page
+
+MixerPage::MixerPage (EngineHost& h, ProjectDocument& d, SessionController& sc, juce::PropertiesFile& s)
+    : host (h), doc (d), session (sc), settings (s), meterL (h.engine.outputMeterL), meterR (h.engine.outputMeterR)
+{
+    setupFader (fader);
+    fader.onValueChange = [this] {
+        const double db = fader.getValue();
+        host.engine.masterGain = db <= -59.95 ? 0.0f : juce::Decibels::decibelsToGain ((float) db);
+        settings.setValue ("mainOutDb", db);
+    };
+    fader.setTooltip ("Main output level (monitoring level; not part of exports)");
+    fader.setValue (settings.getDoubleValue ("mainOutDb", 0.0), juce::sendNotificationSync);
+    addAndMakeVisible (fader);
+    addAndMakeVisible (meterL);
+    addAndMakeVisible (meterR);
+
+    viewport.setViewedComponent (&stripHolder, false);
+    viewport.setScrollBarsShown (false, true);
+    addAndMakeVisible (viewport);
+
+    emptyLabel.setText ("No tracks yet. Add tracks in Studio and they appear here as channel strips.", juce::dontSendNotification);
+    styleLabel (emptyLabel, 14.0f);
+    emptyLabel.setJustificationType (juce::Justification::centred);
+    addChildComponent (emptyLabel);
+    session.selectionChanged.addChangeListener (this);
+    rebind();
+}
+
+MixerPage::~MixerPage()
+{
+    session.selectionChanged.removeChangeListener (this);
+    tracksNode.removeListener (this);
+}
+
+void MixerPage::rebind()
+{
+    tracksNode.removeListener (this);
+    tracksNode = doc.tracks();
+    tracksNode.addListener (this);
+    rebuild();
+}
+
+void MixerPage::rebuild()
+{
+    strips.clear();
+    int i = 0;
+    for (auto t : tracksNode)
+    {
+        if (! t.hasType (ids::TRACK) || i >= maxTracks) continue;
+        auto* s = strips.add (new ChannelStrip (doc, host, session, t, i++));
+        stripHolder.addAndMakeVisible (s);
+    }
+    emptyLabel.setVisible (strips.isEmpty());
+    resized();
+}
+
+void MixerPage::timerCallback()
+{
+    meterL.tick();
+    meterR.tick();
+    for (auto* s : strips)
+        s->tick();
+}
+
+void MixerPage::paint (juce::Graphics& g)
+{
+    g.fillAll (palette::bg);
+    drawSectionPanel (g, masterBox, "Main out");
+    g.setFont (uiFont (10.0f));
+    for (int db : { 0, -6, -12, -18, -24, -36, -48, -60 })
+    {
+        const float n = (db + 60.0f) / 60.0f;
+        const int y = scale.getBottom() - juce::roundToInt (n * scale.getHeight());
+        g.setColour (palette::textDim);
+        g.drawText (juce::String (db), scale.getX(), y - 6, scale.getWidth(), 12, juce::Justification::centredRight);
+    }
+}
+
+void MixerPage::resized()
+{
+    auto r = getLocalBounds().reduced (16);
+    masterBox = r.removeFromRight (150);
+    r.removeFromRight (12);
+    viewport.setBounds (r);
+    emptyLabel.setBounds (r);
+    stripHolder.setSize (juce::jmax (r.getWidth(), strips.size() * ChannelStrip::width), r.getHeight() - viewport.getScrollBarThickness());
+    for (int i = 0; i < strips.size(); ++i)
+        strips[i]->setBounds (i * ChannelStrip::width, 0, ChannelStrip::width, stripHolder.getHeight());
+
+    auto s = masterBox.reduced (12).withTrimmedTop (24).withTrimmedBottom (8);
+    auto meters = s.removeFromRight (34);
+    meterL.setBounds (meters.removeFromLeft (15).withTrimmedBottom (28));
+    meters.removeFromLeft (4);
+    meterR.setBounds (meters.removeFromLeft (15).withTrimmedBottom (28));
+    scale = s.removeFromRight (28).withTrimmedTop (8).withTrimmedBottom (28);
+    fader.setBounds (s);
+}
+} // namespace ff

@@ -1,0 +1,70 @@
+#pragma once
+#include <juce_data_structures/juce_data_structures.h>
+#include <cmath>
+#include <vector>
+
+/** Track / clip / marker model helpers and the clip layering ("take masking") algorithm.
+    Timeline positions are stored in seconds, so audio stays put when the sample rate changes. */
+namespace ff::timeline
+{
+namespace ids
+{
+    #define FF_TL_ID(name) inline const juce::Identifier name { #name };
+    FF_TL_ID (TRACK) FF_TL_ID (CLIP) FF_TL_ID (MARKER)
+    FF_TL_ID (id) FF_TL_ID (name) FF_TL_ID (colour) FF_TL_ID (gainDb) FF_TL_ID (pan) FF_TL_ID (mute) FF_TL_ID (solo)
+    FF_TL_ID (armed) FF_TL_ID (monitor) FF_TL_ID (inputChannel) FF_TL_ID (inputStereo)
+    FF_TL_ID (file) FF_TL_ID (start) FF_TL_ID (length) FF_TL_ID (offset) FF_TL_ID (fadeIn) FF_TL_ID (fadeOut)
+    FF_TL_ID (muted) FF_TL_ID (takeGroup) FF_TL_ID (time)
+    #undef FF_TL_ID
+}
+
+constexpr int maxTracks = 128;
+constexpr double defaultFade = 0.005; // 5 ms fades avoid clicks at clip edges
+
+juce::String newId();
+/** Colour palette as ARGB hex strings (UI converts to juce::Colour). */
+const juce::StringArray& trackPalette();
+
+juce::ValueTree createTrack (const juce::String& name, int paletteIndex);
+juce::ValueTree createClip (const juce::String& portableFile, const juce::String& name,
+                            double start, double length, double offset);
+juce::ValueTree createMarker (const juce::String& name, double time);
+
+double clipEnd (const juce::ValueTree& clip);
+/** End time of the last unmuted clip on any track (0 if none). */
+double songEnd (const juce::ValueTree& tracks);
+
+// ------------------------------------------------------------------ layering
+
+struct ClipSpan
+{
+    double start = 0, length = 0, offset = 0, fadeIn = 0, fadeOut = 0, gain = 1;
+    bool muted = false;
+    int index = 0; // caller's identifier
+};
+
+/** A contiguous region of one clip that is audible after layering. Fade ranges are
+    absolute timeline times; gain at t = gain * fadeInCurve(t) * fadeOutCurve(t). */
+struct Piece
+{
+    int clip = 0;
+    double start = 0, end = 0, srcAtStart = 0;
+    double fadeInStart = 0, fadeInEnd = 0, fadeOutStart = 0, fadeOutEnd = 0;
+    double gain = 1;
+};
+
+/** Clips later in the vector are layered on top. A clip hides the clips beneath it
+    everywhere it is at full level; during its fades the lower clip keeps playing and
+    fades the opposite way, giving equal-power crossfades. Muted clips are ignored. */
+std::vector<Piece> visiblePieces (const std::vector<ClipSpan>& clipsBottomToTop);
+
+/** Equal-power fade curve value for t inside [a, b]; 1 outside, rising (fadeIn) or falling. */
+inline double fadeGain (double t, double a, double b, bool rising) noexcept
+{
+    if (b <= a) return 1.0;
+    if (t <= a) return rising ? 0.0 : 1.0;
+    if (t >= b) return rising ? 1.0 : 0.0;
+    const double x = (t - a) / (b - a) * 1.5707963267948966;
+    return rising ? std::sin (x) : std::cos (x);
+}
+} // namespace ff::timeline
