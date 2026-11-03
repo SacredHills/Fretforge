@@ -17,7 +17,8 @@ public:
     DrumGrid (ProjectDocument&, EngineHost&);
     void setPattern (juce::ValueTree p);
     juce::ValueTree pattern() const { return pat; }
-    void setPlayheadQ (double q) { if (std::abs (q - playQ) > 1.0e-4) { playQ = q; repaint(); } }
+    void setPlayheadQ (double q);
+    float xForQ (double q) const;
     void updateSize (int visibleWidth);
     std::function<void (int lane)> onLaneMenu;       // right-click on a lane name
     std::function<bool (int lane)> laneHasSample;

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 
 namespace ff::drums
 {
@@ -88,7 +89,7 @@ juce::ValueTree makePattern (const juce::String& name, int tsNum, int tsDen, int
     p.setProperty (ids::name, name, nullptr);
     p.setProperty (ids::tsNum, juce::jlimit (1, 32, tsNum), nullptr);
     p.setProperty (ids::tsDen, juce::jlimit (1, 32, tsDen), nullptr);
-    p.setProperty (ids::bars, juce::jlimit (1, 64, bars), nullptr);
+    p.setProperty (ids::bars, juce::jlimit (1, maxBars, bars), nullptr);
     p.setProperty (ids::grid, juce::jlimit (1, 16, grid), nullptr);
     p.setProperty (ids::swing, 0.0, nullptr);
     return p;
@@ -207,7 +208,7 @@ void removeHit (juce::ValueTree p, int lane, int tick, juce::UndoManager* um)
 
 void setBars (juce::ValueTree p, int bars, juce::UndoManager* um)
 {
-    bars = juce::jlimit (1, 64, bars);
+    bars = juce::jlimit (1, maxBars, bars);
     p.setProperty (ids::bars, bars, um);
     const int len = lengthTicks (p);
     for (int i = p.getNumChildren(); --i >= 0;)
@@ -841,14 +842,41 @@ MidiImport importMidi (juce::ValueTree d, const juce::File& file, juce::UndoMana
         res.warnings.add (juce::String (count) + " note(s) use sounds this kit doesn't have (MIDI notes " + list.joinIntoString (", ")
                           + ", e.g. tambourine or Latin percussion) and were skipped.");
     }
-    std::vector<ImportBar> ib;
-    for (size_t b = 0; b < bars.size(); ++b) ib.push_back ({ bars[b].num, bars[b].den, barHits[b] });
-    auto arranged = arrangeBars (d, ib, file.getFileNameWithoutExtension(), um);
-    if (arranged.result.failed()) { res.result = arranged.result; return res; }
-    res.patterns = arranged.patterns;
-    res.sections = arranged.sections;
-    res.bars = arranged.bars;
-    res.firstPatternId = arranged.firstPatternId;
+    // one continuous pattern holding the whole file, every hit at its exact position
+    while (! bars.empty() && barHits.back().empty()) { bars.pop_back(); barHits.pop_back(); }
+    if (bars.empty()) { res.result = juce::Result::fail ("No playable drum notes were found."); return res; }
+    bool meterChanges = false, triplets = false, fine = false;
+    for (auto& b : bars) meterChanges = meterChanges || b.num != bars.front().num || b.den != bars.front().den;
+    std::vector<std::array<int, 3>> hits;
+    for (size_t b = 0; b < bars.size(); ++b)
+        for (auto& x : barHits[b])
+        {
+            const int tick = bars[b].start + x[1];
+            hits.push_back ({ x[0], tick, x[2] });
+            if (tick % (ppq / 4) != 0 && tick % (ppq / 6) == 0) triplets = true;
+            else if (tick % (ppq / 4) != 0) fine = true;
+        }
+    auto p = makePattern (file.getFileNameWithoutExtension(), bars.front().num, bars.front().den, 1, triplets ? 6 : (fine ? 8 : 4));
+    const int endTick = bars.back().start + bars.back().len;
+    p.setProperty (ids::bars, juce::jlimit (1, maxBars, (endTick + barTicks (p) - 1) / barTicks (p)), nullptr);
+    std::set<std::pair<int, int>> seen;   // the same piece twice at one tick: keep the first
+    for (auto& h : hits)
+    {
+        if (! seen.insert ({ h[0], h[1] }).second) continue;
+        juce::ValueTree hit (ids::HIT);
+        hit.setProperty (ids::lane, h[0], nullptr);
+        hit.setProperty (ids::tick, h[1], nullptr);
+        hit.setProperty (ids::vel, h[2], nullptr);
+        p.appendChild (hit, nullptr);
+    }
+    patterns (d).appendChild (p, um);
+    if (song (d).getNumChildren() == 0) { addSection (d, p[ids::id].toString(), 1, -1, um); res.sections = 1; }
+    if (meterChanges)
+        res.warnings.add ("The file changes time signature; it is kept as one pattern in " + juce::String (bars.front().num) + "/"
+                          + juce::String (bars.front().den) + " (every hit keeps its exact position, but bar lines after the change are drawn in that meter).");
+    res.patterns = 1;
+    res.bars = (int) p[ids::bars];
+    res.firstPatternId = p[ids::id].toString();
     return res;
 }
 

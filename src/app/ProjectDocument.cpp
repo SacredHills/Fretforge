@@ -23,6 +23,8 @@ ProjectDocument::ProjectDocument (EngineHost& h, juce::PropertiesFile& s) : host
 ProjectDocument::~ProjectDocument()
 {
     stopTimer();
+    alive->store (false);
+    waitForAutosave();
     root.removeListener (this);
 }
 
@@ -239,22 +241,32 @@ void ProjectDocument::timerCallback()
     if (lastAutosaveTime != juce::Time() && (juce::Time::getCurrentTime() - lastAutosaveTime).inSeconds() < autosaveSeconds)
         return;
 
+    if (autosaveRunning.load()) return;
     const auto target = hasLocation() ? bundle : untitledRecoveryBundle();
-    auto r = Bundle::createStructure (target);
-    if (r.wasOk())
-        r = Bundle::writeAutosave (root, target);
-
+    auto snapshot = root.createCopy();    // a few ms even for big projects; serialising happens off the UI thread
+    autosaveDirty = false;
     lastAutosaveTime = juce::Time::getCurrentTime();
-    if (r.wasOk())
+    autosaveRunning = true;
+    auto token = alive;
+    autosaver.addJob ([this, token, snapshot, target]
     {
-        autosaveDirty = false;
-        juce::Logger::writeToLog ("Autosaved to " + Bundle::autosaveFile (target).getFullPathName());
-    }
-    else
-    {
-        juce::Logger::writeToLog ("Autosave failed: " + r.getErrorMessage());
-    }
-    if (onStateChanged) onStateChanged();
+        auto r = Bundle::createStructure (target);
+        if (r.wasOk())
+            r = Bundle::writeAutosave (snapshot, target);
+        juce::MessageManager::callAsync ([this, token, r]
+        {
+            if (! token->load()) return;
+            autosaveRunning = false;
+            if (r.wasOk())
+                juce::Logger::writeToLog ("Autosaved");
+            else
+            {
+                autosaveDirty = true;   // try again next time
+                juce::Logger::writeToLog ("Autosave failed: " + r.getErrorMessage());
+            }
+            if (onStateChanged) onStateChanged();
+        });
+    });
 }
 
 void ProjectDocument::writeSessionLock()
@@ -269,6 +281,7 @@ void ProjectDocument::writeSessionLock()
 
 void ProjectDocument::endSession()
 {
+    waitForAutosave();
     wipeUntitledMedia();
     sessionStarted = false;
     Bundle::discardAutosave (untitledRecoveryBundle());

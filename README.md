@@ -15,7 +15,7 @@ project format, plugin system, milestone plan, risks and licensing.
 | Song | Arrange patterns into sections with repeats; reorder; play the song with a moving playhead |
 | Sound | Built-in synthesized kit (no samples needed; hi-hat choke, velocity, stereo placement), or your own samples: right-click a drum name to load a sample, or load a whole kit folder (files matched by name: kick, snare, hihat open, tom 2, ride bell...); samples are copied into the project |
 | Play-along | Guitar Tabs "Drums" button plays the drum song with the tab, following the score's tempo changes and practice speed; Guitar Pro drum tracks are imported into the Drum Studio automatically |
-| Output | MIDI export (pattern or song, General MIDI drums); MIDI import of whole drum songs of any length (repeating phrases become patterns, arranged as song sections, meter changes followed, tempo adopted); render the song to an audio track in the Studio |
+| Output | MIDI export (pattern or song, General MIDI drums); MIDI import of whole drum songs of any length as one continuous pattern (every hit where it is in the file; tempo adopted); render the song to an audio track in the Studio |
 
 **Not yet in Milestone 4:** a piano roll for melodic MIDI, flams/drags and cymbal chokes as articulations, velocity layers
 and round-robin in sample kits, tempo changes inside a drum song (in Guitar Tabs the drums follow the score's tempo).

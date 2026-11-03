@@ -120,8 +120,9 @@ juce::String serialise (const juce::ValueTree& projectTree)
     env->setProperty ("appVersion", FF_VERSION_STRING);
     env->setProperty ("root", treeToVar (projectTree));
     // juce::newLine is CRLF on every platform; project files use LF so they diff cleanly across OSes.
+    // removeCharacters is linear; String::replace re-copies the whole text for every line and froze the app on big projects
     return juce::JSON::toString (juce::var (env), juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::multiLine))
-               .replace ("\r\n", "\n") + "\n";
+               .removeCharacters ("\r") + "\n";
 }
 
 static void ensureChild (juce::ValueTree& root, const juce::Identifier& type, const juce::ValueTree& defaults,
@@ -248,7 +249,7 @@ LoadResult parse (const juce::String& json)
 
 juce::Result writeFileAtomically (const juce::File& target, const juce::String& textIn)
 {
-    const auto text = textIn.replace ("\r\n", "\n");
+    const auto text = textIn.containsChar ('\r') ? textIn.removeCharacters ("\r") : textIn;
     if (! target.getParentDirectory().createDirectory())
         return juce::Result::fail ("Cannot create folder " + target.getParentDirectory().getFullPathName());
 

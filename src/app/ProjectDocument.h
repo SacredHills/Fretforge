@@ -78,6 +78,11 @@ private:
     int autosaveSeconds = 120;
     juce::Time lastAutosaveTime;
     bool sessionStarted = false;
+    // autosave runs on a background thread from a snapshot of the tree, so big projects never pause the UI
+    juce::ThreadPool autosaver { juce::ThreadPoolOptions().withThreadName ("Autosave").withNumberOfThreads (1) };
+    std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
+    std::atomic<bool> autosaveRunning { false };
+    void waitForAutosave() { autosaver.removeAllJobs (false, 10000); }
     void writeSessionLock();
     void wipeUntitledMedia();
     juce::Result copyMediaTo (const juce::File& newBundle);

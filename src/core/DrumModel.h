@@ -27,6 +27,7 @@ namespace ids
 }
 
 constexpr int ppq = 960;
+constexpr int maxBars = 4000;   // longest pattern (a whole imported song)
 
 enum Piece
 {
@@ -120,10 +121,9 @@ juce::ValueTree generate (const GenOptions&);
 // ---- MIDI ----
 /** Standard MIDI File on channel 10 (pattern or whole song). */
 juce::Result exportMidi (const juce::ValueTree& drums, const juce::ValueTree& patternOrInvalid, double tempo, const juce::File&);
-/** Imports a whole MIDI drum file (channel-10 notes, or all notes if none are on 10). Bars are split into
-    patterns: repeated phrases (1, 2, 4 or 8 bars) become one pattern used by a section with repeats, identical
-    phrases anywhere in the song share a pattern, and the sections are appended to the song arrangement.
-    Meter changes are followed; the first tempo is returned for the caller to adopt. */
+/** Imports a whole MIDI drum file (channel-10 notes, or all notes if none are on 10) as ONE pattern containing the
+    entire file, every hit at its exact position. If the song arrangement is empty the pattern is added to it.
+    The first tempo is returned for the caller to adopt. */
 struct MidiImport
 {
     juce::Result result = juce::Result::ok();

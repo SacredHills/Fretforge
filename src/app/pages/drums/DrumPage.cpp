@@ -36,6 +36,21 @@ void DrumGrid::setPattern (juce::ValueTree p)
     repaint();
 }
 
+float DrumGrid::xForQ (double q) const
+{
+    return pat.isValid() ? (float) nameWidth + cellW * (float) (q * drums::ppq / drums::stepTicks (pat)) : 0.0f;
+}
+
+void DrumGrid::setPlayheadQ (double q)
+{
+    if (std::abs (q - playQ) < 1.0e-4) return;
+    // repaint only the strips around the old and new playhead: long patterns make this component very wide
+    const auto strip = [this] (double at) { return juce::Rectangle<int> ((int) xForQ (at) - 3, 0, 6, getHeight()); };
+    if (playQ >= 0.0) repaint (strip (playQ));
+    playQ = q;
+    if (playQ >= 0.0) repaint (strip (playQ));
+}
+
 int DrumGrid::steps() const
 {
     return pat.isValid() ? juce::jmax (1, drums::lengthTicks (pat) / drums::stepTicks (pat)) : 16;
@@ -67,20 +82,33 @@ void DrumGrid::paint (juce::Graphics& g)
         const int y = headerHeight + l * laneHeight;
         g.setColour (l % 2 ? palette::panel.withAlpha (0.55f) : palette::panel.withAlpha (0.25f));
         g.fillRect (0.0f, (float) y, gridRight, (float) laneHeight);
-        g.setColour (laneColour (l));
-        g.fillRect (2, y + 4, 3, laneHeight - 8);
-        const bool sampled = laneHasSample && laneHasSample (l);
-        g.setColour (sampled ? palette::accent : palette::text);
-        g.setFont (uiFont (12.0f, sampled));
-        g.drawText (juce::String (drums::pieceInfo (l).name) + (sampled ? " *" : ""), 10, y, nameWidth - 14, laneHeight,
-                    juce::Justification::centredLeft);
     }
+    auto drawNames = [&] {
+        // lane names stay visible at the left edge however far the grid is scrolled
+        const int x0 = juce::jmax (0, -getX());
+        g.setColour (palette::bg);
+        g.fillRect (x0, 0, nameWidth, getHeight());
+        for (int l = 0; l < lanes; ++l)
+        {
+            const int y = headerHeight + l * laneHeight;
+            g.setColour (l % 2 ? palette::panel.withAlpha (0.55f) : palette::panel.withAlpha (0.25f));
+            g.fillRect (x0, y, nameWidth, laneHeight);
+            g.setColour (laneColour (l));
+            g.fillRect (x0 + 2, y + 4, 3, laneHeight - 8);
+            const bool sampled = laneHasSample && laneHasSample (l);
+            g.setColour (sampled ? palette::accent : palette::text);
+            g.setFont (uiFont (12.0f, sampled));
+            g.drawText (juce::String (drums::pieceInfo (l).name) + (sampled ? " *" : ""), x0 + 10, y, nameWidth - 14, laneHeight,
+                        juce::Justification::centredLeft);
+        }
+    };
     if (! pat.isValid())
     {
         g.setColour (palette::textDim);
         g.setFont (uiFont (15.0f));
         g.drawFittedText ("No patterns yet. Click \"New\" for an empty pattern or \"Generate as new\" for a groove.",
                           getLocalBounds().withTrimmedLeft (nameWidth).withHeight (220), juce::Justification::centred, 2);
+        drawNames();
         return;
     }
 
@@ -89,7 +117,10 @@ void DrumGrid::paint (juce::Graphics& g)
     const int barTicks = drums::barTicks (pat);
     const int n = steps();
     const float bottom = (float) (headerHeight + lanes * laneHeight);
-    for (int s = 0; s <= n; ++s)
+    const auto clip = g.getClipBounds();
+    const int firstStep = juce::jmax (0, (int) std::floor ((clip.getX() - nameWidth) / cellW) - 1);
+    const int lastStep = juce::jmin (n, (int) std::ceil ((clip.getRight() - nameWidth) / cellW) + 1);
+    for (int s = firstStep; s <= lastStep; ++s)
     {
         const int tick = s * st;
         const float x = (float) nameWidth + cellW * (float) s;
@@ -116,6 +147,7 @@ void DrumGrid::paint (juce::Graphics& g)
         if (! juce::isPositiveAndBelow (lane, lanes)) continue;
         const float vel = juce::jlimit (1, 127, (int) h[dids::vel]) / 127.0f;
         const float x = (float) nameWidth + cellW * (float) (int) h[dids::tick] / (float) st;
+        if (x + cellW < (float) clip.getX() || x > (float) clip.getRight()) continue;
         const float y = (float) (headerHeight + lane * laneHeight);
         auto cell = juce::Rectangle<float> (x + 1.5f, y + 2.0f, juce::jmax (4.0f, cellW - 3.0f), (float) laneHeight - 4.0f);
         g.setColour (laneColour (lane).withAlpha (0.25f));
@@ -136,6 +168,7 @@ void DrumGrid::paint (juce::Graphics& g)
         g.setColour (palette::accent);
         g.drawLine (x, 0.0f, x, bottom, 2.0f);
     }
+    drawNames();
 }
 
 void DrumGrid::mouseDown (const juce::MouseEvent& e)
@@ -144,7 +177,7 @@ void DrumGrid::mouseDown (const juce::MouseEvent& e)
     moved = false;
     const int lane = laneAt (e.y);
     if (! juce::isPositiveAndBelow (lane, (int) drums::numPieces) || e.y < headerHeight) return;
-    if (e.x < nameWidth)
+    if (e.x < juce::jmax (0, -getX()) + nameWidth)
     {
         if (e.mods.isPopupMenu()) { if (onLaneMenu) onLaneMenu (lane); }
         else host.engine.previewDrum (lane, 0.9f);
@@ -154,6 +187,7 @@ void DrumGrid::mouseDown (const juce::MouseEvent& e)
     const int step = stepAt (e.x);
     if (! juce::isPositiveAndBelow (step, steps())) return;
     auto hit = hitInCell (lane, step);
+    juce::ignoreUnused (hit);
 
     if (e.mods.isPopupMenu())
     {
@@ -347,18 +381,56 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
             safe->doc.set (cur, dids::name, n);
         }), true);
     };
+    deleteButton.setTooltip ("Delete this pattern, unused patterns, all patterns, or clear the song");
     deleteButton.onClick = [this] {
-        auto cur = current();
-        if (! cur.isValid()) return;
-        doc.undo().beginNewTransaction ("Delete drum pattern");
-        const auto id = cur[dids::id].toString();
-        auto songTree = drums::song (drums);
-        for (int i = songTree.getNumChildren(); --i >= 0;)
-            if (songTree.getChild (i)[dids::pattern].toString() == id) songTree.removeChild (i, &doc.undo());
-        const int idx = drums::patterns (drums).indexOf (cur);
-        drums::patterns (drums).removeChild (cur, &doc.undo());
-        auto next = drums::patterns (drums).getChild (juce::jmax (0, idx - 1));
-        selectPattern (next.isValid() ? next[dids::id].toString() : juce::String());
+        juce::PopupMenu m;
+        m.addItem (1, "Delete this pattern", current().isValid());
+        m.addItem (2, "Delete patterns not used in the song", drums::patterns (drums).getNumChildren() > 0);
+        m.addItem (3, "Delete all patterns (and clear the song)", drums::patterns (drums).getNumChildren() > 0);
+        m.addSeparator();
+        m.addItem (4, "Clear the song arrangement", drums::song (drums).getNumChildren() > 0);
+        juce::Component::SafePointer<DrumPage> safe (this);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&deleteButton), [safe] (int r) {
+            if (safe == nullptr || r == 0) return;
+            auto& um = safe->doc.undo();
+            auto pats = drums::patterns (safe->drums);
+            auto songTree = drums::song (safe->drums);
+            if (r == 1)
+            {
+                auto cur = safe->current();
+                um.beginNewTransaction ("Delete drum pattern");
+                const auto id = cur[dids::id].toString();
+                for (int i = songTree.getNumChildren(); --i >= 0;)
+                    if (songTree.getChild (i)[dids::pattern].toString() == id) songTree.removeChild (i, &um);
+                const int idx = pats.indexOf (cur);
+                pats.removeChild (cur, &um);
+                auto next = pats.getChild (juce::jmax (0, idx - 1));
+                safe->selectPattern (next.isValid() ? next[dids::id].toString() : juce::String());
+            }
+            else if (r == 2)
+            {
+                juce::StringArray used;
+                for (auto sec : songTree) used.add (sec[dids::pattern].toString());
+                um.beginNewTransaction ("Delete unused drum patterns");
+                for (int i = pats.getNumChildren(); --i >= 0;)
+                    if (! used.contains (pats.getChild (i)[dids::id].toString())) pats.removeChild (i, &um);
+                safe->selectPattern (pats.getChild (0)[dids::id].toString());
+            }
+            else if (r == 3)
+            {
+                um.beginNewTransaction ("Delete all drum patterns");
+                songTree.removeAllChildren (&um);
+                pats.removeAllChildren (&um);
+                safe->selectPattern ({});
+            }
+            else if (r == 4)
+            {
+                um.beginNewTransaction ("Clear drum song");
+                songTree.removeAllChildren (&um);
+            }
+            safe->strip.selected = -1;
+            safe->refresh();
+        });
     };
 
     for (int i = 0; i < (int) std::size (sigNames); ++i) sigCombo.addItem (sigNames[i], i + 1);
@@ -453,7 +525,7 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
     volumeSlider.setTooltip ("Drum kit volume");
     volumeSlider.onValueChange = [this] { if (! updating) doc.set (drums, dids::volume, volumeSlider.getValue() / 100.0, false); };
 
-    importButton.setTooltip ("Import a whole MIDI drum file: repeating parts become patterns, arranged as song sections");
+    importButton.setTooltip ("Import a MIDI drum file as one pattern containing the whole file");
     importButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Import MIDI drums", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.mid;*.midi");
         juce::Component::SafePointer<DrumPage> safe (this);
@@ -465,10 +537,9 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
             if (r.tempo > 0.0) safe->doc.setTempo (r.tempo);
             safe->selectPattern (r.firstPatternId);
             juce::String msg;
-            msg << "Imported " << r.bars << " bars (" << r.hits << " hits) as " << r.patterns << (r.patterns == 1 ? " pattern" : " patterns")
-                << " arranged in " << r.sections << (r.sections == 1 ? " song section" : " song sections") << ".";
+            msg << "Imported the whole file as one pattern: " << r.bars << " bars, " << r.hits << " hits.";
             if (r.tempo > 0.0) msg << "\nTempo set to " << juce::String (r.tempo, 1) << " BPM.";
-            msg << "\nUse \"Play song\" to hear the whole file.";
+            msg << "\nPress \"Play pattern\" to hear it; scroll the grid sideways to see all of it.";
             if (! r.warnings.isEmpty()) msg << "\n\n" << r.warnings.joinIntoString ("\n");
             safe->message ("Import complete", msg);
         });
@@ -714,9 +785,19 @@ void DrumPage::timerCallback()
         return;
     }
     const double q = e.getPositionSeconds() * juce::jmax (10.0, doc.tempo()) / 60.0;
+    auto follow = [this] (double localQ) {
+        // keep the playhead in view on long patterns
+        const int x = (int) grid.xForQ (localQ);
+        const int left = viewport.getViewPositionX(), w = viewport.getViewWidth();
+        if (x < left + DrumGrid::nameWidth || x > left + w - 40)
+            viewport.setViewPosition (juce::jmax (0, x - DrumGrid::nameWidth - 20), viewport.getViewPositionY());
+    };
     if (! songMode)
     {
-        grid.setPlayheadQ (q);
+        const double len = current().isValid() ? drums::lengthTicks (current()) / (double) drums::ppq : 0.0;
+        const double local = len > 0.0 ? std::fmod (q, len) : q;
+        grid.setPlayheadQ (local);
+        follow (local);
         return;
     }
     strip.playQ = q;
@@ -738,6 +819,7 @@ void DrumPage::timerCallback()
         acc += len * reps;
     }
     grid.setPlayheadQ (local);
+    if (local >= 0.0) follow (local);
 }
 
 // ------------------------------------------------------------------ generator & output

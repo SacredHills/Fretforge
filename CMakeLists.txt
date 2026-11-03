@@ -148,7 +148,8 @@ if(FF_BUILD_TESTS)
         tests/TabTests.cpp
         tests/GuitarProTests.cpp
         tests/MusicXmlTests.cpp
-        tests/DrumTests.cpp)
+        tests/DrumTests.cpp
+        tests/PerfProbe.cpp)
     target_link_libraries(ff_tests PRIVATE ff_core juce::juce_recommended_config_flags)
     target_compile_definitions(ff_tests PRIVATE FF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     enable_testing()

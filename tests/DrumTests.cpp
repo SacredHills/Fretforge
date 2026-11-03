@@ -197,7 +197,7 @@ struct DrumTests : juce::UnitTest
             f.deleteFile();
         }
 
-        beginTest ("MIDI import of a whole song: long files, repeats, meter changes, shared patterns");
+        beginTest ("MIDI import: the whole file as one pattern (long files, meter changes)");
         {
             juce::ValueTree src ("PROJECT");
             auto sd = d::getOrCreate (src);
@@ -224,15 +224,14 @@ struct DrumTests : juce::UnitTest
             auto dd = d::getOrCreate (dst);
             auto r = d::importMidi (dd, f, nullptr);
             expect (r.result.wasOk(), r.result.getErrorMessage());
-            expectEquals (r.bars, 80);
+            expectEquals (r.patterns, 1, "the whole file is one pattern");
+            expectEquals (r.sections, 1, "added to the empty song");
             expectEquals (r.tempo, 140.0);
-            expectEquals (r.patterns, 3, "one pattern per distinct phrase");
-            expectEquals (r.sections, 4);
-            expectEquals (d::song (dd).getChild (0)[d::ids::pattern].toString(), d::song (dd).getChild (3)[d::ids::pattern].toString(),
-                          "the returning intro reuses its pattern");
-            expectEquals ((int) d::song (dd).getChild (1)[d::ids::repeats], 30);
-            const auto imported = d::compile (dd, {}, 1);
-            expectEquals (imported.lengthQ, original.lengthQ);
+            auto whole = d::patternById (dd, r.firstPatternId);
+            expect (whole.isValid());
+            expectEquals ((int) whole[d::ids::bars], 79, "76 bars of 4/4 + 4 of 3/4 = 79 bars of 4/4");
+            expect (r.warnings.joinIntoString (" ").contains ("time signature"));
+            const auto imported = d::compile (dd, whole, 1);
             expectEquals ((int) imported.events.size(), (int) original.events.size());
             std::multiset<std::pair<long long, int>> x, y;
             for (auto& e : original.events) x.insert ({ std::llround (e.q * 960), e.piece });
