@@ -25,7 +25,6 @@ endif()
 
 set(FF_COMMON_DEFS
     JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
     JUCE_USE_FLAC=1
@@ -39,7 +38,9 @@ set(FF_COMMON_DEFS
 
 # JACK/ALSA only on Linux (newer JUCE can also build JACK on macOS/Windows, which needs the JACK SDK)
 if(UNIX AND NOT APPLE)
-    list(APPEND FF_COMMON_DEFS JUCE_JACK=1 JUCE_ALSA=1)
+    # libcurl gives juce::URL https on Linux (TONE3000 browser); macOS/Windows use the system networking
+    find_package(CURL REQUIRED)
+    list(APPEND FF_COMMON_DEFS JUCE_JACK=1 JUCE_ALSA=1 JUCE_USE_CURL=1)
 else()
     list(APPEND FF_COMMON_DEFS JUCE_JACK=0)
 endif()
@@ -103,6 +104,7 @@ endif()
 target_link_libraries(ff_core
     PUBLIC
         ff_nam
+        $<$<AND:$<PLATFORM_ID:Linux>,$<BOOL:${CURL_FOUND}>>:CURL::libcurl>
         juce::juce_core
         juce::juce_data_structures
         juce::juce_events
@@ -139,10 +141,11 @@ target_sources(FretForgeStudio PRIVATE
     src/app/pages/tabs/NotationGlyphs.cpp
     src/app/pages/tabs/ScorePdf.cpp
     src/app/pages/drums/DrumPage.cpp
-    src/app/pages/fx/EffectsPage.cpp
+    src/app/pages/fx/RigEditor.cpp
+    src/app/tone3000/Tone3000.cpp
+    src/app/tone3000/Tone3000Panel.cpp
     src/app/pages/tabs/TabPage.cpp
     src/app/pages/StudioPage.cpp
-    src/app/pages/ToolsPage.cpp
     src/app/pages/TunerPanel.cpp
     src/app/pages/MetronomePanel.cpp
     src/app/pages/MixerPage.cpp
@@ -154,6 +157,7 @@ target_link_libraries(FretForgeStudio PRIVATE
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_audio_utils
+    juce::juce_cryptography
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)

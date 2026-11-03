@@ -278,6 +278,28 @@ struct DrumTests : juce::UnitTest
             TabSequence slow;
             addDrumSong (slow, dr, ff::tab::tempoMap (sc, 0.5));
             expectWithinAbsoluteError (slow.drumHits[2].sec, 12.0, 1e-9);
+
+            // a tab longer than the drum song: the song repeats to the end of the tab, cut at the tab's end
+            TabSequence longer;
+            const auto map = ff::tab::tempoMap (sc, 1.0);
+            longer.lengthSec = map.secondsAt (4.0 * 7.5);   // 7.5 bars of tab
+            addDrumSong (longer, dr, map);
+            expectEquals ((int) longer.drumHits.size(), 8);  // hits on bars 1..8 (the 9th would start after the tab ends)
+            for (int i = 1; i < (int) longer.drumHits.size(); ++i)
+                expect (longer.drumHits[(size_t) i].sec > longer.drumHits[(size_t) i - 1].sec);
+
+            // no song arranged: the selected pattern loops
+            juce::ValueTree pr2 ("PROJECT");
+            auto sc2 = ff::tab::getOrCreateScore (pr2);
+            auto dr2 = d::getOrCreate (pr2);
+            auto pat2 = d::addPattern (dr2, "P", 4, 4, 1, nullptr);
+            d::setHit (pat2, d::snare, 0, 100, nullptr);
+            dr2.setProperty (d::ids::selected, pat2[d::ids::id].toString(), nullptr);
+            TabSequence s2;
+            const auto map2 = ff::tab::tempoMap (sc2, 1.0);
+            s2.lengthSec = map2.secondsAt (16.0);
+            addDrumSong (s2, dr2, map2);
+            expectEquals ((int) s2.drumHits.size(), 4);
         }
 
         beginTest ("synth: every piece sounds, stays bounded, hats choke");

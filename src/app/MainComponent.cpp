@@ -68,9 +68,10 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
 
     doc = std::make_unique<ProjectDocument> (host, settings);
     session = std::make_unique<SessionController> (host, *doc, settings);
-    transport = std::make_unique<TransportBar> (host, *doc);
+    transport = std::make_unique<TransportBar> (host, *doc, &settings);
     studioPage = std::make_unique<StudioPage> (*doc, host, *session, settings);
-    toolsPage = std::make_unique<ToolsPage> (host, *doc, settings);
+    tunerPanel = std::make_unique<TunerPanel> (host, settings);
+    metronomePanel = std::make_unique<MetronomePanel> (host, *doc, settings);
     mixerPage = std::make_unique<MixerPage> (host, *doc, *session, settings);
     settingsPage = std::make_unique<SettingsPage> (host, *doc, settings);
 
@@ -79,16 +80,20 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     auto* training = milestonePages.add (new MilestonePage ("Training", 6, "Training centre",
         { "Rule-based exercise generator (23 techniques)", "Exercises as editable tab with playback", "Progressive tempo practice with thresholds",
           "Structured plans (fundamentals to death-metal picking)", "Practice tracking, streaks and speed records", "Progress charts and weak-area analysis" },
-        "Available now: Tools > Metronome already includes a tempo trainer, random missing-beat rhythm training and a practice timer."));
-    effectsPage = std::make_unique<EffectsPage> (*doc, host, *session, settings);
+        "Available now: the metronome window (right-click the click button) already includes a tempo trainer, random missing-beat rhythm training and a practice timer."));
+    effectsPage = std::make_unique<RigEditor> (*doc, host, *session, settings);
+    t3kClient = std::make_unique<t3k::Client> (settings);
+    effectsPage->setTone3000Handler ([this, ed = juce::Component::SafePointer<RigEditor> (effectsPage.get())] (bool cab) {
+        if (ed != nullptr) openTone3000 (*ed, cab);
+    });
     auto* library = milestonePages.add (new MilestonePage ("Library", 7, "Songwriting & library",
         { "Riff library with tags (genre, tuning, BPM, key...)", "Chord progression library", "Example tabs, drum patterns, tutorials",
           "Preset & IR browser", "Song structure timeline", "Cross-project riff reuse" }));
 
-    const juce::StringArray names { "Studio", "Mixer", "Guitar Tabs", "Drum Studio", "Training", "Effects & Amps", "Library", "Tools", "Settings" };
-    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), training, effectsPage.get(), library, toolsPage.get(), settingsPage.get() };
+    const juce::StringArray names { "Studio", "Mixer", "Guitar Tabs", "Drum Studio", "Training", "Effects & Amps", "Library", "Settings" };
+    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), training, effectsPage.get(), library, settingsPage.get() };
     nav.names = names;
-    nav.implemented = { true, true, true, true, false, true, false, true, true };
+    nav.implemented = { true, true, true, true, false, true, false, true };
     nav.onSelect = [this] (int i) { showSection (i); };
     addAndMakeVisible (nav);
     for (auto* p : pages)
@@ -104,6 +109,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
 
     doc->onStateChanged = [this] { updateTitleAndStatus(); };
     doc->onTreeReplaced = [this] {
+        rigWindows.clear();
         session->rebind();
         transport->rebind();
         studioPage->rebind();
@@ -111,15 +117,18 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
         tabPage->rebind();
         drumPage->rebind();
         effectsPage->rebind();
-        toolsPage->metronome.rebind();
+        metronomePanel->rebind();
     };
     transport->onRecord = [this] { session->toggleRecord(); };
+    transport->onOpenTuner = [this] { openTuner(); };
+    session->onOpenRig = [this] (juce::ValueTree t) { openRigWindow (t); };
+    transport->onOpenMetronome = [this] { openMetronome(); };
     session->onError = [this] (const juce::String& t, const juce::String& m) { showError (t, m); };
     host.onDeviceChanged = [this] {
-        toolsPage->tuner.refreshInputs();
+        tunerPanel->refreshInputs();
         session->deviceChanged();
         studioPage->arrange.deviceChanged();
-        effectsPage->setActive (currentSection == 5);
+        effectsPage->setActive (currentSection == effectsSection);
         if (auto xml = host.createStateXml())
             settings.setValue ("audioDeviceState", xml.get());
         updateTitleAndStatus();
@@ -140,7 +149,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
 #endif
     setApplicationCommandManagerToWatch (&commandManager);
 
-    showSection (juce::jlimit (0, pages.size() - 1, settings.getIntValue ("lastSection", 0)));
+    showSection (juce::jlimit (0, pages.size() - 1, settings.getIntValue ("lastSection", 0)));  // an old "Tools" index lands on Settings
     updateTitleAndStatus();
     setSize (1440, 900);
     startTimerHz (2);
@@ -167,9 +176,16 @@ MainComponent::~MainComponent()
     tabPage.reset();
     drumPage.reset();
     effectsPage.reset();
+    t3kClient.reset();
     milestonePages.clear();
     studioPage.reset();
-    toolsPage.reset();
+    rigWindows.clear();
+    t3kWindow.reset();
+    t3kPanel.reset();
+    tunerWindow.reset();
+    metronomeWindow.reset();
+    tunerPanel.reset();
+    metronomePanel.reset();
     mixerPage.reset();
     settingsPage.reset();
     session.reset();
@@ -185,7 +201,7 @@ void MainComponent::showSection (int index)
     if (drumPage != nullptr && index != 3) drumPage->setActive (false);
     if (tabPage != nullptr && index == 2) tabPage->setActive (true);
     if (drumPage != nullptr && index == 3) drumPage->setActive (true);
-    if (effectsPage != nullptr) effectsPage->setActive (index == 5);
+    if (effectsPage != nullptr) effectsPage->setActive (index == effectsSection);
     currentSection = index;
     nav.selected = index;
     nav.repaint();
@@ -397,12 +413,62 @@ void MainComponent::runStartupChecks()
     {
         settings.setValue ("firstRunDone", true);
         settingsPage->setWelcomeVisible (true);
-        showSection (8);
+        showSection (settingsSection);
     }
     else if (! host.hasDevice())
     {
-        showSection (8);
+        showSection (settingsSection);
     }
+}
+
+void MainComponent::openRigWindow (juce::ValueTree track)
+{
+    const auto id = track[timeline::ids::id].toString();
+    if (id.isEmpty()) return;
+    auto& w = rigWindows[id];
+    if (w.window == nullptr)
+    {
+        w.editor = std::make_unique<RigEditor> (*doc, host, *session, settings, id);
+        w.editor->setActive (true);
+        w.editor->setTone3000Handler ([this, ed = juce::Component::SafePointer<RigEditor> (w.editor.get())] (bool cab) {
+            if (ed != nullptr) openTone3000 (*ed, cab);
+        });
+        w.window = std::make_unique<ToolWindow> (w.editor->windowTitle(), *w.editor, 1180, 760, settings, "rigWindow");
+        juce::Component::SafePointer<MainComponent> safe (this);
+        w.editor->onTrackGone = [safe, id] { if (safe != nullptr) safe->rigWindows.erase (id); };
+    }
+    w.window->setName (w.editor->windowTitle());
+    w.window->showFront();
+}
+
+void MainComponent::openTone3000 (RigEditor& editor, bool cab)
+{
+    if (t3kPanel == nullptr)
+    {
+        t3kPanel = std::make_unique<Tone3000Panel> (*t3kClient);
+        t3kWindow = std::make_unique<ToolWindow> ("TONE3000", *t3kPanel, 1100, 680, settings, "tone3000Window");
+    }
+    juce::Component::SafePointer<RigEditor> ed (&editor);
+    const auto name = editor.windowTitle().fromFirstOccurrenceOf ("NAM amp - ", false, false);
+    t3kPanel->setMode (cab, name.isEmpty() ? juce::String ("the live rig") : name, [ed, cab] (const juce::File& f) {
+        if (ed != nullptr) ed->loadDownloaded (f, cab);
+    });
+    t3kWindow->showFront();
+}
+
+void MainComponent::openTuner()
+{
+    if (tunerWindow == nullptr)
+        tunerWindow = std::make_unique<ToolWindow> ("Tuner", *tunerPanel, 620, 480, settings, "tunerWindow");
+    tunerPanel->refreshInputs();
+    tunerWindow->showFront();
+}
+
+void MainComponent::openMetronome()
+{
+    if (metronomeWindow == nullptr)
+        metronomeWindow = std::make_unique<ToolWindow> ("Metronome", *metronomePanel, 900, 620, settings, "metronomeWindow");
+    metronomeWindow->showFront();
 }
 
 void MainComponent::showShortcutEditor()
@@ -425,10 +491,10 @@ void MainComponent::showShortcutEditor()
 void MainComponent::getAllCommands (juce::Array<juce::CommandID>& c)
 {
     c.addArray ({ cmdNew, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo, cmdPlayStop, cmdReturnToZero,
-                  cmdToggleClick, cmdTapTempo, cmdPracticeMetronome, cmdShortcuts, cmdAbout,
+                  cmdToggleClick, cmdTapTempo, cmdPracticeMetronome, cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow,
                   cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdDelete,
                   cmdCopy, cmdCut, cmdPaste, cmdSelectAll, cmdAddMarker, cmdZoomIn, cmdZoomOut, cmdZoomFit });
-    for (int i = 0; i < 9; ++i)
+    for (int i = 0; i < numSections; ++i)
         c.add (cmdSectionBase + i);
 }
 
@@ -459,6 +525,8 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdReturnToZero: info.setInfo ("Return to Start", "Move the playhead to bar 1", "Transport", 0); info.addDefaultKeypress (KP::homeKey, 0); info.addDefaultKeypress (KP::returnKey, 0); break;
         case cmdToggleClick: info.setInfo ("Metronome Click", "Click while playing", "Transport", 0); info.setTicked ((bool) doc->metronome()[project::ids::enabled]); info.addDefaultKeypress ('c', 0); break;
         case cmdTapTempo: info.setInfo ("Tap Tempo", "Tap to set the tempo", "Transport", 0); info.addDefaultKeypress ('t', 0); break;
+        case cmdTunerWindow: info.setInfo ("Tuner...", "Open the tuner window", "Transport", 0); info.addDefaultKeypress ('u', cmd | shift); break;
+        case cmdMetronomeWindow: info.setInfo ("Metronome...", "Open the metronome window (practice metronome, tempo trainer)", "Transport", 0); info.addDefaultKeypress ('m', cmd | shift); break;
         case cmdPracticeMetronome: info.setInfo ("Practice Metronome", "Start/stop the free-running metronome", "Transport", 0); info.setTicked (host.engine.practiceMetronome.load()); info.addDefaultKeypress ('m', 0); break;
         case cmdShortcuts: info.setInfo ("Keyboard Shortcuts...", "View and customise shortcuts", "Help", 0); info.addDefaultKeypress ('/', cmd); break;
         case cmdAbout: info.setInfo ("About FretForge Studio", "Version information", "Help", 0); break;
@@ -480,7 +548,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdZoomOut: info.setInfo ("Zoom Out", "Zoom the timeline out", "View", 0); info.addDefaultKeypress ('-', 0); break;
         case cmdZoomFit: info.setInfo ("Zoom to Fit", "Show the whole song", "View", 0); info.addDefaultKeypress ('f', 0); break;
         default:
-            if (id >= cmdSectionBase && id < cmdSectionBase + 9)
+            if (id >= cmdSectionBase && id < cmdSectionBase + numSections)
             {
                 const int i = id - cmdSectionBase;
                 info.setInfo (nav.names[i], "Show " + nav.names[i], "View", 0);
@@ -506,7 +574,9 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdReturnToZero: host.engine.returnToZero(); return true;
         case cmdToggleClick: transport->toggleClick(); return true;
         case cmdTapTempo: transport->tapTempo(); return true;
-        case cmdPracticeMetronome: toolsPage->metronome.togglePractice(); return true;
+        case cmdPracticeMetronome: metronomePanel->togglePractice(); return true;
+        case cmdTunerWindow: openTuner(); return true;
+        case cmdMetronomeWindow: openMetronome(); return true;
         case cmdShortcuts: showShortcutEditor(); return true;
         case cmdRecord: session->toggleRecord(); return true;
         case cmdLoop: transport->toggleLoop(); return true;
@@ -536,7 +606,7 @@ bool MainComponent::perform (const InvocationInfo& info)
                                           nullptr);
             return true;
         default:
-            if (info.commandID >= cmdSectionBase && info.commandID < cmdSectionBase + 9)
+            if (info.commandID >= cmdSectionBase && info.commandID < cmdSectionBase + numSections)
             {
                 showSection (info.commandID - cmdSectionBase);
                 return true;
@@ -607,9 +677,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             m.addCommandItem (cm, cmdToggleClick);
             m.addCommandItem (cm, cmdPracticeMetronome);
             m.addCommandItem (cm, cmdTapTempo);
+            m.addSeparator();
+            m.addCommandItem (cm, cmdTunerWindow);
+            m.addCommandItem (cm, cmdMetronomeWindow);
             break;
         case 4:
-            for (int i = 0; i < 9; ++i)
+            for (int i = 0; i < numSections; ++i)
                 m.addCommandItem (cm, cmdSectionBase + i);
             m.addSeparator();
             m.addCommandItem (cm, cmdZoomIn);

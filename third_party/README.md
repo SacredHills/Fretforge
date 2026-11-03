@@ -8,3 +8,6 @@
 
 The sources are unmodified. They are vendored (instead of fetched at configure time) so that every
 platform builds the exact same amp engine without network access.
+
+`src/app/tone3000/Tone3000.cpp` follows the structure of TONE3000's JUCE example
+([github.com/tone-3000/api](https://github.com/tone-3000/api), `juce/Source/T3K`, MIT licence, Copyright (c) 2026 TONE3000).

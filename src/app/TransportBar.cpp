@@ -1,4 +1,5 @@
 #include "TransportBar.h"
+#include "core/MusicTheory.h"
 
 namespace ff
 {
@@ -53,9 +54,63 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
     g.fillPath (p);
 }
 
-TransportBar::TransportBar (EngineHost& h, ProjectDocument& d)
+void TunerDisplay::update()
+{
+    const double f = host.tuner.frequency.load();
+    if (f > 0.0)
+    {
+        const double a4 = settings != nullptr ? settings->getDoubleValue ("tunerA4", 440.0) : 440.0;
+        const double midi = 69.0 + 12.0 * std::log2 (f / a4);
+        const int n = juce::roundToInt (midi);
+        note = theory::midiNoteName (n);
+        cents = (midi - n) * 100.0;
+        holdTicks = 20;
+    }
+    else if (holdTicks > 0 && --holdTicks == 0)
+        note = {};
+    shownCents += (cents - shownCents) * 0.35;
+    repaint();
+}
+
+void TunerDisplay::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (palette::well);
+    g.fillRoundedRectangle (r, 4.0f);
+    g.setColour (isMouseOver() ? palette::accentDim : palette::outline);
+    g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
+    auto inner = r.reduced (6.0f, 3.0f);
+    auto top = inner.removeFromTop (12.0f);
+    g.setFont (uiFont (10.0f, true));
+    g.setColour (palette::textDim);
+    g.drawText ("TUNER", top, juce::Justification::centredLeft);
+    const bool live = note.isNotEmpty();
+    const bool inTune = live && std::abs (shownCents) < 3.0;
+    if (live)
+        g.drawText ((shownCents >= 0 ? "+" : "") + juce::String (juce::roundToInt (shownCents)) + " c", top, juce::Justification::centredRight);
+    auto noteArea = inner.removeFromLeft (44.0f);
+    g.setFont (monoFont (20.0f, true));
+    g.setColour (inTune ? palette::good : (live ? palette::text : palette::textDim));
+    g.drawText (live ? note : "--", noteArea, juce::Justification::centredLeft);
+    // cents scale -50..+50
+    auto bar = inner.reduced (2.0f, 6.0f);
+    g.setColour (palette::panelHi);
+    g.fillRoundedRectangle (bar, 2.0f);
+    g.setColour (palette::good.withAlpha (0.35f));
+    g.fillRect (bar.withSizeKeepingCentre (bar.getWidth() * 0.06f, bar.getHeight()));
+    g.setColour (palette::textDim);
+    g.fillRect (juce::Rectangle<float> (bar.getCentreX() - 0.5f, bar.getY() - 2.0f, 1.0f, bar.getHeight() + 4.0f));
+    if (live)
+    {
+        const float x = bar.getCentreX() + (float) juce::jlimit (-50.0, 50.0, shownCents) / 50.0f * bar.getWidth() * 0.5f;
+        g.setColour (inTune ? palette::good : (std::abs (shownCents) < 15.0 ? palette::warn : palette::bad));
+        g.fillRoundedRectangle (juce::Rectangle<float> (x - 2.0f, bar.getY() - 3.0f, 4.0f, bar.getHeight() + 6.0f), 1.5f);
+    }
+}
+
+TransportBar::TransportBar (EngineHost& h, ProjectDocument& d, juce::PropertiesFile* settings)
     : host (h), doc (d), inMeter (h.engine.inputMeter, false), outL (h.engine.outputMeterL, false),
-      outR (h.engine.outputMeterR, false)
+      outR (h.engine.outputMeterR, false), tunerDisplay (h, settings)
 {
     rtzButton.onClick = [this] { host.engine.returnToZero(); };
     playButton.onClick = [this] { host.engine.togglePlay(); };
@@ -69,7 +124,6 @@ TransportBar::TransportBar (EngineHost& h, ProjectDocument& d)
     };
     rtzButton.setTooltip ("Return to start (Home)");
     playButton.setTooltip ("Play / Stop (Space)");
-    clickButton.setTooltip ("Metronome click while playing (C)");
     recordButton.setTooltip ("Record on armed tracks (R). Press again to punch out.");
     loopButton.setTooltip ("Loop the range set on the ruler (L). Recording in a loop makes one take per pass.");
     punchButton.setTooltip ("Punch: record only inside the ruler range");
@@ -104,7 +158,7 @@ TransportBar::TransportBar (EngineHost& h, ProjectDocument& d)
         styleLabel (*l, 11.0f, palette::textDim, true);
         addAndMakeVisible (l);
     }
-    cpuLabel.setJustificationType (juce::Justification::centredRight);
+    cpuLabel.setJustificationType (juce::Justification::centredLeft);
 
     tempoSlider.setSliderStyle (juce::Slider::LinearBarVertical);
     tempoSlider.setRange (20.0, 400.0, 0.01);
@@ -142,6 +196,13 @@ TransportBar::TransportBar (EngineHost& h, ProjectDocument& d)
     inMeter.setTooltip ("Input level of the analysis/tuner input. Click to reset the clip indicator.");
     for (auto* m : { &inMeter, &outL, &outR })
         addAndMakeVisible (m);
+    tunerDisplay.setTooltip ("Tuner (input from Settings / the tuner window). Click to open the tuner.");
+    tunerDisplay.onClick = [this] { if (onOpenTuner) onOpenTuner(); };
+    tunerDisplay.setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    addAndMakeVisible (tunerDisplay);
+    host.tuner.active = true;   // the readout is always visible
+    clickButton.onRightClick = [this] { if (onOpenMetronome) onOpenMetronome(); };
+    clickButton.setTooltip ("Metronome click while playing (C). Right-click: metronome window (practice metronome, trainer).");
 
     rebind();
     startTimerHz (30);
@@ -235,6 +296,7 @@ void TransportBar::timerCallback()
     inMeter.tick();
     outL.tick();
     outR.tick();
+    tunerDisplay.update();
 
     const auto midi = host.midiActivity.load();
     if (midi != lastMidi) { lastMidi = midi; midiFlash = 6; }
@@ -266,10 +328,15 @@ void TransportBar::paint (juce::Graphics& g)
 
 void TransportBar::resized()
 {
-    auto r = getLocalBounds().reduced (10, 8);
-    r.removeFromRight (30); // MIDI LED
+    auto full = getLocalBounds().reduced (10, 8);
+    const int h = full.getHeight();
+    // everything is laid out as one group, centred in the bar (the MIDI LED stays at the far right)
+    const int meterW = 150, cpuW = 96, tunerW = 150;
+    const int total = 5 * h + 8 + 4 * 4 + 6 + 96 + 12 + 170 + 14 + 120 + 6 + 46 + 14 + 124 + 16 + tunerW + 16 + meterW + 10 + cpuW;
+    const int avail = getWidth() - 2 * 44;
+    const int x0 = juce::jmax (10, 44 + (avail - total) / 2);
+    auto r = juce::Rectangle<int> (x0, full.getY(), juce::jmin (total, getWidth() - x0 - 40), h);
 
-    const int h = r.getHeight();
     rtzButton.setBounds (r.removeFromLeft (h));
     r.removeFromLeft (4);
     playButton.setBounds (r.removeFromLeft (h + 8));
@@ -301,11 +368,12 @@ void TransportBar::resized()
     sigCaption.setBounds (sig.removeFromTop (14));
     sigNum.setBounds (sig.removeFromLeft (60).reduced (0, 1));
     sigDen.setBounds (sig.removeFromRight (60).reduced (0, 1));
+    r.removeFromLeft (16);
 
-    auto right = r.removeFromRight (juce::jmax (180, juce::jmin (300, r.getWidth() - 470)));
-    cpuLabel.setBounds (right.removeFromRight (90));
-    right.removeFromRight (10);
-    auto meters = right;
+    tunerDisplay.setBounds (r.removeFromLeft (tunerW));
+    r.removeFromLeft (16);
+
+    auto meters = r.removeFromLeft (meterW);
     auto inRow = meters.removeFromTop (meters.getHeight() / 3);
     inCaption.setBounds (inRow.removeFromLeft (30));
     inMeter.setBounds (inRow.reduced (0, 2));
@@ -314,5 +382,7 @@ void TransportBar::resized()
     outCaption.setBounds (outRow.removeFromLeft (30));
     outL.setBounds (outRow.removeFromTop (outRow.getHeight() / 2).reduced (0, 1));
     outR.setBounds (outRow.reduced (0, 1));
+    r.removeFromLeft (10);
+    cpuLabel.setBounds (r.removeFromLeft (cpuW));
 }
 } // namespace ff

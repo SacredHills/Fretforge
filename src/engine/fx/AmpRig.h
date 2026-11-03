@@ -75,7 +75,7 @@ private:
 
     // block state
     std::array<bool, rig::numBlocks> wasOn {};
-    juce::SmoothedValue<float> inG, outG, compG, driveG, ampG, normG;
+    juce::SmoothedValue<float> inG, outG, compG, driveG, ampG, normG, calG;
     std::vector<float> mono, right2, tmp;
 
     // gate

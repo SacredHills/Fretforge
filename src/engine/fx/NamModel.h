@@ -15,6 +15,8 @@ struct NamInfo
     bool sampleRateKnown = false;
     double loudness = 0.0;             // dB, output for a "typical" input
     bool hasLoudness = false;
+    double inputLevelDbu = 0.0;        // the capture's input level: dBu that corresponds to 0 dBFS
+    bool hasInputLevel = false;
     juce::String displayName() const;  // "Make Model (name)" or the file name
 };
 
@@ -46,6 +48,9 @@ public:
     int latencySamples() const noexcept { return latency; }
     /** Linear gain that brings the model to -18 dB loudness (1 if unknown). */
     float normalisationGain() const noexcept;
+    /** Input gain that makes a signal from an interface with `interfaceDbu` at 0 dBFS hit the model at the level it was
+        captured at (1 if the capture stores no input level). */
+    float calibrationGain (float interfaceDbu) const noexcept;
 
     /** Mono, in place, at the device rate. n <= the prepared block size. */
     void process (float* io, int n) noexcept;

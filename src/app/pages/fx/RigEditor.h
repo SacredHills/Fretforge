@@ -5,6 +5,7 @@
 #include "../../SessionController.h"
 #include "../../Widgets.h"
 #include "core/RigModel.h"
+#include "FileBrowserList.h"
 
 namespace ff
 {
@@ -59,13 +60,15 @@ private:
     float level = -90.0f;
 };
 
-/** Effects & Amps: edits the live practice rig or a track's rig insert (NAM capture or built-in amp, cabinet IR,
-    pedals, presets). */
-class EffectsPage : public juce::Component, private juce::ValueTree::Listener, private juce::Timer, private juce::ListBoxModel
+/** Rig editor (NAM capture or built-in amp, cabinet IR, pedals, presets). With an empty track id it edits the live
+    practice rig (the Effects & Amps page); with a track id it edits that track's amp (shown in its own window). */
+class RigEditor : public juce::Component, private juce::ValueTree::Listener, private juce::Timer
 {
 public:
-    EffectsPage (ProjectDocument&, EngineHost&, SessionController&, juce::PropertiesFile&);
-    ~EffectsPage() override;
+    RigEditor (ProjectDocument&, EngineHost&, SessionController&, juce::PropertiesFile&, const juce::String& trackId = {});
+    std::function<void()> onTrackGone;   // the edited track was deleted (or the project replaced)
+    juce::String windowTitle() const;
+    ~RigEditor() override;
     void rebind();
     void setActive (bool);
     void paint (juce::Graphics&) override;
@@ -79,11 +82,13 @@ private:
     juce::ValueTree root, liveTree;   // kept as members: ValueTree listeners belong to the ValueTree object
     juce::String targetTrackId;          // empty = the live rig
     juce::ValueTree target;              // the RIG node being edited (invalid: the track has no rig yet)
-    bool active = false, chosenByUser = false;
+    bool active = false;
+    const bool trackMode;
 
     // top row
-    juce::ComboBox targetCombo, inputCombo, presetCombo;
-    juce::TextButton onButton, monitorButton, addRigButton { "Add amp rig to this track" };
+    juce::ComboBox inputCombo, presetCombo;
+    juce::Label titleLabel;
+    juce::TextButton onButton, monitorButton, addRigButton { "Add NAM amp to this track" };
     juce::TextButton savePresetButton { "Save preset..." }, deletePresetButton { "Delete" }, resetButton { "Reset" };
     juce::Label targetHint, statusLabel, inLabel, outLabel;
     RigMeter inMeter, outMeter;
@@ -96,12 +101,11 @@ private:
     juce::OwnedArray<ParamKnob> knobs;
 
     // amp: model
-    juce::TextButton loadModelButton { "Load model..." }, clearModelButton { "Use built-in amp" }, folderButton { "Model folder..." };
-    juce::TextButton normaliseButton { "Normalise loudness" };
-    juce::Label modelLabel, modelInfo, browserTitle;
-    juce::TextEditor searchBox;
-    juce::ListBox modelList { "models", this };
-    juce::Array<juce::File> allModels, shownModels;
+    juce::TextButton loadModelButton { "Load model..." }, clearModelButton { "Use built-in amp" };
+    juce::TextButton normaliseButton { "Normalise loudness" }, calibrateButton { "Calibrate input" };
+    juce::Label modelLabel, modelInfo;
+    FileBrowserList models { settings, "namFolder", "*.nam", "models" };
+    FileBrowserList irs { settings, "irFolder", "*.wav;*.aif;*.aiff;*.flac", "impulse responses" };
     // cab: impulse response
     juce::TextButton loadIrButton { "Load IR..." }, clearIrButton { "Use built-in cabinet" };
     juce::Label irLabel;
@@ -109,7 +113,7 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
     juce::UndoManager* um() { return targetTrackId.isEmpty() ? nullptr : &doc.undo(); }
 
-    void rebuildTargets();
+    void rebuildInputs();
     void selectTarget (const juce::String& trackId);
     void selectBlock (int block);
     void refreshAll();
@@ -120,17 +124,16 @@ private:
     void savePreset();
     void deletePreset();
     juce::File presetFolder() const;
-    void chooseModelFolder();
-    void scanModels();
-    void filterModels();
     void setModelFile (const juce::File&);
     void setIrFile (const juce::File&);
     void setOnTarget (const juce::Identifier&, const juce::var&, const juce::String& undoName);
 
-    // ListBoxModel
-    int getNumRows() override { return shownModels.size(); }
-    void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
-    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
+    std::function<void (bool cab)> onBrowseTone3000;   // set by the app: opens the TONE3000 browser
+public:
+    /** Loads a downloaded file into this rig (amp model or cabinet IR). */
+    void loadDownloaded (const juce::File& f, bool cab) { if (cab) setIrFile (f); else setModelFile (f); }
+    void setTone3000Handler (std::function<void (bool cab)> fn) { onBrowseTone3000 = std::move (fn); refreshAll(); }
+private:
 
     void timerCallback() override;
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;

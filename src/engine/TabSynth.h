@@ -34,8 +34,10 @@ struct TabSequence
 /** Drum studio playback: one pattern (or the whole song when `pattern` is invalid) at `bpm`. */
 std::unique_ptr<TabSequence> buildDrumSequence (const juce::ValueTree& drums, const juce::ValueTree& pattern, double bpm);
 
-/** Adds the drum song (play-along) to a tab sequence, timed through the score's tempo map. */
-void addDrumSong (TabSequence&, const juce::ValueTree& drums, const tab::TempoMap& map);
+/** Adds the drum song (play-along) to a tab sequence, timed through the score's tempo map. The song repeats until
+    the end of the tab (seq.lengthSec, or once if the sequence has no length yet); an empty song plays the selected
+    pattern instead. */
+void addDrumSong (TabSequence&, const juce::ValueTree& drums, const tab::TempoMap& map, bool loopToEnd = true);
 
 /** Builds a sequence from a SCORE node. `speed` scales the tempo (0.5 = half speed, pitch unchanged). */
 std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, double speed);

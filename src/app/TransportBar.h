@@ -15,8 +15,31 @@ public:
     IconButton (const juce::String& name, Icon i) : juce::Button (name), icon (i) {}
     void setIcon (Icon i) { icon = i; repaint(); }
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    std::function<void()> onRightClick;   // when set, a right-click calls this instead of clicking the button
+    void clicked (const juce::ModifierKeys& m) override
+    {
+        if (m.isPopupMenu() && onRightClick) { onRightClick(); return; }
+        juce::Button::clicked (m);
+    }
 private:
     Icon icon;
+};
+
+/** Compact tuner readout for the transport bar (note + cents needle). Click opens the full tuner window. */
+class TunerDisplay : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    TunerDisplay (EngineHost& h, juce::PropertiesFile* s) : host (h), settings (s) {}
+    void update();
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent& e) override { if (onClick && e.mouseWasClicked()) onClick(); }
+    std::function<void()> onClick;
+private:
+    EngineHost& host;
+    juce::PropertiesFile* settings;
+    juce::String note;
+    double cents = 0.0, shownCents = 0.0;
+    int holdTicks = 0;
 };
 
 /** Always-visible transport: locate/play, click, position, tempo, meter, tap,
@@ -24,7 +47,7 @@ private:
 class TransportBar : public juce::Component, private juce::Timer, private juce::ValueTree::Listener
 {
 public:
-    TransportBar (EngineHost&, ProjectDocument&);
+    TransportBar (EngineHost&, ProjectDocument&, juce::PropertiesFile* settings = nullptr);
     ~TransportBar() override;
 
     void resized() override;
@@ -36,6 +59,7 @@ public:
     void toggleLoop();
     void togglePunch();
     std::function<void()> onRecord;
+    std::function<void()> onOpenTuner, onOpenMetronome;
 
 private:
     EngineHost& host;
@@ -54,6 +78,8 @@ private:
     juce::ComboBox sigNum, sigDen;
     juce::TextButton tapButton { "TAP" };
     MeterView inMeter, outL, outR;
+    TunerDisplay tunerDisplay;
+
     juce::Label inCaption, outCaption, cpuLabel;
     TapTempo tap;
     juce::uint32 lastMidi = 0;

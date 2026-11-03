@@ -12,7 +12,9 @@ class ChannelStrip : public juce::Component, private juce::ValueTree::Listener
 public:
     ChannelStrip (ProjectDocument&, EngineHost&, SessionController&, juce::ValueTree track, int slot);
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
     ~ChannelStrip() override;
+    void rename() { nameLabel.showEditor(); }
     void paint (juce::Graphics&) override;
     void resized() override;
     void tick();
@@ -25,12 +27,16 @@ private:
     juce::ValueTree track;
     int slot;
     juce::Slider fader, pan;
-    juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
+    juce::TextButton mute { "M" }, solo { "S" }, arm { "R" }, ampButton { "NAM AMP" };
+    juce::Label nameLabel;
+    void showMenu();
     float level = -100.0f, hold = -100.0f;
     int holdTicks = 0;
     bool updating = false;
     void refresh();
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { refresh(); }
+    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { refresh(); }
+    void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { refresh(); }
 };
 
 /** Mixer: a channel strip per track plus the main output. */
@@ -57,6 +63,7 @@ private:
     MeterView meterL, meterR;
     juce::Rectangle<int> masterBox, scale;
     juce::Label emptyLabel;
+    juce::TextButton addTrackButton { "+ Track" };
 
     void rebuild();
     void timerCallback() override;

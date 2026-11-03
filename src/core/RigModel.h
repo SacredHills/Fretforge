@@ -37,6 +37,7 @@ enum Param
     chorusOn, chorusRate, chorusDepth, chorusMix,
     delayOn, delayTime, delayFeedback, delayTone, delayMix,
     reverbOn, reverbSize, reverbDamp, reverbMix,
+    namCalibrate, calLevel,          // NAM input calibration: interface level (dBu at 0 dBFS)
     numParams
 };
 
@@ -52,6 +53,8 @@ struct ParamInfo
 };
 
 const ParamInfo& info (int param);
+/** On/off parameters: block switches, NAM normalisation and calibration. */
+bool isToggle (int param);
 /** The on/off switch parameter of a block. */
 int switchFor (int block);
 const char* blockId (int block);

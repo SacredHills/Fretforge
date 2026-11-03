@@ -240,6 +240,13 @@ void TrackHeader::showMenu()
         colours.addColouredItem (100 + i, "Colour " + juce::String (i + 1), juce::Colour::fromString (trackPalette()[i]));
     m.addSubMenu ("Colour", colours);
     m.addSeparator();
+    if (owner.session.trackHasRig (track))
+    {
+        m.addItem (10, "Open NAM amp...");
+        m.addItem (11, "Remove NAM amp");
+    }
+    else m.addItem (10, "Add NAM amp...");
+    m.addSeparator();
     m.addItem (2, "Move up", index > 0);
     m.addItem (3, "Move down", index < owner.numTracks() - 1);
     const int n = owner.session.tracksForEdit (track).size();
@@ -255,6 +262,8 @@ void TrackHeader::showMenu()
         auto tracks = o.doc.tracks();
         const int idx = tracks.indexOf (t);
         if (r == 1) safe->name.showEditor();
+        else if (r == 10) o.session.addTrackRig (t);
+        else if (r == 11) o.session.removeTrackRig (t);
         else if (r >= 100) { o.doc.undo().beginNewTransaction ("Track colour"); o.doc.set (t, ids::colour, trackPalette()[r - 100]); }
         else if (r == 2) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx - 1, &o.doc.undo()); }
         else if (r == 3) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx + 1, &o.doc.undo()); }

@@ -1,4 +1,4 @@
-#include "EffectsPage.h"
+#include "RigEditor.h"
 #include "engine/fx/NamModel.h"
 
 namespace ff
@@ -197,20 +197,15 @@ void RigMeter::paint (juce::Graphics& g)
     g.fillRoundedRectangle (r.withWidth (r.getWidth() * n), 2.0f);
 }
 
-// ================================================================ EffectsPage
+// ================================================================ RigEditor
 
-EffectsPage::EffectsPage (ProjectDocument& d, EngineHost& h, SessionController& s, juce::PropertiesFile& st)
-    : doc (d), host (h), session (s), settings (st)
+RigEditor::RigEditor (ProjectDocument& d, EngineHost& h, SessionController& s, juce::PropertiesFile& st, const juce::String& trackId)
+    : doc (d), host (h), session (s), settings (st), targetTrackId (trackId), trackMode (trackId.isNotEmpty())
 {
-    for (auto* c : { &targetCombo, &inputCombo, &presetCombo })
+    for (auto* c : { &inputCombo, &presetCombo })
         addAndMakeVisible (c);
-    targetCombo.setTooltip ("Which rig to edit: the live practice rig or a track's amp rig");
-    targetCombo.onChange = [this] {
-        const int id = targetCombo.getSelectedId();
-        if (id <= 0) return;
-        chosenByUser = true;
-        selectTarget (id == 1 ? juce::String() : doc.tracks().getChild (id - 2)[tlids::id].toString());
-    };
+    styleLabel (titleLabel, 16.0f, palette::text, true);
+    addAndMakeVisible (titleLabel);
     inputCombo.setTooltip ("Input the live rig plays");
     inputCombo.onChange = [this] {
         if (targetTrackId.isEmpty() && target.isValid())
@@ -252,7 +247,7 @@ EffectsPage::EffectsPage (ProjectDocument& d, EngineHost& h, SessionController& 
     for (auto* b : { &onButton, &monitorButton, &addRigButton, &savePresetButton, &deletePresetButton, &resetButton })
         addAndMakeVisible (b);
 
-    for (auto* l : { &targetHint, &statusLabel, &inLabel, &outLabel, &blockTitle, &blockHelp, &modelLabel, &modelInfo, &irLabel, &browserTitle })
+    for (auto* l : { &targetHint, &statusLabel, &inLabel, &outLabel, &blockTitle, &blockHelp, &modelLabel, &modelInfo, &irLabel })
         addAndMakeVisible (l);
     styleLabel (targetHint, 12.5f);
     styleLabel (statusLabel, 12.5f);
@@ -268,7 +263,6 @@ EffectsPage::EffectsPage (ProjectDocument& d, EngineHost& h, SessionController& 
     modelInfo.setJustificationType (juce::Justification::topLeft);
     styleLabel (irLabel, 13.0f, palette::text);
     irLabel.setJustificationType (juce::Justification::topLeft);
-    styleLabel (browserTitle, 13.0f, palette::text, true);
 
     addAndMakeVisible (inMeter);
     addAndMakeVisible (outMeter);
@@ -299,8 +293,8 @@ EffectsPage::EffectsPage (ProjectDocument& d, EngineHost& h, SessionController& 
     moveRightButton.setTooltip ("Move this block later in the chain");
     moveLeftButton.onClick = [this] { if (target.isValid()) { if (auto* u = um()) u->beginNewTransaction ("Move block"); moveBlock (target, chain.selected, -1, um()); } };
     moveRightButton.onClick = [this] { if (target.isValid()) { if (auto* u = um()) u->beginNewTransaction ("Move block"); moveBlock (target, chain.selected, +1, um()); } };
-    for (auto* b : { &blockOnButton, &moveLeftButton, &moveRightButton, &loadModelButton, &clearModelButton, &folderButton,
-                     &normaliseButton, &loadIrButton, &clearIrButton })
+    for (auto* b : { &blockOnButton, &moveLeftButton, &moveRightButton, &loadModelButton, &clearModelButton,
+                     &normaliseButton, &calibrateButton, &loadIrButton, &clearIrButton })
         addChildComponent (b);
 
     loadModelButton.onClick = [this] {
@@ -310,7 +304,13 @@ EffectsPage::EffectsPage (ProjectDocument& d, EngineHost& h, SessionController& 
                               [this] (const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) setModelFile (fc.getResult()); });
     };
     clearModelButton.onClick = [this] { setModelFile ({}); };
-    folderButton.onClick = [this] { chooseModelFolder(); };
+    calibrateButton.setTooltip ("Matches your interface's input level to the level the capture was recorded at, so the amp's gain "
+                                "responds like the real one (needs a capture that stores its input level)");
+    calibrateButton.onClick = [this] {
+        if (! target.isValid()) return;
+        if (auto* u = um()) u->beginNewTransaction ("Calibrate input");
+        set (target, namCalibrate, get (target, namCalibrate) >= 0.5f ? 0.0f : 1.0f, um());
+    };
     normaliseButton.setTooltip ("Levels every model to the same loudness (uses the loudness stored in the .nam file)");
     normaliseButton.onClick = [this] {
         if (! target.isValid()) return;
@@ -325,28 +325,31 @@ EffectsPage::EffectsPage (ProjectDocument& d, EngineHost& h, SessionController& 
     };
     clearIrButton.onClick = [this] { setIrFile ({}); };
 
-    addChildComponent (searchBox);
-    searchBox.setTextToShowWhenEmpty ("Search models", palette::textDim);
-    searchBox.onTextChange = [this] { filterModels(); };
-    addChildComponent (modelList);
-    modelList.setRowHeight (24);
-    modelList.setColour (juce::ListBox::backgroundColourId, palette::well);
+    models.onPick = [this] (const juce::File& f) { setModelFile (f); };
+    irs.onPick = [this] (const juce::File& f) { setIrFile (f); };
+    for (auto* b : { &models, &irs })
+    {
+        b->extraButton.setButtonText ("TONE3000...");
+        b->extraButton.setTooltip ("Browse and download from TONE3000");
+        addChildComponent (b);
+    }
+    models.extraButton.onClick = [this] { if (onBrowseTone3000) onBrowseTone3000 (false); };
+    irs.extraButton.onClick = [this] { if (onBrowseTone3000) onBrowseTone3000 (true); };
 
     session.rigs().onStatusChanged = [this] { refreshStatus(); };
-    scanModels();
     rebuildPresets();
     rebind();
     startTimerHz (30);
 }
 
-EffectsPage::~EffectsPage()
+RigEditor::~RigEditor()
 {
     session.rigs().onStatusChanged = nullptr;
     root.removeListener (this);
     liveTree.removeListener (this);
 }
 
-void EffectsPage::rebind()
+void RigEditor::rebind()
 {
     root.removeListener (this);
     root = doc.tree();
@@ -354,35 +357,38 @@ void EffectsPage::rebind()
     liveTree.removeListener (this);
     liveTree = session.rigs().liveTree();
     liveTree.addListener (this);
-    if (targetTrackId.isNotEmpty() && ! session.findTrack (targetTrackId).isValid()) targetTrackId = {};
-    chosenByUser = false;
+    if (trackMode && ! session.findTrack (targetTrackId).isValid())
+    {
+        target = {};
+        if (onTrackGone) juce::MessageManager::callAsync ([cb = onTrackGone] { cb(); });
+        return;
+    }
     selectTarget (targetTrackId);
 }
 
-void EffectsPage::setActive (bool a)
+void RigEditor::setActive (bool a)
 {
     active = a;
-    if (! a) return;
-    // follow the track selected in the Studio, unless the user picked something here
-    if (! chosenByUser)
-        if (auto t = session.primaryTrack(); t.isValid() && rig::isEnabled (rig::find (t)))
-            targetTrackId = t[tlids::id].toString();
-    selectTarget (targetTrackId);
+    if (a) selectTarget (targetTrackId);
 }
 
-void EffectsPage::rebuildTargets()
+juce::String RigEditor::windowTitle() const
 {
-    targetCombo.clear (juce::dontSendNotification);
-    targetCombo.addItem ("Live input (practice)", 1);
-    int i = 0, sel = 1;
-    for (auto t : doc.tracks())
+    if (! trackMode) return "Live rig";
+    auto t = session.findTrack (targetTrackId);
+    return "NAM amp - " + (t.isValid() ? t[tlids::name].toString() : juce::String ("track"));
+}
+
+void RigEditor::rebuildInputs()
+{
+    if (trackMode)
     {
-        const bool has = rig::isEnabled (rig::find (t));
-        targetCombo.addItem ("Track " + juce::String (i + 1) + ": " + t[tlids::name].toString() + (has ? "  (amp)" : ""), i + 2);
-        if (t[tlids::id].toString() == targetTrackId) sel = i + 2;
-        ++i;
+        auto t = session.findTrack (targetTrackId);
+        const int idx = doc.tracks().indexOf (t);
+        titleLabel.setText ("Track " + juce::String (idx + 1) + ": " + t[tlids::name].toString(), juce::dontSendNotification);
+        if (auto* w = findParentComponentOfClass<juce::DocumentWindow>()) w->setName (windowTitle());
     }
-    targetCombo.setSelectedId (sel, juce::dontSendNotification);
+    else titleLabel.setText ("Live input (practice rig)", juce::dontSendNotification);
 
     inputCombo.clear (juce::dontSendNotification);
     inputCombo.addItem ("Tuner input", 1);
@@ -391,7 +397,7 @@ void EffectsPage::rebuildTargets()
     inputCombo.setSelectedId ((int) session.rigs().liveTree().getProperty (ids::input, -1) + 2, juce::dontSendNotification);
 }
 
-void EffectsPage::selectTarget (const juce::String& trackId)
+void RigEditor::selectTarget (const juce::String& trackId)
 {
     targetTrackId = trackId;
     if (trackId.isEmpty()) target = session.rigs().liveTree();
@@ -400,7 +406,7 @@ void EffectsPage::selectTarget (const juce::String& trackId)
         auto r = rig::find (session.findTrack (trackId));
         target = rig::isEnabled (r) ? r : juce::ValueTree();
     }
-    rebuildTargets();
+    rebuildInputs();
     chain.setRig (target);
     inKnob.bind (target, inGain, um());
     outKnob.bind (target, outGain, um());
@@ -408,7 +414,7 @@ void EffectsPage::selectTarget (const juce::String& trackId)
     refreshAll();
 }
 
-void EffectsPage::selectBlock (int b)
+void RigEditor::selectBlock (int b)
 {
     chain.selected = b;
     knobs.clear();
@@ -418,6 +424,8 @@ void EffectsPage::selectBlock (int b)
             const auto& pi = info (p);
             if (pi.block != b || pi.isSwitch || p == namNormalize) continue;
             if (p == ampGain && ! target[ids::namFile].toString().isEmpty()) continue;   // built-in amp only
+            if (p == calLevel && (target[ids::namFile].toString().isEmpty() || get (target, namCalibrate) < 0.5f)) continue;
+            if (p == namCalibrate) continue;
             auto* k = knobs.add (new ParamKnob());
             k->bind (target, p, um());
             addAndMakeVisible (k);
@@ -425,7 +433,7 @@ void EffectsPage::selectBlock (int b)
     refreshAll();
 }
 
-void EffectsPage::refreshAll()
+void RigEditor::refreshAll()
 {
     const bool live = targetTrackId.isEmpty();
     const bool has = target.isValid();
@@ -470,12 +478,20 @@ void EffectsPage::refreshAll()
     for (auto* c : { &blockOnButton, &moveLeftButton, &moveRightButton }) c->setVisible (has);
 
     const bool isAmp = has && b == amp, isCab = has && b == cab;
-    for (auto* c : std::initializer_list<juce::Component*> { &loadModelButton, &clearModelButton, &folderButton, &normaliseButton, &modelLabel,
-                                                             &modelInfo, &searchBox, &modelList, &browserTitle })
+    for (auto* c : std::initializer_list<juce::Component*> { &loadModelButton, &clearModelButton, &normaliseButton, &calibrateButton, &modelLabel,
+                                                             &modelInfo, &models })
         c->setVisible (isAmp);
-    for (auto* c : std::initializer_list<juce::Component*> { &loadIrButton, &clearIrButton, &irLabel })
+    for (auto* c : std::initializer_list<juce::Component*> { &loadIrButton, &clearIrButton, &irLabel, &irs })
         c->setVisible (isCab);
+    for (auto* b : { &models, &irs })
+        if (b->extraButton.isVisible() != (onBrowseTone3000 != nullptr)) { b->extraButton.setVisible (onBrowseTone3000 != nullptr); b->resized(); }
     normaliseButton.setToggleState (has && get (target, namNormalize) >= 0.5f, juce::dontSendNotification);
+    calibrateButton.setToggleState (has && get (target, namCalibrate) >= 0.5f, juce::dontSendNotification);
+    if (has)
+    {
+        models.setCurrent (juce::File (target[ids::namFile].toString().isEmpty() ? juce::String() : target[ids::namFile].toString()));
+        irs.setCurrent (juce::File (target[ids::irFile].toString().isEmpty() ? juce::String() : target[ids::irFile].toString()));
+    }
 
     if (isAmp)
     {
@@ -495,6 +511,15 @@ void EffectsPage::refreshAll()
             text << "Trained at " << juce::String (mi.sampleRate / 1000.0, 1) << " kHz";
             if (dev > 0 && std::abs (dev - mi.sampleRate) > 0.5) text << ", resampled from " << juce::String (dev / 1000.0, 1) << " kHz";
             text << (mi.hasLoudness ? ", loudness " + juce::String (mi.loudness, 1) + " dB" : juce::String (", no loudness stored (normalising has no effect)"));
+            text << "\n";
+            if (mi.hasInputLevel)
+            {
+                text << "Captured with 0 dBFS = " << juce::String (mi.inputLevelDbu, 1) << " dBu at the input";
+                if (get (target, namCalibrate) >= 0.5f)
+                    text << "; calibrated: " << (get (target, calLevel) - mi.inputLevelDbu >= 0 ? "+" : "")
+                         << juce::String (get (target, calLevel) - mi.inputLevelDbu, 1) << " dB into the model";
+            }
+            else text << "No input level stored in this capture: calibration has no effect";
             text << "\n" << status.modelPath;
         }
         else if (status.modelError.isNotEmpty())
@@ -504,9 +529,7 @@ void EffectsPage::refreshAll()
         modelInfo.setText (text, juce::dontSendNotification);
         modelInfo.setColour (juce::Label::textColourId, status.modelError.isNotEmpty() ? palette::bad : palette::textDim);
         clearModelButton.setEnabled (status.modelPath.isNotEmpty());
-        const auto folder = settings.getValue ("namFolder");
-        browserTitle.setText (folder.isEmpty() ? "Model browser" : "Models in " + juce::File (folder).getFileName() + "  (" + juce::String (allModels.size()) + ")",
-                              juce::dontSendNotification);
+        calibrateButton.setEnabled (status.modelLoaded);
     }
     if (isCab)
     {
@@ -522,25 +545,23 @@ void EffectsPage::refreshAll()
     for (auto* k : knobs) k->refresh();
     inKnob.refresh();
     outKnob.refresh();
-    modelList.updateContent();
-    modelList.repaint();
     resized();
     repaint();
 }
 
-void EffectsPage::refreshStatus()
+void RigEditor::refreshStatus()
 {
     refreshAll();
 }
 
-void EffectsPage::setOnTarget (const juce::Identifier& id, const juce::var& v, const juce::String& undoName)
+void RigEditor::setOnTarget (const juce::Identifier& id, const juce::var& v, const juce::String& undoName)
 {
     if (! target.isValid()) return;
     if (auto* u = um(); u != nullptr && undoName.isNotEmpty()) u->beginNewTransaction (undoName);
     target.setProperty (id, v, um());
 }
 
-void EffectsPage::setModelFile (const juce::File& f)
+void RigEditor::setModelFile (const juce::File& f)
 {
     if (! target.isValid()) return;
     setOnTarget (ids::namFile, f == juce::File() ? juce::String() : f.getFullPathName(), f == juce::File() ? "Use built-in amp" : "Load amp model");
@@ -552,7 +573,7 @@ void EffectsPage::setModelFile (const juce::File& f)
     selectBlock (amp);
 }
 
-void EffectsPage::setIrFile (const juce::File& f)
+void RigEditor::setIrFile (const juce::File& f)
 {
     if (! target.isValid()) return;
     setOnTarget (ids::irFile, f == juce::File() ? juce::String() : f.getFullPathName(), f == juce::File() ? "Use built-in cabinet" : "Load cabinet IR");
@@ -566,12 +587,12 @@ void EffectsPage::setIrFile (const juce::File& f)
 
 // ---------------------------------------------------------------- presets
 
-juce::File EffectsPage::presetFolder() const
+juce::File RigEditor::presetFolder() const
 {
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("FretForge").getChildFile ("Rigs");
 }
 
-void EffectsPage::rebuildPresets()
+void RigEditor::rebuildPresets()
 {
     presetCombo.clear (juce::dontSendNotification);
     presetCombo.addSectionHeading ("Built-in (no external files)");
@@ -589,7 +610,7 @@ void EffectsPage::rebuildPresets()
         if (presetCombo.getItemText (i) == current) presetCombo.setSelectedItemIndex (i, juce::dontSendNotification);
 }
 
-void EffectsPage::applyPresetId (int id)
+void RigEditor::applyPresetId (int id)
 {
     if (! target.isValid() || id <= 0) return;
     juce::var json;
@@ -614,14 +635,14 @@ void EffectsPage::applyPresetId (int id)
     selectBlock (chain.selected);
 }
 
-void EffectsPage::savePreset()
+void RigEditor::savePreset()
 {
     if (! target.isValid()) return;
     auto* w = new juce::AlertWindow ("Save rig preset", "Saved in " + presetFolder().getFullPathName(), juce::MessageBoxIconType::NoIcon, this);
     w->addTextEditor ("name", target[ids::rigName].toString().isNotEmpty() ? target[ids::rigName].toString() : "My rig", "Name");
     w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    juce::Component::SafePointer<EffectsPage> safe (this);
+    juce::Component::SafePointer<RigEditor> safe (this);
     w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w] (int r) {
         if (r != 1 || safe == nullptr) return;
         const auto name = juce::File::createLegalFileName (w->getTextEditorContents ("name").trim());
@@ -640,7 +661,7 @@ void EffectsPage::savePreset()
     }), true);
 }
 
-void EffectsPage::deletePreset()
+void RigEditor::deletePreset()
 {
     const int id = presetCombo.getSelectedId();
     if (id < 100)
@@ -653,7 +674,7 @@ void EffectsPage::deletePreset()
     files.sort();
     if (id - 100 >= files.size()) return;
     const auto f = files[id - 100];
-    juce::Component::SafePointer<EffectsPage> safe (this);
+    juce::Component::SafePointer<RigEditor> safe (this);
     juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Delete preset").withMessage ("Delete \"" + f.getFileNameWithoutExtension() + "\"?")
                                       .withButton ("Delete").withButton ("Cancel").withAssociatedComponent (this),
                                   [safe, f] (int r) {
@@ -663,74 +684,9 @@ void EffectsPage::deletePreset()
                                   });
 }
 
-// ---------------------------------------------------------------- model browser
-
-void EffectsPage::chooseModelFolder()
-{
-    const auto start = juce::File (settings.getValue ("namFolder", juce::File::getSpecialLocation (juce::File::userHomeDirectory).getFullPathName()));
-    chooser = std::make_unique<juce::FileChooser> ("Folder with .nam models", start);
-    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-                          [this] (const juce::FileChooser& fc) {
-                              if (! fc.getResult().isDirectory()) return;
-                              settings.setValue ("namFolder", fc.getResult().getFullPathName());
-                              scanModels();
-                              refreshAll();
-                          });
-}
-
-void EffectsPage::scanModels()
-{
-    allModels.clear();
-    const juce::File folder (settings.getValue ("namFolder"));
-    if (folder.isDirectory())
-    {
-        for (const auto& e : juce::RangedDirectoryIterator (folder, true, "*.nam", juce::File::findFiles))
-        {
-            allModels.add (e.getFile());
-            if (allModels.size() >= 5000) break;
-        }
-        std::sort (allModels.begin(), allModels.end(), [&folder] (const juce::File& a, const juce::File& b) {
-            return a.getRelativePathFrom (folder).compareNatural (b.getRelativePathFrom (folder)) < 0;
-        });
-    }
-    filterModels();
-}
-
-void EffectsPage::filterModels()
-{
-    shownModels.clear();
-    const auto words = juce::StringArray::fromTokens (searchBox.getText(), " ", "");
-    const juce::File folder (settings.getValue ("namFolder"));
-    for (auto& f : allModels)
-    {
-        const auto text = shortPath (f, folder);
-        bool ok = true;
-        for (auto& w : words) ok = ok && text.containsIgnoreCase (w);
-        if (ok) shownModels.add (f);
-    }
-    modelList.updateContent();
-    modelList.repaint();
-}
-
-void EffectsPage::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool)
-{
-    if (! juce::isPositiveAndBelow (row, shownModels.size())) return;
-    const auto& f = shownModels.getReference (row);
-    const bool current = target.isValid() && target[ids::namFile].toString() == f.getFullPathName();
-    if (current) { g.setColour (palette::accentDim); g.fillRect (0, 0, w, h); }
-    g.setColour (current ? palette::text : palette::textDim);
-    g.setFont (uiFont (13.0f, current));
-    g.drawText (shortPath (f, juce::File (settings.getValue ("namFolder"))), 8, 0, w - 12, h, juce::Justification::centredLeft, true);
-}
-
-void EffectsPage::listBoxItemClicked (int row, const juce::MouseEvent&)
-{
-    if (juce::isPositiveAndBelow (row, shownModels.size())) setModelFile (shownModels[row]);
-}
-
 // ---------------------------------------------------------------- layout
 
-void EffectsPage::paint (juce::Graphics& g)
+void RigEditor::paint (juce::Graphics& g)
 {
     g.fillAll (palette::bg);
     if (target.isValid())
@@ -742,13 +698,13 @@ void EffectsPage::paint (juce::Graphics& g)
     }
 }
 
-void EffectsPage::resized()
+void RigEditor::resized()
 {
     auto r = getLocalBounds().reduced (8);
     auto row = r.removeFromTop (34);
     auto take = [&row] (juce::Component& c, int w, int gap = 6) { c.setBounds (row.removeFromLeft (w)); row.removeFromLeft (gap); };
     auto takeRight = [&row] (juce::Component& c, int w, int gap = 6) { c.setBounds (row.removeFromRight (w)); row.removeFromRight (gap); };
-    take (targetCombo, 280);
+    take (titleLabel, 260);
     if (onButton.isVisible()) take (onButton, 160);
     if (inputCombo.isVisible()) take (inputCombo, 210);
     if (monitorButton.isVisible()) take (monitorButton, 120);
@@ -785,7 +741,7 @@ void EffectsPage::resized()
     layoutDetail (r.reduced (14, 10));
 }
 
-void EffectsPage::layoutDetail (juce::Rectangle<int> r)
+void RigEditor::layoutDetail (juce::Rectangle<int> r)
 {
     auto title = r.removeFromTop (30);
     blockTitle.setBounds (title.removeFromLeft (180));
@@ -800,35 +756,32 @@ void EffectsPage::layoutDetail (juce::Rectangle<int> r)
     const int b = chain.selected;
     if (b == amp)
     {
-        auto browser = r.removeFromRight (juce::jmin (440, r.getWidth() / 2));
-        auto bt = browser.removeFromTop (26);
-        folderButton.setBounds (bt.removeFromRight (120));
-        browserTitle.setBounds (bt);
-        browser.removeFromTop (4);
-        searchBox.setBounds (browser.removeFromTop (28));
-        browser.removeFromTop (4);
-        modelList.setBounds (browser);
+        models.setBounds (r.removeFromRight (juce::jmin (440, r.getWidth() / 2)));
         r.removeFromRight (20);
 
         auto buttons = r.removeFromTop (30);
-        loadModelButton.setBounds (buttons.removeFromLeft (130));
+        loadModelButton.setBounds (buttons.removeFromLeft (120));
         buttons.removeFromLeft (6);
-        clearModelButton.setBounds (buttons.removeFromLeft (140));
+        clearModelButton.setBounds (buttons.removeFromLeft (136));
         buttons.removeFromLeft (6);
-        normaliseButton.setBounds (buttons.removeFromLeft (160));
+        normaliseButton.setBounds (buttons.removeFromLeft (150));
+        buttons.removeFromLeft (6);
+        calibrateButton.setBounds (buttons.removeFromLeft (124));
         r.removeFromTop (8);
         modelLabel.setBounds (r.removeFromTop (24));
-        modelInfo.setBounds (r.removeFromTop (70));
+        modelInfo.setBounds (r.removeFromTop (84));
         r.removeFromTop (6);
     }
     else if (b == cab)
     {
+        irs.setBounds (r.removeFromRight (juce::jmin (440, r.getWidth() / 2)));
+        r.removeFromRight (20);
         auto buttons = r.removeFromTop (30);
         loadIrButton.setBounds (buttons.removeFromLeft (120));
         buttons.removeFromLeft (6);
         clearIrButton.setBounds (buttons.removeFromLeft (170));
         r.removeFromTop (8);
-        irLabel.setBounds (r.removeFromTop (44));
+        irLabel.setBounds (r.removeFromTop (60));
         r.removeFromTop (6);
     }
     auto knobRow = r.removeFromTop (110);
@@ -841,7 +794,7 @@ void EffectsPage::layoutDetail (juce::Rectangle<int> r)
 
 // ---------------------------------------------------------------- live updates
 
-void EffectsPage::timerCallback()
+void RigEditor::timerCallback()
 {
     if (! active || ! target.isValid()) return;
     if (auto* rigPtr = session.rigs().rigFor (target))
@@ -862,7 +815,7 @@ void EffectsPage::timerCallback()
     }
 }
 
-void EffectsPage::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& prop)
+void RigEditor::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& prop)
 {
     if (node.hasType (ids::RIG))
     {
@@ -870,29 +823,36 @@ void EffectsPage::valueTreePropertyChanged (juce::ValueTree& node, const juce::I
         {
             if (prop == ids::namFile) { selectBlock (chain.selected); return; }   // the built-in amp's gain knob comes / goes
             if (prop == ids::rigName) rebuildPresets();
-            if (prop == ids::input) rebuildTargets();
+            if (prop == juce::Identifier (info (calLevel).id)) settings.setValue ("namInterfaceDbu", (double) get (target, calLevel));
+            if (prop == juce::Identifier (info (namCalibrate).id)) { selectBlock (chain.selected); return; }
+            if (prop == ids::input) rebuildInputs();
             refreshAll();
         }
         else if (prop == ids::enabled && node.getParent()[tlids::id].toString() == targetTrackId)
             selectTarget (targetTrackId);
-        else if (prop == ids::enabled) rebuildTargets();
+        else if (prop == ids::enabled) rebuildInputs();
         return;
     }
     if (node.hasType (tlids::TRACK))
     {
-        if (prop == tlids::name) rebuildTargets();
+        if (prop == tlids::name) rebuildInputs();
         if (prop == tlids::monitor && node[tlids::id].toString() == targetTrackId) refreshAll();
     }
 }
 
-void EffectsPage::valueTreeChildAdded (juce::ValueTree&, juce::ValueTree& child)
+void RigEditor::valueTreeChildAdded (juce::ValueTree&, juce::ValueTree& child)
 {
     if (child.hasType (tlids::TRACK) || child.hasType (ids::RIG)) selectTarget (targetTrackId);
 }
 
-void EffectsPage::valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree& child, int)
+void RigEditor::valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree& child, int)
 {
-    if (child.hasType (tlids::TRACK) && child[tlids::id].toString() == targetTrackId) targetTrackId = {};
+    if (trackMode && child.hasType (tlids::TRACK) && child[tlids::id].toString() == targetTrackId)
+    {
+        target = {};
+        if (onTrackGone) juce::MessageManager::callAsync ([cb = onTrackGone] { cb(); });
+        return;
+    }
     if (child.hasType (tlids::TRACK) || child.hasType (ids::RIG)) selectTarget (targetTrackId);
 }
 } // namespace ff

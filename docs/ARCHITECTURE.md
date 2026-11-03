@@ -250,3 +250,20 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
 - **Tests** check that the wrapper is bit-identical to NAM itself, the resampler's latency and quality at 32/44.1/96 kHz,
   hand-over and garbage collection, the gate, delay timing, IR alignment, block order, the engine insert and live rig,
   export, the bank following the tree, and (category `perf`) the real-time factor of a standard WaveNet.
+
+## 15. Milestone 5 design notes (part 1, continued)
+
+- **Tool windows:** `ToolWindow` is a floating `DocumentWindow` (always on top, remembers its bounds) showing a
+  component that lives elsewhere; the tuner, the metronome, each track's NAM amp (`RigEditor` with a track id) and the
+  TONE3000 browser use it. The tuner analysis now runs whenever the app is open (the transport readout).
+- **Calibration:** `NamInfo::inputLevelDbu` comes from the capture's `input_level_dbu` metadata; with calibration on,
+  the amp block multiplies its input by `10^((interfaceDbu - inputLevelDbu)/20)` before the network. The interface
+  level is a rig parameter that presets never overwrite; the last value used becomes the default for new track amps.
+- **TONE3000:** `t3k::Client` follows TONE3000's MIT-licensed JUCE example: OAuth 2 authorisation code with PKCE in the
+  system browser, redirected to a loopback HTTP listener on 127.0.0.1 (no redirect URI to register); tokens kept in
+  the app settings and refreshed 60 s before expiry (single-flight, one retry on 401). The "select tone" prompt lets
+  users search TONE3000's own catalogue page; the app then lists the tone's models (A1/custom and A2), downloads with
+  the bearer token into `Documents/FretForge/TONE3000/<tone - creator>/` and loads the file into the requesting rig.
+  On Linux `juce::URL` needs libcurl (`JUCE_USE_CURL=1`).
+- **Play-along drums** repeat the compiled drum song (or the selected pattern when no song is arranged) until the end
+  of the tab sequence, cutting the last pass at the tab's end.

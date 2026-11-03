@@ -146,6 +146,37 @@ void SessionController::valueTreePropertyChanged (juce::ValueTree& node, const j
         triggerAsyncUpdate();
 }
 
+void SessionController::addTrackRig (juce::ValueTree track)
+{
+    if (! track.isValid()) return;
+    auto r = rig::find (track);
+    if (! rig::isEnabled (r))
+    {
+        doc.undo().beginNewTransaction ("Add NAM amp");
+        if (! r.isValid())
+        {
+            auto fresh = rig::makeDefault();
+            rig::set (fresh, rig::calLevel, (float) settings.getDoubleValue ("namInterfaceDbu", 12.0));   // the user's interface
+            track.appendChild (fresh, &doc.undo());
+        }
+        else r.setProperty (rig::ids::enabled, true, &doc.undo());
+    }
+    if (onOpenRig) onOpenRig (track);
+}
+
+void SessionController::removeTrackRig (juce::ValueTree track)
+{
+    auto r = rig::find (track);
+    if (! r.isValid()) return;
+    doc.undo().beginNewTransaction ("Remove NAM amp");
+    track.removeChild (r, &doc.undo());
+}
+
+bool SessionController::trackHasRig (const juce::ValueTree& track) const
+{
+    return rig::isEnabled (rig::find (track));
+}
+
 void SessionController::rebuildGraphNow()
 {
     cancelPendingUpdate();

@@ -53,6 +53,13 @@ public:
     void setOnTracks (const juce::ValueTree& clicked, const juce::Identifier& id, const juce::var& value, bool undoable,
                       const juce::String& undoName = {});
 
+    // ---- amp rigs (NAM) ----
+    /** Gives the track an enabled amp rig (undoable) and asks the app to open its window. */
+    void addTrackRig (juce::ValueTree track);
+    void removeTrackRig (juce::ValueTree track);
+    bool trackHasRig (const juce::ValueTree& track) const;
+    std::function<void (juce::ValueTree track)> onOpenRig;   // set by the app: shows the track's NAM window
+
     // ---- media ----
     /** Copies files into the project's Audio folder and places clips on `track` from `atSec`. */
     juce::Result importFiles (const juce::Array<juce::File>& files, juce::ValueTree track, double atSec);

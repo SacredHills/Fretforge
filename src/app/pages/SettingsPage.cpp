@@ -58,7 +58,7 @@ void SettingsPage::paint (juce::Graphics& g)
         g.setColour (palette::text);
         g.setFont (uiFont (13.5f));
         g.drawFittedText ("Pick your audio interface, enable the input your guitar is plugged into, and choose a buffer size "
-                          "(128-256 samples is a good start). Then open Tools > Tuner and play a string: the input meter "
+                          "(128-256 samples is a good start). Then click the tuner display at the top and play a string: the input meter "
                           "and tuner confirm your signal is arriving.", w, juce::Justification::topLeft, 3);
     }
     drawSectionPanel (g, audioBox, "Audio & MIDI devices");

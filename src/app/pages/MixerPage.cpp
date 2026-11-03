@@ -62,6 +62,25 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
     setup (mute, palette::accent, ids::mute);
     setup (solo, palette::warn, ids::solo);
     setup (arm, palette::bad, ids::armed);
+
+    ampButton.setColour (juce::TextButton::buttonOnColourId, palette::accent);
+    ampButton.setWantsKeyboardFocus (false);
+    ampButton.setTooltip ("Neural Amp Modeler amp on this track: click to add / open it");
+    ampButton.onClick = [this] { session.addTrackRig (track); };
+    addAndMakeVisible (ampButton);
+
+    nameLabel.setJustificationType (juce::Justification::centred);
+    nameLabel.setFont (uiFont (12.5f, true));
+    nameLabel.setColour (juce::Label::textColourId, palette::text);
+    nameLabel.setInterceptsMouseClicks (false, false);   // clicks select the strip; double-click renames
+    nameLabel.setTooltip ("Double-click to rename");
+    nameLabel.onTextChange = [this] {
+        const auto n = nameLabel.getText().trim();
+        if (n.isEmpty() || n == track[ids::name].toString()) { refresh(); return; }
+        doc.undo().beginNewTransaction ("Rename track");
+        doc.set (track, ids::name, n);
+    };
+    addAndMakeVisible (nameLabel);
     track.addListener (this);
     refresh();
 }
@@ -76,6 +95,8 @@ void ChannelStrip::refresh()
     mute.setToggleState ((bool) track[ids::mute], juce::dontSendNotification);
     solo.setToggleState ((bool) track[ids::solo], juce::dontSendNotification);
     arm.setToggleState ((bool) track[ids::armed], juce::dontSendNotification);
+    ampButton.setToggleState (session.trackHasRig (track), juce::dontSendNotification);
+    if (! nameLabel.isBeingEdited()) nameLabel.setText (track[ids::name].toString(), juce::dontSendNotification);
     repaint();
 }
 
@@ -92,7 +113,41 @@ void ChannelStrip::tick()
 
 void ChannelStrip::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+    {
+        if (! session.isTrackSelected (track)) session.clickTrack (track, {});
+        showMenu();
+        return;
+    }
     session.clickTrack (track, e.mods); // click the strip (name area / background) to select; Shift/Ctrl extend
+}
+
+void ChannelStrip::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (e.y < 34) nameLabel.showEditor();
+}
+
+void ChannelStrip::showMenu()
+{
+    juce::PopupMenu m;
+    m.addItem (1, "Rename...");
+    m.addSeparator();
+    if (session.trackHasRig (track)) { m.addItem (10, "Open NAM amp..."); m.addItem (11, "Remove NAM amp"); }
+    else m.addItem (10, "Add NAM amp...");
+    m.addSeparator();
+    m.addItem (4, "Duplicate track");
+    m.addItem (5, "Delete track");
+    juce::Component::SafePointer<ChannelStrip> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r) {
+        if (safe == nullptr || r == 0) return;
+        auto t = safe->track;
+        auto& sc = safe->session;
+        if (r == 1) safe->nameLabel.showEditor();
+        else if (r == 10) sc.addTrackRig (t);
+        else if (r == 11) sc.removeTrackRig (t);
+        else if (r == 4) sc.duplicateTrack (t);
+        else if (r == 5) sc.deleteTrack (t);   // destroys this strip
+    });
 }
 
 void ChannelStrip::paint (juce::Graphics& g)
@@ -109,9 +164,6 @@ void ChannelStrip::paint (juce::Graphics& g)
     const auto colour = juce::Colour::fromString (track[ids::colour].toString());
     g.setColour (colour);
     g.fillRoundedRectangle (r.removeFromTop (6).toFloat(), 3.0f);
-    g.setColour (palette::text);
-    g.setFont (uiFont (12.5f, true));
-    g.drawFittedText (track[ids::name].toString(), r.removeFromTop (24).reduced (4, 0), juce::Justification::centred, 1);
 
     auto meter = getLocalBounds().reduced (3, 0).withTrimmedTop (150).withTrimmedBottom (34).removeFromRight (16).reduced (3, 0);
     g.setColour (palette::well);
@@ -139,7 +191,8 @@ void ChannelStrip::resized()
     arm.setBounds (buttons.removeFromLeft (w).reduced (1));
     mute.setBounds (buttons.removeFromLeft (w).reduced (1));
     solo.setBounds (buttons.reduced (1));
-    r.removeFromTop (30);
+    ampButton.setBounds (r.removeFromTop (30).reduced (1, 4));
+    nameLabel.setBounds (getLocalBounds().reduced (5, 0).withTrimmedTop (6).withHeight (24));
     r.removeFromBottom (6);
     fader.setBounds (r.withTrimmedRight (16));
 }
@@ -165,7 +218,10 @@ MixerPage::MixerPage (EngineHost& h, ProjectDocument& d, SessionController& sc, 
     viewport.setScrollBarsShown (false, true);
     addAndMakeVisible (viewport);
 
-    emptyLabel.setText ("No tracks yet. Add tracks in Studio and they appear here as channel strips.", juce::dontSendNotification);
+    emptyLabel.setText ("No tracks yet. Click \"+ Track\" (or add tracks in Studio) and they appear here as channel strips.", juce::dontSendNotification);
+    addTrackButton.setTooltip ("Add an audio track (Ctrl+T)");
+    addTrackButton.onClick = [this] { session.addTrack(); };
+    addAndMakeVisible (addTrackButton);
     styleLabel (emptyLabel, 14.0f);
     emptyLabel.setJustificationType (juce::Justification::centred);
     addChildComponent (emptyLabel);
@@ -226,6 +282,9 @@ void MixerPage::paint (juce::Graphics& g)
 void MixerPage::resized()
 {
     auto r = getLocalBounds().reduced (16);
+    auto top = r.removeFromTop (30);
+    addTrackButton.setBounds (top.removeFromLeft (100));
+    r.removeFromTop (8);
     masterBox = r.removeFromRight (150);
     r.removeFromRight (12);
     viewport.setBounds (r);

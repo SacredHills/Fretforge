@@ -84,6 +84,11 @@ namespace
             out.gearType = str (m, "gear_type");
             out.toneType = str (m, "tone_type");
             out.modeledBy = str (m, "modeled_by");
+            if (m.contains ("input_level_dbu") && m["input_level_dbu"].is_number())
+            {
+                out.inputLevelDbu = m["input_level_dbu"].get<double>();
+                out.hasInputLevel = std::isfinite (out.inputLevelDbu);
+            }
             if (m.contains ("loudness") && m["loudness"].is_number())
             {
                 out.loudness = m["loudness"].get<double>();
@@ -159,6 +164,12 @@ float NamModel::normalisationGain() const noexcept
 {
     if (! meta.hasLoudness) return 1.0f;
     return (float) std::pow (10.0, juce::jlimit (-40.0, 40.0, -18.0 - meta.loudness) / 20.0);
+}
+
+float NamModel::calibrationGain (float interfaceDbu) const noexcept
+{
+    if (! meta.hasInputLevel) return 1.0f;
+    return (float) std::pow (10.0, juce::jlimit (-40.0, 40.0, (double) interfaceDbu - meta.inputLevelDbu) / 20.0);
 }
 
 void NamModel::prepare (double rate, int block)

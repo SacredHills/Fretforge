@@ -95,6 +95,7 @@ void AmpRig::takeOverModel() noexcept
         model = m;
         model->reset();
         normG.setCurrentAndTargetValue (getParam (namNormalize) >= 0.5f ? model->normalisationGain() : 1.0f);
+        calG.setCurrentAndTargetValue (getParam (namCalibrate) >= 0.5f ? model->calibrationGain (getParam (calLevel)) : 1.0f);
     }
     const bool ready = model != nullptr && model->isPreparedFor (sr, maxBlock);
     modelNeedsPrepare.store (model != nullptr && ! ready, std::memory_order_relaxed);
@@ -110,7 +111,7 @@ void AmpRig::prepare (double rate, int block)
     right2.assign ((size_t) maxBlock, 0.0f);
     tmp.assign ((size_t) maxBlock, 0.0f);
 
-    for (auto* s : { &inG, &outG, &compG, &driveG, &ampG, &normG })
+    for (auto* s : { &inG, &outG, &compG, &driveG, &ampG, &normG, &calG })
         s->reset (rate, 0.03);
 
     const juce::dsp::ProcessSpec mono1 { rate, (juce::uint32) maxBlock, 1 };
@@ -329,6 +330,8 @@ void AmpRig::runAmp (float* x, int n) noexcept
 {
     if (model != nullptr && modelActive.load (std::memory_order_relaxed))
     {
+        calG.setTargetValue (getParam (namCalibrate) >= 0.5f ? model->calibrationGain (getParam (calLevel)) : 1.0f);
+        calG.applyGain (x, n);
         model->process (x, n);
         normG.setTargetValue (getParam (namNormalize) >= 0.5f ? model->normalisationGain() : 1.0f);
         normG.applyGain (x, n);

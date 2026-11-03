@@ -7,13 +7,16 @@
 #include "SessionController.h"
 #include "ExportDialog.h"
 #include "pages/StudioPage.h"
-#include "pages/ToolsPage.h"
+#include "pages/TunerPanel.h"
+#include "pages/MetronomePanel.h"
+#include "ToolWindow.h"
+#include "tone3000/Tone3000Panel.h"
 #include "pages/MixerPage.h"
 #include "pages/SettingsPage.h"
 #include "pages/MilestonePage.h"
 #include "pages/tabs/TabPage.h"
 #include "pages/drums/DrumPage.h"
-#include "pages/fx/EffectsPage.h"
+#include "pages/fx/RigEditor.h"
 
 namespace ff
 {
@@ -45,7 +48,7 @@ public:
     {
         cmdNew = 0x2000, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo,
         cmdPlayStop, cmdReturnToZero, cmdToggleClick, cmdTapTempo, cmdPracticeMetronome,
-        cmdShortcuts, cmdAbout,
+        cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow,
         cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdDelete,
         cmdCopy, cmdCut, cmdPaste, cmdSelectAll, cmdAddMarker, cmdZoomIn, cmdZoomOut, cmdZoomFit,
         cmdSectionBase = 0x2100 // + section index
@@ -88,18 +91,30 @@ private:
     std::unique_ptr<TransportBar> transport;
     SectionNav nav;
     std::unique_ptr<StudioPage> studioPage;
-    std::unique_ptr<ToolsPage> toolsPage;
+    std::unique_ptr<TunerPanel> tunerPanel;
+    std::unique_ptr<MetronomePanel> metronomePanel;
+    std::unique_ptr<ToolWindow> tunerWindow, metronomeWindow;
+    struct RigWindow { std::unique_ptr<RigEditor> editor; std::unique_ptr<ToolWindow> window; };
+    std::map<juce::String, RigWindow> rigWindows;   // by track id
+    void openRigWindow (juce::ValueTree track);
+    std::unique_ptr<t3k::Client> t3kClient;
+    std::unique_ptr<Tone3000Panel> t3kPanel;
+    std::unique_ptr<ToolWindow> t3kWindow;
+    void openTone3000 (RigEditor&, bool cab);
+    void openTuner();
+    void openMetronome();
     std::unique_ptr<MixerPage> mixerPage;
     std::unique_ptr<SettingsPage> settingsPage;
     std::unique_ptr<TabPage> tabPage;
     std::unique_ptr<DrumPage> drumPage;
-    std::unique_ptr<EffectsPage> effectsPage;
+    std::unique_ptr<RigEditor> effectsPage;
     juce::OwnedArray<MilestonePage> milestonePages;
     juce::Array<juce::Component*> pages;
     juce::Label statusLeft, statusRight;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::TooltipWindow tooltips { this, 600 };
     int currentSection = 0;
+    static constexpr int numSections = 8, effectsSection = 5, settingsSection = 7;
 
     void showSection (int index);
     void updateTitleAndStatus();

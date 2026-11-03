@@ -34,7 +34,7 @@ juce::File writeLinearModel (const juce::String& name, std::vector<float> weight
     auto f = tempFile (name);
     f.replaceWithText ("{\"version\":\"0.5.4\",\"architecture\":\"Linear\",\"config\":{\"receptive_field\":" + juce::String ((int) weights.size())
                        + ",\"bias\":false},\"weights\":[" + w + "],\"sample_rate\":" + juce::String (sr, 1)
-                       + ",\"metadata\":{\"name\":\"Identity\",\"loudness\":-18.0}}");
+                       + ",\"metadata\":{\"name\":\"Identity\",\"loudness\":-18.0,\"input_level_dbu\":6.0}}");
     return f;
 }
 
@@ -117,6 +117,8 @@ struct RigModelTests : juce::UnitTest
             expectEquals (rg::get (r, rg::delayOn), 1.0f);
             expectEquals (rg::formatValue (rg::delayTime, 380.4f), juce::String ("380 ms"));
             expectEquals (rg::formatValue (rg::cabHighCut, 12000.0f), juce::String ("12.0 kHz"));
+            expectEquals (rg::formatValue (rg::calLevel, 12.0f), juce::String ("12.0 dBu"));
+            expect (rg::isToggle (rg::namCalibrate) && ! rg::isToggle (rg::calLevel));
             for (int b = 0; b < rg::numBlocks; ++b)
                 expectEquals (rg::info (rg::switchFor (b)).block, b);
         }
@@ -442,6 +444,22 @@ struct AmpRigTests : juce::UnitTest
             expect (r.modelNeedsPrepare.load());
             expect (! r.modelActive.load());          // falls back to the built-in amp, never runs a mis-prepared model
             expect (allFinite (out));
+
+            // input calibration: interface 0 dBFS = 12 dBu, capture made at 6 dBu -> +6 dB into the model
+            auto m3 = fx::NamModel::load (writeLinearModel ("cal.nam", { 1.0f }), err);
+            expect (m3->info().hasInputLevel);
+            expectWithinAbsoluteError (m3->info().inputLevelDbu, 6.0, 1e-9);
+            m3->prepare (sr, 512);
+            r.setModel (std::move (m3));
+            r.setParam (rg::namNormalize, 0);
+            r.setParam (rg::namCalibrate, 1);
+            r.setParam (rg::calLevel, 12.0f);
+            out = runRig (r, sine (330.0, sr, 9600, 0.25f), 256);
+            expectWithinAbsoluteError (peakOf (out, 4800), 0.25f * 1.99526f, 0.003f);
+            r.setParam (rg::namCalibrate, 0);
+            out = runRig (r, sine (330.0, sr, 9600, 0.25f), 256);
+            expectWithinAbsoluteError (peakOf (out, 4800), 0.25f, 0.003f);
+            r.collectGarbage();
 
             r.clearModel();
             runRig (r, sine (330.0, sr, 512), 256);

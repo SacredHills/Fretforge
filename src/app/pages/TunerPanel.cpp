@@ -83,10 +83,7 @@ TunerPanel::TunerPanel (EngineHost& h, juce::PropertiesFile& s)
     refreshInputs();
 }
 
-TunerPanel::~TunerPanel()
-{
-    host.tuner.active = false;
-}
+TunerPanel::~TunerPanel() = default;
 
 void TunerPanel::updateActive()
 {
@@ -95,7 +92,7 @@ void TunerPanel::updateActive()
     const bool showing = isShowing();
     if (showing && ! host.tuner.active.load())
         refreshInputs();
-    host.tuner.active = showing;
+    host.tuner.active = true;   // the transport bar's readout keeps the analysis running
     if (! isTimerRunning())
         startTimerHz (30);
 }

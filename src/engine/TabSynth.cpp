@@ -70,15 +70,31 @@ std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, dou
     return seq;
 }
 
-void addDrumSong (TabSequence& seq, const juce::ValueTree& d, const tab::TempoMap& map)
+void addDrumSong (TabSequence& seq, const juce::ValueTree& d, const tab::TempoMap& map, bool loopToEnd)
 {
     if (! d.isValid()) return;
-    const auto c = drums::compile (d, {}, 1);
+    auto c = drums::compile (d, {}, 1);
+    if (c.events.empty())   // no song arranged: the pattern being edited
+        if (auto p = drums::patternById (d, d[drums::ids::selected].toString()); p.isValid())
+            c = drums::compile (d, p, 1);
     seq.drumVolume = (float) (double) d.getProperty (drums::ids::volume, 0.8);
-    for (auto& e : c.events)
-        seq.drumHits.push_back ({ juce::jmax (0.0, map.secondsAt (e.q) + e.offsetSec), e.piece, e.velocity });
+    if (c.events.empty() || c.lengthQ <= 0.0) return;
+
+    // repeat the song until the tab ends (a 4-bar groove under a whole song, not 4 bars and then silence)
+    const double tabEndQ = seq.lengthSec > 0.0 ? map.quarterAt (seq.lengthSec) : c.lengthQ;
+    const int passes = loopToEnd ? juce::jlimit (1, 100000, (int) std::ceil (tabEndQ / c.lengthQ - 1.0e-9)) : 1;
+    for (int k = 0; k < passes; ++k)
+    {
+        const double off = k * c.lengthQ;
+        for (auto& e : c.events)
+        {
+            const double q = e.q + off;
+            if (k > 0 && q >= tabEndQ - 1.0e-9) break;   // the first pass always plays whole
+            seq.drumHits.push_back ({ juce::jmax (0.0, map.secondsAt (q) + e.offsetSec), e.piece, e.velocity });
+        }
+    }
     std::stable_sort (seq.drumHits.begin(), seq.drumHits.end(), [] (const DrumHit& a, const DrumHit& b) { return a.sec < b.sec; });
-    seq.lengthSec = juce::jmax (seq.lengthSec, map.secondsAt (c.lengthQ));
+    seq.lengthSec = juce::jmax (seq.lengthSec, map.secondsAt (juce::jmin (passes * c.lengthQ, juce::jmax (tabEndQ, c.lengthQ))));
 }
 
 std::unique_ptr<TabSequence> buildDrumSequence (const juce::ValueTree& d, const juce::ValueTree& pattern, double bpm)

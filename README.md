@@ -6,15 +6,25 @@ project format, plugin system, milestone plan, risks and licensing.
 
 ## Status: Milestone 5 (part 1) — Effects & Amps with Neural Amp Modeler (working)
 
+**Latest changes:** the transport bar is centred and has a live tuner readout (click it for the tuner window);
+right-click the click button (or Transport > Metronome...) for the metronome window — the Tools section is gone.
+Right-click a track (Studio header or Mixer strip) > "Add NAM amp..." opens that track's amp in its own window
+(the Mixer strips also have a NAM AMP button); the Effects & Amps page is the live practice rig. The cabinet block
+has an IR browser like the model browser. NAM input calibration. A built-in TONE3000 browser downloads captures and
+IRs straight into a rig. The Mixer can add and rename tracks. Drum play-along in Guitar Tabs repeats the drum song
+(or the selected pattern) until the end of the tab.
+
 | Area | What works now |
 |---|---|
 | Amp | **Neural Amp Modeler** built in (the real NAM engine, vendored): load any `.nam` capture of an amp or pedal (WaveNet, LSTM, ConvNet, A2/slimmable); runs at the capture's own sample rate with automatic resampling when the interface runs at another rate; optional loudness normalisation; or a built-in two-stage preamp when no capture is loaded |
-| Model browser | Point it at your folder of captures (e.g. downloads from TONE3000): searchable list, one click loads; metadata (gear, tone type, architecture, rate, loudness) shown |
-| Cabinet | Impulse-response loader (.wav/.aif/.flac, mono or stereo, any rate; trimmed and normalised) or a built-in speaker filter; low/high cut |
+| Model browser | Point it at your folder of captures: searchable list, one click loads; metadata (gear, tone type, architecture, rate, loudness, input level) shown |
+| Input calibration | For captures that store their input level (`input_level_dbu`): set your interface's level (dBu at 0 dBFS) and the signal reaches the model at the level the capture was made at, so gain behaves like the real amp |
+| TONE3000 | Built-in browser: sign in with your TONE3000 account in the browser (OAuth with PKCE, loopback redirect), pick a tone from TONE3000's catalogue ("Browse TONE3000...") or from your favourites / downloads / own tones / trending / latest, see its models and double-click to download and load. Needs a TONE3000 publishable API key (free, from your TONE3000 account); search inside the app needs TONE3000's commercial API tier, the catalogue page in the browser does not |
+| Cabinet | Impulse-response loader and browser (.wav/.aif/.flac, mono or stereo, any rate; trimmed and normalised) or a built-in speaker filter; low/high cut |
 | Pedals | Noise gate (hysteresis), compressor, overdrive (2x oversampled), 4-band EQ, stereo chorus, delay (tone-controlled repeats), reverb; input and output level |
 | Chain | Drag blocks to reorder them, click a lamp to switch a block on/off; per-block help |
-| Live rig | Play through the rig with no track and no transport (practice mode), choose the input; always starts switched off |
-| Track rigs | Any Studio track can have its own rig: it shapes the track's clips and its live monitoring, recordings stay dry so you can change the amp afterwards (re-amping); exports render the rigs offline |
+| Live rig | The Effects & Amps page: play through the rig with no track and no transport (practice mode), choose the input; always starts switched off |
+| Track rigs | Right-click a track > "Add NAM amp..." (or the Mixer's NAM AMP button) opens the track's amp window. Any Studio track can have its own rig: it shapes the track's clips and its live monitoring, recordings stay dry so you can change the amp afterwards (re-amping); exports render the rigs offline |
 | Presets | Five built-in presets (pedal and tone settings, they keep your loaded capture/IR) plus your own presets saved as `.ffrig` files (they include the model and IR paths); undo for track rigs |
 | Status | Per-rig CPU load, latency added by resampling, gate state, in/out meters |
 

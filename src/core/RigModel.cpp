@@ -44,6 +44,8 @@ namespace
         { "reverbSize",    "Size",         0.0f,   1.0f,   0.5f,  "%",  reverb, false, 0.5f },
         { "reverbDamp",    "Damping",      0.0f,   1.0f,   0.5f,  "%",  reverb, false, 0.5f },
         { "reverbMix",     "Mix",          0.0f,   1.0f,   0.2f,  "%",  reverb, false, 0.5f },
+        { "namCalibrate",  "Calibrate",    0.0f,   1.0f,   0.0f,  "",   amp,    false, 0.5f },
+        { "calLevel",      "Interface",  -20.0f,  30.0f,  12.0f,  "dBu", amp,   false, 5.0f },
     };
 
     const char* blockIds[numBlocks]   = { "gate", "comp", "drive", "amp", "eq", "cab", "chorus", "delay", "reverb" };
@@ -54,6 +56,7 @@ namespace
 }
 
 const ParamInfo& info (int p) { return params[juce::jlimit (0, numParams - 1, p)]; }
+bool isToggle (int p) { return info (p).isSwitch || p == namNormalize || p == namCalibrate; }
 int switchFor (int block) { return switches[juce::jlimit (0, numBlocks - 1, block)]; }
 const char* blockId (int block) { return blockIds[juce::jlimit (0, numBlocks - 1, block)]; }
 const char* blockName (int block) { return blockNames[juce::jlimit (0, numBlocks - 1, block)]; }
@@ -62,7 +65,8 @@ juce::String formatValue (int p, float v)
 {
     const auto& pi = info (p);
     const juce::String unit (pi.unit);
-    if (pi.isSwitch || p == namNormalize) return v >= 0.5f ? "On" : "Off";
+    if (isToggle (p)) return v >= 0.5f ? "On" : "Off";
+    if (unit == "dBu") return juce::String (v, 1) + " dBu";
     if (unit == "%")  return juce::String (juce::roundToInt (v * 100.0f)) + " %";
     if (unit == "Hz") return v >= 1000.0f ? juce::String (v / 1000.0f, 1) + " kHz" : juce::String (v, v < 10.0f ? 2 : 0) + " Hz";
     if (unit == "ms") return juce::String (juce::roundToInt (v)) + " ms";
@@ -105,7 +109,7 @@ void set (juce::ValueTree rig, int p, float value, juce::UndoManager* um)
 {
     const auto& pi = info (p);
     value = juce::jlimit (pi.min, pi.max, value);
-    if (pi.isSwitch || p == namNormalize) value = value >= 0.5f ? 1.0f : 0.0f;
+    if (isToggle (p)) value = value >= 0.5f ? 1.0f : 0.0f;
     rig.setProperty (pid (p), (double) value, um);
 }
 
@@ -194,6 +198,7 @@ juce::StringArray applyPreset (juce::ValueTree rig, const juce::var& preset, juc
     const auto ps = preset["params"];
     for (int i = 0; i < numParams; ++i)
     {
+        if (i == calLevel) continue;   // a property of the user's interface, not of the sound
         const auto v = ps[params[i].id];
         set (rig, i, v.isVoid() ? params[i].def : (float) (double) v, um);
     }
