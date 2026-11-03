@@ -140,7 +140,9 @@ struct ImportBar
     int num = 4, den = 4;
     std::vector<std::array<int, 3>> hits;
 };
-/** Turns a sequence of bars into patterns (repeated phrases shared) and appends song sections (used by MIDI and
-    Guitar Pro import). `hits` in the result counts the hits of the input bars. */
-MidiImport arrangeBars (juce::ValueTree drums, std::vector<ImportBar> bars, const juce::String& baseName, juce::UndoManager*);
+/** Puts a sequence of bars into ONE pattern (hits at their exact positions, leading empty bars kept). With
+    `replaceSong` the song becomes just this pattern; otherwise it is added to the song only if the song is empty.
+    Used by MIDI and Guitar Pro drum import. */
+MidiImport importAsOnePattern (juce::ValueTree drums, std::vector<ImportBar> bars, const juce::String& name, bool replaceSong,
+                               juce::UndoManager*);
 } // namespace ff::drums

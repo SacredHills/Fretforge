@@ -265,7 +265,8 @@ struct GuitarProTests : juce::UnitTest
             expect (res.warnings.joinIntoString ("\n").contains ("Drum Studio"));
             auto drumsNode = ff::drums::find (project);
             expect (drumsNode.isValid());
-            expect (ff::drums::song (drumsNode).getNumChildren() > 0);
+            expectEquals (ff::drums::patterns (drumsNode).getNumChildren(), 1, "drums come in as one pattern");
+            expectEquals (ff::drums::song (drumsNode).getNumChildren(), 1);
             auto dc = ff::drums::compile (drumsNode, {}, 1);
             expectEquals ((int) dc.bars.size(), 4, "drum song follows the written-out repeats");
             expectEquals ((int) dc.events.size(), 4, "one kick per bar");

@@ -102,7 +102,7 @@ private:
     juce::Slider complexitySlider, humanTimeSlider, humanVelSlider, volumeSlider;
     juce::Label complexityLabel, humanLabel, volumeLabel;
     juce::TextButton generateButton { "Generate" }, generateNewButton { "Generate as new" };
-    juce::TextButton importButton { "Import MIDI..." }, exportButton { "Export MIDI..." }, renderButton { "Render to Studio" };
+    juce::TextButton importButton { "Import..." }, exportButton { "Export MIDI..." }, renderButton { "Render to Studio" };
     // song
     juce::TextButton addSectionButton { "+ Add pattern" }, removeSectionButton { "Remove" }, leftButton { "<" }, rightButton { ">" },
                      lessButton { "x-" }, moreButton { "x+" };

@@ -1161,6 +1161,42 @@ juce::Result readGpx (const juce::MemoryBlock& data, Song& out)
     return readGpif (gpif.toString(), out);
 }
 
+std::vector<drums::ImportBar> drumBars (const Song& song, juce::StringArray& warnings)
+{
+    std::vector<drums::ImportBar> out;
+    std::map<int, int> unmapped;
+    for (int mi : playbackOrder (song.masterBars))
+    {
+        const auto& mb = song.masterBars[(size_t) mi];
+        drums::ImportBar ib;
+        ib.num = mb.num;
+        ib.den = mb.den;
+        for (auto& t : song.tracks)
+        {
+            if (! t.drums || mi >= (int) t.bars.size()) continue;
+            double q = 0.0;
+            for (auto& b : t.bars[(size_t) mi].beats)
+            {
+                for (auto& n : b.notes)
+                {
+                    const int piece = drums::pieceForGmNote (n.drumNote);
+                    if (piece < 0) { ++unmapped[n.drumNote]; continue; }
+                    ib.hits.push_back ({ piece, juce::roundToInt (q * drums::ppq), n.ghost ? 45 : n.accent ? 127 : 100 });
+                }
+                q += beatLengthQ (b.dur, b.dots, b.tuplet);
+            }
+        }
+        out.push_back (std::move (ib));
+    }
+    if (! unmapped.empty())
+    {
+        juce::StringArray list;
+        for (auto& [note, c] : unmapped) list.add (juce::String (note));
+        warnings.add ("Some drum sounds are not in the kit and were skipped (MIDI notes " + list.joinIntoString (", ") + ").");
+    }
+    return out;
+}
+
 int gp6DrumNote (int element, int variation)
 {
     // Guitar Pro 6 drum kit: element -> notes for variations 0..2 (GM numbers; rim shot, half-open hat, ride edge
@@ -1295,42 +1331,13 @@ ImportResult applySong (juce::ValueTree score, const Song& song, bool replace, j
     }
     if (empty > 0) res.warnings.add (juce::String (empty) + " track(s) without a string tuning were skipped.");
 
-    // drum tracks -> Drum Studio patterns and song sections
+    // drum tracks -> one pattern in the Drum Studio
     int drumHits = 0;
-    std::vector<drums::ImportBar> drumBars;
+    std::vector<drums::ImportBar> drumBarList;
     if (drums > 0 && score.getParent().isValid())
     {
-        std::map<int, int> unmapped;
-        for (size_t i = 0; i < order.size(); ++i)
-        {
-            const auto& mb = song.masterBars[(size_t) order[i]];
-            drums::ImportBar ib;
-            ib.num = mb.num;
-            ib.den = mb.den;
-            for (auto& t : song.tracks)
-            {
-                if (! t.drums || order[i] >= (int) t.bars.size()) continue;
-                double q = 0.0;
-                for (auto& b : t.bars[(size_t) order[i]].beats)
-                {
-                    for (auto& n : b.notes)
-                    {
-                        const int piece = drums::pieceForGmNote (n.drumNote);
-                        if (piece < 0) { ++unmapped[n.drumNote]; continue; }
-                        ib.hits.push_back ({ piece, juce::roundToInt (q * drums::ppq), n.ghost ? 45 : n.accent ? 127 : 100 });
-                        ++drumHits;
-                    }
-                    q += beatLengthQ (b.dur, b.dots, b.tuplet);
-                }
-            }
-            drumBars.push_back (std::move (ib));
-        }
-        if (! unmapped.empty())
-        {
-            juce::StringArray list;
-            for (auto& [note, c] : unmapped) list.add (juce::String (note));
-            res.warnings.add ("Some drum sounds are not in the kit and were skipped (MIDI notes " + list.joinIntoString (", ") + ").");
-        }
+        drumBarList = drumBars (song, res.warnings);
+        for (auto& b : drumBarList) drumHits += (int) b.hits.size();
     }
     if (usable.empty() && drumHits == 0)
     {
@@ -1341,14 +1348,13 @@ ImportResult applySong (juce::ValueTree score, const Song& song, bool replace, j
     if (drumHits > 0)
     {
         auto drumsNode = drums::getOrCreate (score.getParent());
-        if (replace) drums::song (drumsNode).removeAllChildren (um);
-        auto arranged = drums::arrangeBars (drumsNode, drumBars, song.title.isNotEmpty() ? song.title : juce::String ("Drums"), um);
-        if (arranged.result.wasOk())
+        auto one = drums::importAsOnePattern (drumsNode, drumBarList, (song.title.isNotEmpty() ? song.title : juce::String ("Song")) + " drums",
+                                              replace, um);
+        if (one.result.wasOk())
         {
-            drumsNode.setProperty (drums::ids::selected, arranged.firstPatternId, nullptr);
-            res.warnings.add ("Drums: " + juce::String (drums) + " drum track(s) went into the Drum Studio as " + juce::String (arranged.patterns)
-                              + " pattern(s) in " + juce::String (arranged.sections) + " song section(s). In Guitar Tabs, turn on "
-                              "\"Drums\" to play along.");
+            res.warnings.addArray (one.warnings);
+            res.warnings.add ("Drums: " + juce::String (drums) + " drum track(s) went into the Drum Studio as one pattern (" + juce::String (one.bars)
+                              + " bars, " + juce::String (one.hits) + " hits). In Guitar Tabs, turn on \"Drums\" to play along.");
         }
     }
 

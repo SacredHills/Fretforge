@@ -1,5 +1,6 @@
 #pragma once
 #include "TabModel.h"
+#include "DrumModel.h"
 
 /** Guitar Pro import.
 
@@ -84,6 +85,9 @@ std::vector<int> playbackOrder (const std::vector<MasterBar>& bars, int maxBars 
     song's title, tempo and meter are adopted; otherwise its tracks are added to the existing score.
     Drum tracks go into the project's Drum Studio (patterns + song sections; `replace` replaces the drum song). */
 ImportResult applySong (juce::ValueTree score, const Song& song, bool replace, juce::UndoManager*);
+
+/** The song's drum tracks as bars of hits (repeats written out), for the Drum Studio. */
+std::vector<drums::ImportBar> drumBars (const Song&, juce::StringArray& warnings);
 
 /** General MIDI drum note for a Guitar Pro 6 drum element / variation. */
 int gp6DrumNote (int element, int variation);

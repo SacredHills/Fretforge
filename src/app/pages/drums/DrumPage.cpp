@@ -3,6 +3,7 @@
 #include "engine/DrumSynth.h"
 #include "core/Timeline.h"
 #include "core/ProjectFile.h"
+#include "core/GuitarPro.h"
 #include <cmath>
 
 namespace ff
@@ -525,14 +526,39 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
     volumeSlider.setTooltip ("Drum kit volume");
     volumeSlider.onValueChange = [this] { if (! updating) doc.set (drums, dids::volume, volumeSlider.getValue() / 100.0, false); };
 
-    importButton.setTooltip ("Import a MIDI drum file as one pattern containing the whole file");
+    importButton.setTooltip ("Import drums from a MIDI or Guitar Pro file as one pattern containing the whole song");
     importButton.onClick = [this] {
-        chooser = std::make_unique<juce::FileChooser> ("Import MIDI drums", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.mid;*.midi");
+        chooser = std::make_unique<juce::FileChooser> ("Import drums (MIDI or Guitar Pro)", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+                                                       "*.mid;*.midi;*.gp3;*.gp4;*.gp5;*.gpx;*.gp");
         juce::Component::SafePointer<DrumPage> safe (this);
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc) {
             if (safe == nullptr || fc.getResult() == juce::File()) return;
-            safe->doc.undo().beginNewTransaction ("Import MIDI drums");
-            auto r = drums::importMidi (safe->drums, fc.getResult(), &safe->doc.undo());
+            const auto file = fc.getResult();
+            safe->doc.undo().beginNewTransaction ("Import drums");
+            drums::MidiImport r;
+            if (tab::gp::isGuitarProFile (file))
+            {
+                tab::gp::Song song;
+                auto read = tab::gp::readFile (file, song);
+                if (read.failed()) { safe->message ("Import failed", read.getErrorMessage()); return; }
+                juce::StringArray warnings;
+                auto bars = tab::gp::drumBars (song, warnings);
+                bool any = false;
+                for (auto& b : bars) any = any || ! b.hits.empty();
+                if (! any) { safe->message ("Import failed", file.getFileName() + " has no drum track with notes."); return; }
+                r = drums::importAsOnePattern (safe->drums, bars, (song.title.isNotEmpty() ? song.title : file.getFileNameWithoutExtension()) + " drums",
+                                               false, &safe->doc.undo());
+                warnings.addArray (r.warnings);
+                r.warnings = warnings;
+                r.tempo = song.tempo;
+                bool tempoChanges = false;
+                for (auto& mb : song.masterBars) tempoChanges = tempoChanges || mb.tempo > 0.0;
+                if (tempoChanges)
+                    r.warnings.add ("The song changes tempo; the Drum Studio plays it at " + juce::String (song.tempo, 1)
+                                    + " BPM. Play it from Guitar Tabs (Drums on) to follow the tempo changes.");
+            }
+            else
+                r = drums::importMidi (safe->drums, file, &safe->doc.undo());
             if (r.result.failed()) { safe->message ("Import failed", r.result.getErrorMessage()); return; }
             if (r.tempo > 0.0) safe->doc.setTempo (r.tempo);
             safe->selectPattern (r.firstPatternId);

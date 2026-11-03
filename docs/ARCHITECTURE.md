@@ -208,9 +208,8 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
 ## 13. Milestone 4 design notes (part 2)
 
 - **MIDI import:** the whole file becomes one pattern (up to 4000 bars) with every hit at its exact tick.
-- **Guitar Pro drums:** `drums::arrangeBars` turns the drum bars into patterns: at each bar it picks the 1/2/4/8-bar
-  phrase that covers the most bars by repeating (shortest wins ties), identical phrases share a pattern, and sections
-  with repeats are appended to the song.
+- **Guitar Pro drums:** `gp::drumBars` writes out the repeats and `drums::importAsOnePattern` stores the whole drum
+  part as one pattern (leading empty bars kept, so it lines up with the tab for play-along).
 - **Autosave** serialises a snapshot of the tree on a background thread; line endings are normalised in linear time
   (the earlier `String::replace` was quadratic and froze the UI for seconds on large projects).
 - **Guitar Pro drums:** GP3-5 store the MIDI drum note in the fret field; GP7 maps a note's InstrumentArticulation to

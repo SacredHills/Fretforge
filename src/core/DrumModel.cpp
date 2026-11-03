@@ -654,111 +654,47 @@ juce::Result exportMidi (const juce::ValueTree& d, const juce::ValueTree& patter
     return juce::Result::ok();
 }
 
-MidiImport arrangeBars (juce::ValueTree d, std::vector<ImportBar> input, const juce::String& base, juce::UndoManager* um)
+MidiImport importAsOnePattern (juce::ValueTree d, std::vector<ImportBar> input, const juce::String& name, bool replaceSong,
+                               juce::UndoManager* um)
 {
     MidiImport res;
-    struct Bar { int start, len, num, den; };
-    std::vector<Bar> bars;
-    std::vector<std::vector<std::array<int, 3>>> barHits;
-    // trailing empty bars after the last hit are not useful
+    // trailing empty bars are dropped; leading ones stay so bar 1 of the pattern is bar 1 of the song
     while (! input.empty() && input.back().hits.empty()) input.pop_back();
     if (input.empty()) { res.result = juce::Result::fail ("No playable drum notes were found."); return res; }
-    int pos = 0;
+    bool meterChanges = false, triplets = false, fine = false;
+    for (auto& b : input) meterChanges = meterChanges || b.num != input.front().num || b.den != input.front().den;
+    auto p = makePattern (name, juce::jlimit (1, 32, input.front().num), juce::jlimit (1, 32, input.front().den), 1, 4);
+    std::set<std::pair<int, int>> seen;   // the same piece twice at one tick: keep the first
+    int start = 0;
     for (auto& b : input)
     {
-        const int len = juce::jlimit (1, 32, b.num) * ppq * 4 / juce::jlimit (1, 32, b.den);
-        bars.push_back ({ pos, len, juce::jlimit (1, 32, b.num), juce::jlimit (1, 32, b.den) });
-        barHits.push_back (b.hits);
-        res.hits += (int) b.hits.size();
-        pos += len;
+        for (auto& x : b.hits)
+        {
+            const int tick = start + x[1];
+            if (! seen.insert ({ x[0], tick }).second) continue;
+            if (tick % (ppq / 4) != 0 && tick % (ppq / 6) == 0) triplets = true;
+            else if (tick % (ppq / 4) != 0) fine = true;
+            juce::ValueTree hit (ids::HIT);
+            hit.setProperty (ids::lane, x[0], nullptr);
+            hit.setProperty (ids::tick, tick, nullptr);
+            hit.setProperty (ids::vel, juce::jlimit (1, 127, x[2]), nullptr);
+            p.appendChild (hit, nullptr);
+            ++res.hits;
+        }
+        start += juce::jlimit (1, 32, b.num) * ppq * 4 / juce::jlimit (1, 32, b.den);
     }
-    // content key per bar (velocities compared in coarse steps so tiny humanised differences still match)
-    std::vector<juce::String> keys;
-    for (size_t b = 0; b < bars.size(); ++b)
-    {
-        auto h = barHits[b];
-        std::sort (h.begin(), h.end(), [] (auto& x, auto& y) { return x[1] != y[1] ? x[1] < y[1] : x[0] < y[0]; });
-        juce::String k;
-        k << bars[b].num << "/" << bars[b].den << ":";
-        for (auto& x : h) k << x[0] << "@" << x[1] << "v" << x[2] / 16 << ",";
-        keys.push_back (k);
-    }
-    auto phraseKey = [&] (size_t from, size_t len) { juce::String k; for (size_t i = from; i < from + len; ++i) k << keys[i] << "|"; return k; };
-    auto sameMeter = [&] (size_t from, size_t len) {
-        for (size_t i = from; i < from + len; ++i) if (bars[i].num != bars[from].num || bars[i].den != bars[from].den) return false;
-        return true;
-    };
-
-    std::map<juce::String, juce::String> patternForPhrase;
-    auto letterName = [] (int i) { juce::String s; do { s = juce::String::charToString ((juce::juce_wchar) ('A' + i % 26)) + s; i = i / 26 - 1; } while (i >= 0); return s; };
-    juce::ValueTree lastSection;
-    juce::String lastPattern;
-
-    size_t i = 0;
-    while (i < bars.size())
-    {
-        // choose the phrase length that covers the most bars by repeating; otherwise group up to 4 bars
-        size_t bestLen = 0, bestReps = 1, bestCover = 0;
-        for (size_t len : { (size_t) 1, (size_t) 2, (size_t) 4, (size_t) 8 })   // shortest phrase wins a tie
-        {
-            if (i + len > bars.size() || ! sameMeter (i, len)) continue;
-            const auto k = phraseKey (i, len);
-            size_t reps = 1;
-            while (i + (reps + 1) * len <= bars.size() && sameMeter (i + reps * len, len) && bars[i + reps * len].num == bars[i].num
-                   && phraseKey (i + reps * len, len) == k)
-                ++reps;
-            const bool known = patternForPhrase.count (k) > 0;
-            if ((reps >= 2 || known) && len * reps > bestCover) { bestLen = len; bestReps = reps; bestCover = len * reps; }
-        }
-        if (bestLen == 0)
-        {
-            bestLen = 1;
-            while (bestLen < 4 && i + bestLen < bars.size() && sameMeter (i, bestLen + 1)) ++bestLen;
-            // stop before a bar that starts a repeat or a known phrase
-            for (size_t l = 1; l < bestLen; ++l)
-                if ((i + l + 1 < bars.size() && keys[i + l] == keys[i + l + 1]) || patternForPhrase.count (phraseKey (i + l, 1)) > 0)
-                { bestLen = l; break; }
-            bestReps = 1;
-        }
-
-        const auto k = phraseKey (i, bestLen);
-        juce::String pid;
-        if (auto it = patternForPhrase.find (k); it != patternForPhrase.end()) pid = it->second;
-        else
-        {
-            bool triplets = false, fine = false;
-            for (size_t b = i; b < i + bestLen; ++b)
-                for (auto& x : barHits[b])
-                {
-                    if (x[1] % (ppq / 4) != 0 && x[1] % (ppq / 6) == 0) triplets = true;
-                    else if (x[1] % (ppq / 4) != 0) fine = true;
-                }
-            auto p = makePattern (base + " " + letterName (res.patterns), bars[i].num, bars[i].den, (int) bestLen, triplets ? 6 : (fine ? 8 : 4));
-            for (size_t b = i; b < i + bestLen; ++b)
-                for (auto& x : barHits[b])
-                    setHit (p, x[0], (int) (b - i) * bars[i].len + x[1], x[2], nullptr);
-            patterns (d).appendChild (p, um);
-            pid = p[ids::id].toString();
-            patternForPhrase[k] = pid;
-            if (res.patterns == 0) res.firstPatternId = pid;
-            ++res.patterns;
-        }
-        if (pid == lastPattern && lastSection.isValid() && (int) lastSection[ids::repeats] + (int) bestReps <= 64)
-            lastSection.setProperty (ids::repeats, (int) lastSection[ids::repeats] + (int) bestReps, um);
-        else
-        {
-            int reps = (int) bestReps;
-            while (reps > 0)
-            {
-                lastSection = addSection (d, pid, juce::jmin (64, reps), -1, um);
-                reps -= 64;
-                ++res.sections;
-            }
-        }
-        lastPattern = pid;
-        i += bestLen * bestReps;
-    }
-    res.bars = (int) bars.size();
+    p.setProperty (ids::grid, triplets ? 6 : (fine ? 8 : 4), nullptr);
+    p.setProperty (ids::bars, juce::jlimit (1, maxBars, (start + barTicks (p) - 1) / barTicks (p)), nullptr);
+    patterns (d).appendChild (p, um);
+    if (replaceSong) song (d).removeAllChildren (um);
+    if (song (d).getNumChildren() == 0) { addSection (d, p[ids::id].toString(), 1, -1, um); res.sections = 1; }
+    if (meterChanges)
+        res.warnings.add ("The drums change time signature; they are kept as one pattern in " + juce::String (input.front().num) + "/"
+                          + juce::String (input.front().den) + " (every hit keeps its exact position, but bar lines after the change are drawn in that meter).");
+    res.patterns = 1;
+    res.bars = (int) p[ids::bars];
+    res.firstPatternId = p[ids::id].toString();
+    d.setProperty (ids::selected, res.firstPatternId, nullptr);
     return res;
 }
 
@@ -842,41 +778,17 @@ MidiImport importMidi (juce::ValueTree d, const juce::File& file, juce::UndoMana
         res.warnings.add (juce::String (count) + " note(s) use sounds this kit doesn't have (MIDI notes " + list.joinIntoString (", ")
                           + ", e.g. tambourine or Latin percussion) and were skipped.");
     }
-    // one continuous pattern holding the whole file, every hit at its exact position
-    while (! bars.empty() && barHits.back().empty()) { bars.pop_back(); barHits.pop_back(); }
-    if (bars.empty()) { res.result = juce::Result::fail ("No playable drum notes were found."); return res; }
-    bool meterChanges = false, triplets = false, fine = false;
-    for (auto& b : bars) meterChanges = meterChanges || b.num != bars.front().num || b.den != bars.front().den;
-    std::vector<std::array<int, 3>> hits;
-    for (size_t b = 0; b < bars.size(); ++b)
-        for (auto& x : barHits[b])
-        {
-            const int tick = bars[b].start + x[1];
-            hits.push_back ({ x[0], tick, x[2] });
-            if (tick % (ppq / 4) != 0 && tick % (ppq / 6) == 0) triplets = true;
-            else if (tick % (ppq / 4) != 0) fine = true;
-        }
-    auto p = makePattern (file.getFileNameWithoutExtension(), bars.front().num, bars.front().den, 1, triplets ? 6 : (fine ? 8 : 4));
-    const int endTick = bars.back().start + bars.back().len;
-    p.setProperty (ids::bars, juce::jlimit (1, maxBars, (endTick + barTicks (p) - 1) / barTicks (p)), nullptr);
-    std::set<std::pair<int, int>> seen;   // the same piece twice at one tick: keep the first
-    for (auto& h : hits)
-    {
-        if (! seen.insert ({ h[0], h[1] }).second) continue;
-        juce::ValueTree hit (ids::HIT);
-        hit.setProperty (ids::lane, h[0], nullptr);
-        hit.setProperty (ids::tick, h[1], nullptr);
-        hit.setProperty (ids::vel, h[2], nullptr);
-        p.appendChild (hit, nullptr);
-    }
-    patterns (d).appendChild (p, um);
-    if (song (d).getNumChildren() == 0) { addSection (d, p[ids::id].toString(), 1, -1, um); res.sections = 1; }
-    if (meterChanges)
-        res.warnings.add ("The file changes time signature; it is kept as one pattern in " + juce::String (bars.front().num) + "/"
-                          + juce::String (bars.front().den) + " (every hit keeps its exact position, but bar lines after the change are drawn in that meter).");
-    res.patterns = 1;
-    res.bars = (int) p[ids::bars];
-    res.firstPatternId = p[ids::id].toString();
+    std::vector<ImportBar> ib;
+    for (size_t b = 0; b < bars.size(); ++b) ib.push_back ({ bars[b].num, bars[b].den, barHits[b] });
+    const int counted = res.hits;
+    auto one = importAsOnePattern (d, ib, file.getFileNameWithoutExtension(), false, um);
+    if (one.result.failed()) { res.result = one.result; return res; }
+    res.hits = counted;
+    res.patterns = one.patterns;
+    res.sections = one.sections;
+    res.bars = one.bars;
+    res.firstPatternId = one.firstPatternId;
+    res.warnings.addArray (one.warnings);
     return res;
 }
 
