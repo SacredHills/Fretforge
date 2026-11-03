@@ -2,25 +2,41 @@
 # Download the results from the run's "Artifacts" section on GitHub (Actions tab).
 name: Build
 
+# Compiled objects are cached between runs (ccache on macOS/Linux, sccache on Windows), so a push only recompiles
+# what changed. "Run workflow" on the Actions tab can build a single platform.
 on:
   push:
     branches: [ main, master ]
     tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Which platform to build
+        type: choice
+        options: [ all, macOS, Windows, Linux ]
+        default: all
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        shell: bash
+        run: |
+          all='[{"name":"macOS","os":"macos-latest"},{"name":"Windows","os":"windows-latest"},{"name":"Linux","os":"ubuntu-24.04"}]'
+          want="${{ github.event.inputs.platform }}"
+          if [ -z "$want" ] || [ "$want" = "all" ]; then m="$all"
+          else m=$(echo "$all" | jq -c --arg n "$want" '[.[] | select(.name == $n)]'); fi
+          echo "matrix={\"include\":$m}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: macOS
-            os: macos-latest
-          - name: Windows
-            os: windows-latest
-          - name: Linux
-            os: ubuntu-24.04
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
 
@@ -32,6 +48,19 @@ jobs:
         with:
           path: build/_deps
           key: juce-8.0.15-${{ matrix.os }}
+
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.name }}
+          variant: ${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
+          max-size: 2G
+
+      - name: Visual Studio environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -45,15 +74,21 @@ jobs:
         run: |
           brew install ninja
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
-        run: cmake -S . -B build -A x64
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_POLICY_DEFAULT_CMP0141=NEW -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
 
       - name: Configure (Linux)
         if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFF_BUILD_TEST_PLUGIN=ON
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFF_BUILD_TEST_PLUGIN=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build --config Release --parallel 4
@@ -133,6 +168,7 @@ jobs:
   bundle:
     name: All platforms (one zip)
     needs: build
+    if: github.event.inputs.platform == '' || github.event.inputs.platform == 'all'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
