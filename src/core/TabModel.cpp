@@ -166,6 +166,70 @@ std::vector<double> measureStarts (const juce::ValueTree& score)
     return s;
 }
 
+double measureTempo (const juce::ValueTree& score, int measure)
+{
+    double t = juce::jlimit (10.0, 999.0, (double) score.getProperty (ids::tempo, 120.0));
+    auto ms = measures (score);
+    for (int i = 0; i <= measure && i < ms.getNumChildren(); ++i)
+        if ((double) ms.getChild (i)[ids::tempo] > 0.0)
+            t = juce::jlimit (10.0, 999.0, (double) ms.getChild (i)[ids::tempo]);
+    return t;
+}
+
+int measureKey (const juce::ValueTree& score, int measure)
+{
+    int k = 0;
+    auto ms = measures (score);
+    for (int i = 0; i <= measure && i < ms.getNumChildren(); ++i)
+        if (ms.getChild (i).hasProperty (ids::key))
+            k = juce::jlimit (-7, 7, (int) ms.getChild (i)[ids::key]);
+    return k;
+}
+
+TempoMap tempoMap (const juce::ValueTree& score, double speed)
+{
+    TempoMap map;
+    speed = juce::jlimit (0.1, 4.0, speed);
+    const auto starts = measureStarts (score);
+    double sec = 0.0, q = 0.0;
+    double spq = 60.0 / (juce::jlimit (10.0, 999.0, (double) score.getProperty (ids::tempo, 120.0)) * speed);
+    map.segments.push_back ({ 0.0, 0.0, spq });
+    auto ms = measures (score);
+    for (int i = 0; i < ms.getNumChildren(); ++i)
+    {
+        const double t = (double) ms.getChild (i)[ids::tempo];
+        if (t <= 0.0) continue;
+        const double mq = starts[(size_t) i];
+        sec += (mq - q) * spq;
+        q = mq;
+        spq = 60.0 / (juce::jlimit (10.0, 999.0, t) * speed);
+        if (map.segments.back().q >= mq - 1.0e-9) map.segments.back().secondsPerQ = spq;
+        else map.segments.push_back ({ q, sec, spq });
+    }
+    return map;
+}
+
+double TempoMap::secondsAt (double q) const noexcept
+{
+    auto it = std::upper_bound (segments.begin(), segments.end(), q, [] (double v, const Segment& s) { return v < s.q; });
+    const auto& s = it == segments.begin() ? segments.front() : *std::prev (it);
+    return s.sec + (q - s.q) * s.secondsPerQ;
+}
+
+double TempoMap::quarterAt (double sec) const noexcept
+{
+    auto it = std::upper_bound (segments.begin(), segments.end(), sec, [] (double v, const Segment& s) { return v < s.sec; });
+    const auto& s = it == segments.begin() ? segments.front() : *std::prev (it);
+    return s.q + (sec - s.sec) / s.secondsPerQ;
+}
+
+double TempoMap::bpmAt (double q) const noexcept
+{
+    auto it = std::upper_bound (segments.begin(), segments.end(), q, [] (double v, const Segment& s) { return v < s.q; });
+    const auto& s = it == segments.begin() ? segments.front() : *std::prev (it);
+    return 60.0 / s.secondsPerQ;
+}
+
 float naturalHarmonicSemis (int fret)
 {
     switch (fret)
@@ -366,6 +430,9 @@ juce::Result exportMidi (const juce::ValueTree& score, const juce::File& file)
         const int num = (int) m.getProperty (ids::tsNum, 4), den = (int) m.getProperty (ids::tsDen, 4);
         if (num != prevNum || den != prevDen)
             conductor.addEvent (juce::MidiMessage::timeSignatureMetaEvent (num, den), starts[(size_t) mi] * tpq);
+        if ((double) m[ids::tempo] > 0.0)
+            conductor.addEvent (juce::MidiMessage::tempoMetaEvent ((int) (60000000.0 / juce::jlimit (10.0, 999.0, (double) m[ids::tempo]))),
+                                starts[(size_t) mi] * tpq);
         prevNum = num; prevDen = den; ++mi;
     }
     auto titleMsg = juce::MidiMessage::textMetaEvent (3, score[ids::title].toString());
@@ -590,6 +657,20 @@ ImportResult importMidi (juce::ValueTree score, const juce::File& file, juce::Un
     }
     if (res.tracksAdded == 0)
         res.result = juce::Result::fail ("The MIDI file contains no melodic notes.");
+    else if (scoreEmpty)
+    {
+        // later tempo changes land on the nearest bar line
+        const double barTicks = tpq * 4.0 * tsNum / tsDen;
+        for (int t = 0; t < mf.getNumTracks(); ++t)
+            for (auto* ev : *mf.getTrack (t))
+                if (ev->message.isTempoMetaEvent() && ev->message.getTimeStamp() >= 1.0)
+                {
+                    const int bi = juce::roundToInt (ev->message.getTimeStamp() / barTicks);
+                    if (juce::isPositiveAndBelow (bi, numMeasures (score)))
+                        measures (score).getChild (bi).setProperty (ids::tempo,
+                            juce::jlimit (10.0, 999.0, 60.0 / ev->message.getTempoSecondsPerQuarterNote()), um);
+                }
+    }
     return res;
 }
 

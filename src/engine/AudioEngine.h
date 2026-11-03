@@ -133,8 +133,8 @@ private:
     TabSequence* tabSeq = nullptr;
     SpscFifo<TabSequence*> retiredTabs;
     GuitarSynth synth;
-    size_t tabNext = 0;
-    bool tabNeedsSeek = true;
+    size_t tabNext = 0, tabNextClick = 0;
+    bool tabNeedsSeek = true, tabNeedsSeekClicks = true;
     void renderTab (float* const* bus, int numBus, int offset, int len) noexcept;
     SpscFifo<PlaybackGraph*> retired;
     SpscFifo<float> analysis;

@@ -4,7 +4,8 @@
 namespace ff
 {
 /** Guitar Tabs section: track/tuning management, playback controls, entry palette and the editor. */
-class TabPage : public juce::Component, private juce::ValueTree::Listener, private juce::AsyncUpdater, private juce::Timer
+class TabPage : public juce::Component, private juce::ValueTree::Listener, private juce::AsyncUpdater, private juce::Timer,
+                private juce::MidiInputCallback, public juce::FileDragAndDropTarget
 {
 public:
     TabPage (ProjectDocument&, EngineHost&, juce::PropertiesFile&);
@@ -17,6 +18,18 @@ public:
     void setActive (bool active);
     void togglePlay();
     bool isActive() const { return active; }
+    /** Imports a Guitar Pro, MusicXML, MIDI or ASCII tab file (asks whether to replace a non-empty score). */
+    void importFile (const juce::File&);
+    static bool canImport (const juce::File&);
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        for (auto& f : files) if (canImport (juce::File (f))) return true;
+        return false;
+    }
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        for (auto& f : files) if (canImport (juce::File (f))) { importFile (juce::File (f)); return; }
+    }
 
 private:
     ProjectDocument& doc;
@@ -25,6 +38,7 @@ private:
     juce::ValueTree root, score;
     bool active = false;
     double speed = 1.0;
+    tab::TempoMap playMap;
 
     TabEditor editor;
     juce::Viewport viewport;
@@ -35,13 +49,15 @@ private:
     juce::Slider tempoSlider;
     juce::Label tempoLabel, speedLabel;
     juce::TextButton playButton { "Play" }, loopButton { "Loop" }, clickButton { "Click" }, countButton { "Count-in" };
-    juce::TextButton importButton { "Import..." }, exportButton { "Export MIDI..." };
+    juce::TextButton importButton { "Import..." }, exportButton { "Export..." };
+    juce::TextButton notationButton { "Notation" }, midiButton { "MIDI In" };
     // row 2: entry palette
     juce::OwnedArray<juce::TextButton> durButtons;
     juce::TextButton dotButton { "." }, tripletButton { "3" }, restButton { "Rest" };
     juce::OwnedArray<juce::TextButton> techButtons;
-    juce::TextButton measAddButton { "+ Bar" }, measDelButton { "- Bar" }, transDownButton { "-1" }, transUpButton { "+1" };
+    juce::TextButton transDownButton { "-1" }, transUpButton { "+1" };
     juce::ComboBox sigCombo;
+    juce::TextButton barButton { "Bar..." }, textButton { "Text..." };
     juce::Label status;
     std::unique_ptr<juce::FileChooser> chooser;
     bool updating = false;
@@ -56,6 +72,17 @@ private:
     void showTrackMenu();
     void importDialog();
     void exportDialog();
+    void exportAs (int kind);  // 1 MIDI, 2 MusicXML, 3 PDF, 4 print via PDF
+    void applyImport (const juce::File&, bool replace);
+    void showBarDialog();
+    void showBarMenu();
+    void showBeatTextDialog();
+    void setMidiInput (bool enabled);
+    void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
+    void midiNoteOn (int note);
+    std::vector<int> midiChord;
+    juce::uint32 lastMidiMs = 0;
+    bool midiEnabled = false;
     void message (const juce::String& title, const juce::String& text);
     void ensureCursorVisible();
 

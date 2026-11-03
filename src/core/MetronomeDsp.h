@@ -59,6 +59,11 @@ public:
     /** Adds the click signal into the output channels. */
     void process (float* const* outputs, int numChannels, int numSamples) noexcept;
 
+    /** Externally scheduled clicks (score playback with tempo / meter changes): starts a click now
+        (level: accent or normal) and renders only the sounding click without advancing the internal grid. */
+    void triggerClick (bool accented) noexcept;
+    void renderTriggered (float* const* outputs, int numChannels, int numSamples) noexcept;
+
     /** Length of one beat in samples at the given tempo/beat unit (testing & UI helper). */
     static double beatLengthSamples (double sampleRate, double quarterBpm, int beatUnit) noexcept;
 

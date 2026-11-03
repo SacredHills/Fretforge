@@ -4,19 +4,23 @@ A cross-platform guitar workstation (DAW + tab editor + drum studio + training c
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technology evaluation, architecture, audio-engine design,
 project format, plugin system, milestone plan, risks and licensing.
 
-## Status: Milestone 3 (part 1) — Guitar tab editor (working)
+## Status: Milestone 3 — Guitar tab editor (working)
 
 | Area | What works now |
 |---|---|
 | Tab tracks | Any number of tab tracks per project; 4–8 string guitar and bass presets (24 tunings) or custom tunings; capo; mute/solo/volume |
 | Editing | Click or arrow-key cursor; type frets (two quick digits for 10+); note values 1–1/64, dotted, triplets, rests; insert/delete beats and bars; per-bar time signatures; copy/cut/paste beats; transpose ±1 semitone (re-strings notes that fall off the neck); full undo |
 | Techniques | Hammer-on/pull-off, slides (to next / in / out), bends (½, full, 1½, 2) and pre-bends, vibrato, palm mute, dead and ghost notes, natural and artificial harmonics, let ring, tapping, ties, accents, staccato, pick strokes, tremolo picking |
-| Display | Systems of bars with fret numbers, technique markings, rhythm stems with beams/flags/dots/triplets, bar-fill warnings (incomplete / too long), selection and playback cursor |
-| Playback | Built-in physically-modelled guitar/bass synth (Karplus-Strong) that performs the techniques; practice speed 25–150% without pitch change; loop the selection; metronome click; count-in |
-| Import / export | MIDI import (quantised, automatic string assignment) and export; ASCII tab import (rhythm estimated) |
+| Standard notation | Shown above the tab (toggle "Notation"): treble-8 or bass-8 clef, key signatures, accidentals, ledger lines, stems, beams, flags, dots, tuplets, ties, rests |
+| Score text | Tempo changes, key signatures and section markers per bar ("Bar..."); chord names with diagrams, lyrics and text per beat ("Text..." or double-click) |
+| Playback | Built-in physically-modelled guitar/bass synth that performs the techniques; follows tempo changes; practice speed 25–150% without pitch change; loop the selection; metronome click that follows meter and tempo changes; count-in |
+| Import | **Guitar Pro** 3, 4, 5, 6 (.gpx) and 7/8 (.gp); **MusicXML** (.musicxml, .xml, compressed .mxl); MIDI; ASCII tab. Replace the score or add the tracks; repeats are written out; drag a file onto the Tabs page |
+| Export | MIDI (with tempo changes), MusicXML (TAB staff with fingering and techniques), PDF (notation + tab, A4), print (via the PDF) |
+| MIDI entry | "MIDI In": play notes or chords on a MIDI keyboard / MIDI guitar interface to write them at the cursor |
 
-**Still to come in Milestone 3:** standard notation above the tab, Guitar Pro (.gp3/.gp4/.gp5/.gpx/.gp) and MusicXML import,
-MusicXML export, PDF export and printing, MIDI-keyboard note entry, chord diagrams and lyrics, tempo changes inside a score.
+**Not yet in Milestone 3:** grace notes, second voices (only voice 1 is imported), drum tracks from Guitar Pro files
+(they wait for the Drum Studio), repeat signs kept as signs (they are written out on import), direct printing without
+the PDF step, PDF with selectable text (pages are images).
 
 ## Milestone 2 — Recording studio (working)
 
@@ -42,7 +46,7 @@ Ctrl+E export, Ctrl+D duplicate, Ctrl+C/X/V, Ctrl+A, Del, = / - zoom, F fit.
 tempo/meter changes along the timeline, track folders/groups, automation lanes, MIDI and instrument tracks, MP3 export
 (needs LAME), and disk streaming (audio is loaded into memory; fine for songs, not for hour-long sessions).
 
-Sections without working features (Guitar Tabs, Drum Studio, Training, Effects & Amps, Library) still show a labelled
+Sections without working features (Drum Studio, Training, Effects & Amps, Library) still show a labelled
 "Not yet implemented — Milestone N" page with their planned scope and no controls.
 
 ## Building
@@ -60,7 +64,7 @@ NSIS is installed) and offers to launch the app. Options: `clean`, `debug`, `asi
 
 
 Requirements: CMake ≥ 3.22, a C++20 compiler (MSVC 2022, Xcode 15+, GCC 11+/Clang 14+), Ninja recommended.
-JUCE 8.0.4 is fetched automatically (or place a checkout in `deps/JUCE`).
+JUCE 8.0.15 is fetched automatically (or place a checkout in `deps/JUCE`).
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release

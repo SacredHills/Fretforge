@@ -6,10 +6,11 @@
 
     Lives in the project tree:
       SCORE {title, tempo}
-        MEASURES / MEASURE {tsNum, tsDen, marker}          (shared measure headers)
+        MEASURES / MEASURE {tsNum, tsDen, marker, tempo, key}  (shared measure headers;
+                                                    tempo > 0 = tempo change at the bar, key = sharps(+)/flats(-))
         TABTRACKS / TABTRACK {id, name, instrument, tuning, capo, volume, pan, mute, solo}
                       BAR (one per MEASURE, same order)
-                        BEAT {dur, dots, tuplet, rest, stroke, tremolo, whammy, text}
+                        BEAT {dur, dots, tuplet, rest, stroke, tremolo, whammy, text, chord, chordFrets, lyric}
                           NOTE {string, fret, techniques...}
 
     Strings are numbered 0 = lowest (thickest). Durations are note values
@@ -29,6 +30,8 @@ namespace ids
     FF_TAB_ID (string) FF_TAB_ID (fret) FF_TAB_ID (tie) FF_TAB_ID (hammer) FF_TAB_ID (slide) FF_TAB_ID (bend)
     FF_TAB_ID (prebend) FF_TAB_ID (vibrato) FF_TAB_ID (palmMute) FF_TAB_ID (harmonic) FF_TAB_ID (dead) FF_TAB_ID (ghost)
     FF_TAB_ID (letRing) FF_TAB_ID (tap) FF_TAB_ID (staccato) FF_TAB_ID (accent) FF_TAB_ID (finger)
+    FF_TAB_ID (key) FF_TAB_ID (chord) FF_TAB_ID (chordFrets) FF_TAB_ID (lyric) FF_TAB_ID (artist) FF_TAB_ID (album)
+    FF_TAB_ID (notation)
     #undef FF_TAB_ID
 }
 
@@ -67,6 +70,24 @@ double measureLengthQ (const juce::ValueTree& measure);
 double barContentQ (const juce::ValueTree& bar);
 /** Quarter-note position of each measure's start (size numMeasures + 1). */
 std::vector<double> measureStarts (const juce::ValueTree& score);
+
+/** Tempo in effect at a measure (the score tempo, changed by MEASURE tempo properties). */
+double measureTempo (const juce::ValueTree& score, int measure);
+/** Key signature in effect at a measure (-7..7, sharps positive). */
+int measureKey (const juce::ValueTree& score, int measure);
+
+/** Maps musical time (quarters) to seconds through the score's tempo changes.
+    `speed` scales every tempo (practice speed). */
+struct TempoMap
+{
+    struct Segment { double q = 0.0, sec = 0.0, secondsPerQ = 0.5; };
+    std::vector<Segment> segments; // sorted, never empty
+
+    double secondsAt (double q) const noexcept;
+    double quarterAt (double sec) const noexcept;
+    double bpmAt (double q) const noexcept;
+};
+TempoMap tempoMap (const juce::ValueTree& score, double speed = 1.0);
 
 // ---- compiled playback events ----
 struct NoteEvent

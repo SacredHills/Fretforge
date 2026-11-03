@@ -20,9 +20,11 @@ struct SynthNote
 /** Immutable playback snapshot for the tab editor (built on the message thread). */
 struct TabSequence
 {
+    struct Click { double sec = 0.0; bool accent = false; };
     std::vector<SynthNote> notes;   // sorted by startSec
+    std::vector<Click> clicks;      // metronome beats following the score's meter and tempo changes
     double lengthSec = 0.0;
-    double secondsPerQuarter = 0.5; // after speed scaling
+    double secondsPerQuarter = 0.5; // at the start, after speed scaling
 };
 
 /** Builds a sequence from a SCORE node. `speed` scales the tempo (0.5 = half speed, pitch unchanged). */

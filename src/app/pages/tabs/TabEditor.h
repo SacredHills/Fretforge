@@ -62,14 +62,28 @@ public:
     void insertMeasure (bool after);
     void deleteMeasure();
     void enterFret (int fret);
+    /** MIDI keyboard entry: writes the pitches (a chord) into the cursor's beat with automatically chosen
+        strings; with `advance` the cursor first moves to the next beat. */
+    void enterPitches (const std::vector<int>& midiNotes, bool advance);
 
     void setPlayheadQ (double q) { playQ = q; repaint(); }
     void layoutChanged();
+
+    /** Standard notation above the tab (stored in the score, default on). */
+    bool notationVisible() const;
+    /** Print styling: black on white, no cursor, selection or bar-fill warnings (PDF export). */
+    void setPrintMode (bool shouldPrint);
+    struct Row { int y = 0, height = 0; };
+    const std::vector<Row>& rows() const { return rowInfo; }
+    /** Beat under a point (for double-click editing from the page). */
+    bool beatAt (juce::Point<int> p, Pos& pos) const { int s; return locate (p, pos, s); }
+    std::function<void()> onDoubleClick;
 
     void paint (juce::Graphics&) override;
     void resized() override { layoutChanged(); }
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override { if (onDoubleClick) onDoubleClick(); }
     bool keyPressed (const juce::KeyPress&) override;
     void focusGained (FocusChangeType) override { repaint(); }
     void focusLost (FocusChangeType) override { repaint(); }
@@ -99,9 +113,16 @@ private:
         float appendX = 0;        // slot after the last beat
     };
     std::vector<MeasureLayout> layout;
-    std::vector<int> rowY;
-    int rowHeight = 120;
-    static constexpr int lineGap = 14, topPad = 34, leftPad = 46, rhythmPad = 40;
+    std::vector<Row> rowInfo;
+    std::vector<int> rowTabTop;      // y of the highest string line per row
+    std::vector<int> rowStaffTop;    // y of the top notation line per row (-1 = no notation)
+    std::vector<int> rowChordY;      // top of the chord band (-1 = none)
+    std::vector<int> rowLyricY;      // baseline area for lyrics (-1 = none)
+    static constexpr int lineGap = 14, techPad = 34, leftPad = 46, rhythmPad = 40, headerPad = 16;
+    static constexpr float staffSpace = 7.0f;
+
+    struct Ink { juce::Colour bg, text, textDim, outline, accent, accentDim, info, bad, warn, staff; } col;
+    bool printMode = false;
 
     juce::ValueTree barNode (int b) const;
     juce::ValueTree beatAt (const Pos& p) const;
@@ -121,5 +142,10 @@ private:
 
     void drawBar (juce::Graphics&, const MeasureLayout&);
     void drawRhythm (juce::Graphics&, const MeasureLayout&, const juce::ValueTree& bar);
+    void drawNotation (juce::Graphics&, const MeasureLayout&, const juce::ValueTree& bar, bool rowStart);
+    void drawChordDiagram (juce::Graphics&, float cx, float top, const juce::ValueTree& beat);
+    float rowContentTop (int row) const;
+    float rowContentBottom (int row) const;
+    int prefixWidth (int bar, bool rowStart) const;
 };
 } // namespace ff

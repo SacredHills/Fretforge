@@ -282,6 +282,75 @@ struct TabTests : juce::UnitTest
             expect (pk > 0.01f, "tab synth output " + juce::String (pk));
             e.collectGarbage();
         }
+
+        beginTest ("tempo and meter changes: tempo map, note times and score clicks");
+        {
+            juce::ValueTree project ("PROJECT");
+            auto sc = t::getOrCreateScore (project);
+            sc.setProperty (t::ids::tempo, 120.0, nullptr);
+            while (t::numMeasures (sc) > 3) t::removeMeasure (sc, 3, nullptr);
+            t::measures (sc).getChild (1).setProperty (t::ids::tempo, 60.0, nullptr);
+            t::measures (sc).getChild (2).setProperty (t::ids::tsNum, 3, nullptr);
+            t::measures (sc).getChild (2).setProperty (t::ids::tempo, 180.0, nullptr);
+            auto tr = t::addTrack (sc, "G", { 40, 45, 50, 55, 59, 64 }, "guitar", nullptr);
+            for (int m = 0; m < 3; ++m)
+                t::bar (tr, m).appendChild (beat (4, { note (0, 5) }), nullptr);
+
+            expectEquals (t::measureTempo (sc, 0), 120.0);
+            expectEquals (t::measureTempo (sc, 1), 60.0);
+            expectEquals (t::measureTempo (sc, 2), 180.0);
+            const auto map = t::tempoMap (sc);
+            // bar 1: 4 q at 0.5 s; bar 2: 4 q at 1 s; bar 3 starts at 2 + 4 = 6 s
+            expectWithinAbsoluteError (map.secondsAt (4.0), 2.0, 1e-12);
+            expectWithinAbsoluteError (map.secondsAt (8.0), 6.0, 1e-12);
+            expectWithinAbsoluteError (map.secondsAt (9.0), 6.0 + 1.0 / 3.0, 1e-12);
+            expectWithinAbsoluteError (map.quarterAt (4.0), 6.0, 1e-12);
+            expectWithinAbsoluteError (map.quarterAt (map.secondsAt (10.3)), 10.3, 1e-9);
+            expectEquals (map.bpmAt (5.0), 60.0);
+            const auto slow = t::tempoMap (sc, 0.5);
+            expectWithinAbsoluteError (slow.secondsAt (8.0), 12.0, 1e-12);
+
+            auto seq = buildTabSequence (sc, 1.0);
+            expectEquals ((int) seq->notes.size(), 3);
+            expectWithinAbsoluteError (seq->notes[1].startSec, 2.0, 1e-9);
+            expectWithinAbsoluteError (seq->notes[2].startSec, 6.0, 1e-9);
+            expectWithinAbsoluteError (seq->notes[1].endSec - seq->notes[1].startSec, 1.0, 1e-9);
+            expectEquals ((int) seq->clicks.size(), 4 + 4 + 3);
+            expect (seq->clicks[0].accent && ! seq->clicks[1].accent && seq->clicks[4].accent && seq->clicks[8].accent);
+            expectWithinAbsoluteError (seq->clicks[5].sec, 3.0, 1e-9);
+            expectWithinAbsoluteError (seq->clicks[9].sec, 6.0 + 1.0 / 3.0, 1e-9);
+            expectWithinAbsoluteError (seq->lengthSec, 7.0, 1e-9);
+
+            // the engine clicks exactly on those beats (synth silenced by muting the track)
+            tr.setProperty (t::ids::mute, true, nullptr);
+            AudioEngine e;
+            constexpr double sr = 48000.0;
+            e.prepare (sr, 480);
+            e.tabMode = true;
+            e.clickWhilePlaying = true;
+            e.submitTabSequence (buildTabSequence (sc, 1.0));
+            std::vector<float> l (480), r (480), all;
+            float* outs[2] = { l.data(), r.data() };
+            e.play();
+            for (int i = 0; i < (int) (7.2 * sr / 480); ++i)
+            {
+                e.process (nullptr, 0, outs, 2, 480);
+                all.insert (all.end(), l.begin(), l.end());
+            }
+            std::vector<int> onsets;
+            for (int i = 1; i < (int) all.size(); ++i)
+                if (std::abs (all[(size_t) i]) > 1.0e-4f && (onsets.empty() || i - onsets.back() > 2400))
+                {
+                    bool silentBefore = true;
+                    for (int k = juce::jmax (0, i - 200); k < i; ++k) silentBefore = silentBefore && std::abs (all[(size_t) k]) <= 1.0e-4f;
+                    if (silentBefore || onsets.empty()) onsets.push_back (i);
+                }
+            expectEquals ((int) onsets.size(), 11, "click count");
+            const double expected[] = { 0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 6 + 1.0 / 3.0, 6 + 2.0 / 3.0 };
+            for (int i = 0; i < juce::jmin (11, (int) onsets.size()); ++i)
+                expect (std::abs (onsets[(size_t) i] - expected[i] * sr) <= 2.0, "click " + juce::String (i) + " at " + juce::String (onsets[(size_t) i]));
+            e.collectGarbage();
+        }
     }
 };
 static TabTests tabTests;

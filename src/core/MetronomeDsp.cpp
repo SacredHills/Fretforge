@@ -159,6 +159,19 @@ void MetronomeDsp::renderVoice (float* const* outputs, int numChannels, int star
         voice = nullptr;
 }
 
+void MetronomeDsp::triggerClick (bool accented) noexcept
+{
+    const auto& set = clicks[(size_t) juce::jlimit (0, (int) numSounds - 1, sound.load())];
+    voice = accented ? &set.accent : &set.beat;
+    voicePos = 0;
+    beatCounter.fetch_add (1);
+}
+
+void MetronomeDsp::renderTriggered (float* const* outputs, int numChannels, int numSamples) noexcept
+{
+    renderVoice (outputs, numChannels, 0, numSamples, juce::jlimit (0.0f, 1.0f, volume.load()));
+}
+
 void MetronomeDsp::process (float* const* outputs, int numChannels, int numSamples) noexcept
 {
     if (sr <= 0.0)

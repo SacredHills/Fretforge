@@ -10,9 +10,8 @@ std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, dou
     auto seq = std::make_unique<TabSequence>();
     if (! score.isValid())
         return seq;
-    const double tempo = juce::jlimit (10.0, 999.0, (double) score.getProperty (tab::ids::tempo, 120.0)) * juce::jlimit (0.1, 4.0, speed);
-    const double spq = 60.0 / tempo;
-    seq->secondsPerQuarter = spq;
+    const auto map = tab::tempoMap (score, speed);
+    seq->secondsPerQuarter = map.segments.front().secondsPerQ;
 
     // per-track mix (mute / solo / volume / pan)
     struct Mix { float l, r; bool audible, bass; };
@@ -33,8 +32,8 @@ std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, dou
         if (! juce::isPositiveAndBelow (e.track, (int) mix.size()) || ! mix[(size_t) e.track].audible)
             continue;
         SynthNote n;
-        n.startSec = e.startQ * spq;
-        n.endSec = (e.startQ + juce::jmax (0.02, e.lengthQ)) * spq;
+        n.startSec = map.secondsAt (e.startQ);
+        n.endSec = map.secondsAt (e.startQ + juce::jmax (0.02, e.lengthQ));
         n.track = e.track;
         n.string = e.string;
         n.frequency = (float) (440.0 * std::pow (2.0, (e.midi - 69) / 12.0));
@@ -48,7 +47,7 @@ std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, dou
         n.harmonic = e.harmonic;
         n.slideTo = e.slideToSemis;
         n.tremolo = e.tremolo;
-        n.tremoloInterval = (float) (spq / 8.0); // 32nd notes
+        n.tremoloInterval = (float) (60.0 / map.bpmAt (e.startQ) / 8.0); // 32nd notes
         n.whammy = e.whammy;
         n.bass = mix[(size_t) e.track].bass;
         n.gainL = mix[(size_t) e.track].l;
@@ -57,7 +56,16 @@ std::unique_ptr<TabSequence> buildTabSequence (const juce::ValueTree& score, dou
         seq->lengthSec = juce::jmax (seq->lengthSec, n.endSec);
     }
     const auto starts = tab::measureStarts (score);
-    seq->lengthSec = juce::jmax (seq->lengthSec, starts.back() * spq);
+    seq->lengthSec = juce::jmax (seq->lengthSec, map.secondsAt (starts.back()));
+
+    auto ms = tab::measures (score);
+    for (int m = 0; m < ms.getNumChildren(); ++m)
+    {
+        const int num = juce::jlimit (1, 32, (int) ms.getChild (m).getProperty (tab::ids::tsNum, 4));
+        const double beatQ = 4.0 / juce::jlimit (1, 64, (int) ms.getChild (m).getProperty (tab::ids::tsDen, 4));
+        for (int b = 0; b < num; ++b)
+            seq->clicks.push_back ({ map.secondsAt (starts[(size_t) m] + b * beatQ), b == 0 });
+    }
     return seq;
 }
 

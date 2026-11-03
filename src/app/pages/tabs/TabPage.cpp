@@ -1,6 +1,9 @@
 #include "TabPage.h"
 #include "core/MusicTheory.h"
 #include "engine/TabSynth.h"
+#include "core/GuitarPro.h"
+#include "core/MusicXml.h"
+#include "ScorePdf.h"
 
 namespace ff
 {
@@ -24,7 +27,7 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
 
     tempoLabel.setText ("Tempo", juce::dontSendNotification);
     speedLabel.setText ("Speed", juce::dontSendNotification);
-    for (auto* l : { &tempoLabel, &speedLabel }) { styleLabel (*l, 12.0f, palette::textDim, true); addAndMakeVisible (l); }
+    for (auto* l : { &tempoLabel, &speedLabel }) styleLabel (*l, 12.0f, palette::textDim, true);  // shown only when there is room
     tempoSlider.setSliderStyle (juce::Slider::LinearBarVertical);
     tempoSlider.setRange (20.0, 400.0, 1.0);
     tempoSlider.setTextValueSuffix (" BPM");
@@ -57,13 +60,20 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
     countButton.setClickingTogglesState (true);
     countButton.setToggleState (settings.getBoolValue ("tabCountIn", false), juce::dontSendNotification);
     countButton.onClick = [this] { settings.setValue ("tabCountIn", countButton.getToggleState()); };
-    importButton.setTooltip ("Import MIDI (.mid) or ASCII tab (.txt / .tab)");
+    importButton.setTooltip ("Import Guitar Pro (.gp3 .gp4 .gp5 .gpx .gp), MusicXML (.musicxml .xml .mxl), MIDI or ASCII tab");
     importButton.onClick = [this] { importDialog(); };
+    exportButton.setTooltip ("Export MIDI, MusicXML or PDF, or print");
     exportButton.onClick = [this] { exportDialog(); };
+    notationButton.setClickingTogglesState (true);
+    notationButton.setTooltip ("Show standard notation above the tab");
+    notationButton.onClick = [this] { doc.set (score, tids::notation, notationButton.getToggleState(), false); editor.grabKeyboardFocus(); };
+    midiButton.setClickingTogglesState (true);
+    midiButton.setTooltip ("Enter notes from a MIDI keyboard or MIDI guitar: play a note or chord to write it at the cursor");
+    midiButton.onClick = [this] { setMidiInput (midiButton.getToggleState()); editor.grabKeyboardFocus(); };
 
     for (auto* c : std::initializer_list<juce::Component*> { &trackCombo, &addTrackButton, &tuningButton, &trackMenuButton, &tempoSlider,
                                                              &speedCombo, &playButton, &loopButton, &clickButton, &countButton,
-                                                             &importButton, &exportButton })
+                                                             &importButton, &exportButton, &notationButton, &midiButton })
     {
         c->setWantsKeyboardFocus (false);
         addAndMakeVisible (c);
@@ -87,8 +97,8 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
     struct Tech { const char* label; const char* tip; std::function<void (TabEditor&)> fn; };
     const std::vector<Tech> techs {
         { "H/P", "Hammer-on / pull-off to the next note (H)", [] (TabEditor& e) { e.toggleNoteFlag (tids::hammer, "Hammer-on"); } },
-        { "Slide", "Slide: to next / in from below / out downwards (S)", [] (TabEditor& e) { e.cycleSlide(); } },
-        { "Bend", "Bend: 1/2, full, 1 1/2, 2 (B)", [] (TabEditor& e) { e.cycleBend(); } },
+        { "Sld", "Slide: to next / in from below / out downwards (S)", [] (TabEditor& e) { e.cycleSlide(); } },
+        { "Bnd", "Bend: 1/2, full, 1 1/2, 2 (B)", [] (TabEditor& e) { e.cycleBend(); } },
         { "Vib", "Vibrato (V)", [] (TabEditor& e) { e.toggleNoteFlag (tids::vibrato, "Vibrato"); } },
         { "PM", "Palm mute (P)", [] (TabEditor& e) { e.toggleNoteFlag (tids::palmMute, "Palm mute"); } },
         { "X", "Dead note (X)", [] (TabEditor& e) { e.toggleNoteFlag (tids::dead, "Dead note"); } },
@@ -101,7 +111,7 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
         { ">", "Accent (>)", [] (TabEditor& e) { e.toggleNoteFlag (tids::accent, "Accent"); } },
         { "Dn", "Downstroke (D)", [] (TabEditor& e) { e.setStroke (tab::strokeDown); } },
         { "Up", "Upstroke (U)", [] (TabEditor& e) { e.setStroke (tab::strokeUp); } },
-        { "Trem", "Tremolo picking (W)", [] (TabEditor& e) { e.toggleBeatFlag (tids::tremolo, "Tremolo picking"); } },
+        { "Trm", "Tremolo picking (W)", [] (TabEditor& e) { e.toggleBeatFlag (tids::tremolo, "Tremolo picking"); } },
     };
     for (auto& t : techs)
     {
@@ -110,12 +120,8 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
         b->onClick = [this, fn = t.fn] { fn (editor); editor.grabKeyboardFocus(); };
     }
 
-    measAddButton.setTooltip ("Insert a bar after the cursor");
-    measDelButton.setTooltip ("Delete the cursor's bar");
     transDownButton.setTooltip ("Transpose selection down a semitone");
     transUpButton.setTooltip ("Transpose selection up a semitone");
-    measAddButton.onClick = [this] { editor.insertMeasure (true); editor.grabKeyboardFocus(); };
-    measDelButton.onClick = [this] { editor.deleteMeasure(); editor.grabKeyboardFocus(); };
     transDownButton.onClick = [this] { editor.transpose (-1); editor.grabKeyboardFocus(); };
     transUpButton.onClick = [this] { editor.transpose (1); editor.grabKeyboardFocus(); };
     for (int i = 0; i < (int) std::size (sigNames); ++i)
@@ -133,8 +139,13 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
 
     for (auto* b : durButtons) { b->setClickingTogglesState (false); b->setWantsKeyboardFocus (false); addAndMakeVisible (b); }
     for (auto* b : techButtons) { b->setWantsKeyboardFocus (false); addAndMakeVisible (b); }
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &dotButton, &tripletButton, &restButton, &measAddButton,
-                                                                       &measDelButton, &transDownButton, &transUpButton, &sigCombo })
+    barButton.setTooltip ("Insert or delete bars; tempo change, key signature and section marker of the cursor's bar");
+    barButton.onClick = [this] { showBarMenu(); };
+    textButton.setTooltip ("Chord name, lyric and text of the cursor's beat (or double-click a beat)");
+    textButton.onClick = [this] { showBeatTextDialog(); };
+    editor.onDoubleClick = [this] { showBeatTextDialog(); };
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &dotButton, &tripletButton, &restButton, &transDownButton, &transUpButton, &sigCombo,
+                                                                       &barButton, &textButton })
     {
         c->setWantsKeyboardFocus (false);
         addAndMakeVisible (c);
@@ -148,6 +159,7 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
 
 TabPage::~TabPage()
 {
+    setMidiInput (false);
     root.removeListener (this);
 }
 
@@ -190,6 +202,7 @@ void TabPage::refreshTracks()
         trackCombo.addItem (juce::String (i) + ". " + t[tids::name].toString() + "  (" + juce::String (tab::numStrings (t)) + " strings)", i), ++i;
     trackCombo.setSelectedItemIndex (editor.getTrackIndex(), juce::dontSendNotification);
     tempoSlider.setValue ((double) score.getProperty (tids::tempo, 120.0), juce::dontSendNotification);
+    notationButton.setToggleState ((bool) score.getProperty (tids::notation, true), juce::dontSendNotification);
     const bool hasTrack = tab::tracks (score).getNumChildren() > 0;
     for (auto* c : std::initializer_list<juce::Component*> { &tuningButton, &trackMenuButton, &playButton, &exportButton })
         c->setEnabled (hasTrack);
@@ -272,7 +285,7 @@ void TabPage::pushEngineOverrides()
 {
     if (! active) return;
     auto& e = host.engine;
-    const double tempo = (double) score.getProperty (tids::tempo, 120.0) * speed;
+    const double tempo = tab::measureTempo (score, editor.cursor.bar) * speed;
     e.setTempo (tempo);
     auto m0 = tab::measures (score).getChild (editor.cursor.bar);
     e.setTimeSignature ((int) m0.getProperty (tids::tsNum, 4), (int) m0.getProperty (tids::tsDen, 4));
@@ -281,9 +294,9 @@ void TabPage::pushEngineOverrides()
     if (loopButton.getToggleState())
     {
         const auto [a, b] = editor.selectionSpanQ();
-        const double spq = 60.0 / tempo;
-        e.loopStartSec = a * spq;
-        e.loopEndSec = b * spq;
+        const auto map = tab::tempoMap (score, speed);
+        e.loopStartSec = map.secondsAt (a);
+        e.loopEndSec = map.secondsAt (b);
         e.loopEnabled = true;
     }
     else
@@ -300,6 +313,7 @@ void TabPage::restoreEngine()
 
 void TabPage::rebuildSequence()
 {
+    playMap = tab::tempoMap (score, speed);
     host.engine.submitTabSequence (buildTabSequence (score, speed));
 }
 
@@ -307,11 +321,11 @@ void TabPage::togglePlay()
 {
     auto& e = host.engine;
     if (e.isPlaying()) { e.stop(); return; }
+    rebuildSequence();
     pushEngineOverrides();
-    const double tempo = (double) score.getProperty (tids::tempo, 120.0) * speed;
-    const double spq = 60.0 / tempo;
+    const double tempo = tab::measureTempo (score, editor.cursor.bar) * speed;
     const double startQ = loopButton.getToggleState() ? editor.selectionSpanQ().first : editor.cursorQ();
-    e.locateSeconds (startQ * spq);
+    e.locateSeconds (playMap.secondsAt (startQ));
     juce::int64 countIn = 0;
     if (countButton.getToggleState() && e.getSampleRate() > 0)
     {
@@ -332,8 +346,7 @@ void TabPage::timerCallback()
     playButton.setToggleState (playing, juce::dontSendNotification);
     if (playing && ! e.isCountingIn())
     {
-        const double tempo = (double) score.getProperty (tids::tempo, 120.0) * speed;
-        editor.setPlayheadQ (e.getPositionSeconds() * tempo / 60.0);
+        editor.setPlayheadQ (playMap.quarterAt (e.getPositionSeconds()));
     }
     else
         editor.setPlayheadQ (-1.0);
@@ -468,44 +481,259 @@ void TabPage::showTrackMenu()
     });
 }
 
+bool TabPage::canImport (const juce::File& f)
+{
+    return f.hasFileExtension ("gp3;gp4;gp5;gpx;gp;musicxml;mxl;xml;mid;midi;txt;tab");
+}
+
 void TabPage::importDialog()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Import MIDI or ASCII tab", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
-                                                   "*.mid;*.midi;*.txt;*.tab");
+    chooser = std::make_unique<juce::FileChooser> ("Import a score", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+                                                   "*.gp3;*.gp4;*.gp5;*.gpx;*.gp;*.musicxml;*.mxl;*.xml;*.mid;*.midi;*.txt;*.tab");
     juce::Component::SafePointer<TabPage> safe (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc) {
-        if (safe == nullptr || fc.getResult() == juce::File()) return;
-        const auto f = fc.getResult();
-        safe->doc.undo().beginNewTransaction ("Import " + f.getFileName());
-        tab::ImportResult r;
-        if (f.hasFileExtension ("mid;midi"))
-            r = tab::importMidi (safe->score, f, &safe->doc.undo());
-        else if (f.getSize() > 4 * 1024 * 1024)
-            r.result = juce::Result::fail ("That text file is too large to be a tab.");
-        else
-            r = tab::importAsciiTab (safe->score, f.loadFileAsString(), f.getFileNameWithoutExtension(), &safe->doc.undo());
-        if (r.result.failed()) { safe->message ("Import failed", r.result.getErrorMessage()); return; }
-        safe->refreshTracks();
-        safe->editor.setTrackIndex (tab::tracks (safe->score).getNumChildren() - 1);
-        safe->refreshTracks();
-        juce::String msg = "Added " + juce::String (r.tracksAdded) + (r.tracksAdded == 1 ? " track." : " tracks.");
-        if (! r.warnings.isEmpty()) msg << "\n\n" << r.warnings.joinIntoString ("\n");
-        safe->message ("Import complete", msg);
+        if (safe != nullptr && fc.getResult() != juce::File()) safe->importFile (fc.getResult());
     });
+}
+
+void TabPage::importFile (const juce::File& f)
+{
+    const bool wholeScore = f.hasFileExtension ("gp3;gp4;gp5;gpx;gp;musicxml;mxl;xml");
+    bool hasNotes = false;
+    for (auto tr : tab::tracks (score))
+        for (auto b : tr)
+            for (auto beat : b)
+                hasNotes = hasNotes || beat.getNumChildren() > 0;
+    if (! wholeScore || ! hasNotes)
+    {
+        applyImport (f, wholeScore);
+        return;
+    }
+    juce::Component::SafePointer<TabPage> safe (this);
+    juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                      .withTitle ("Import " + f.getFileName())
+                                      .withMessage ("This project already has a tab score. Replace it with the file's score, or add the file's "
+                                                    "tracks to the current score? (Both can be undone.)")
+                                      .withButton ("Replace score")
+                                      .withButton ("Add tracks")
+                                      .withButton ("Cancel")
+                                      .withAssociatedComponent (this),
+                                  [safe, f] (int r) {
+                                      if (safe != nullptr && (r == 1 || r == 2)) safe->applyImport (f, r == 1);
+                                  });
+}
+
+void TabPage::applyImport (const juce::File& f, bool replace)
+{
+    if (host.engine.isPlaying()) host.engine.stop();
+    doc.undo().beginNewTransaction ("Import " + f.getFileName());
+    tab::ImportResult r;
+    const int before = tab::tracks (score).getNumChildren();
+    if (f.hasFileExtension ("gp3;gp4;gp5;gpx;gp"))
+        r = tab::gp::importFile (score, f, replace, &doc.undo());
+    else if (f.hasFileExtension ("musicxml;mxl;xml"))
+        r = tab::musicxml::importFile (score, f, replace, &doc.undo());
+    else if (f.hasFileExtension ("mid;midi"))
+        r = tab::importMidi (score, f, &doc.undo());
+    else if (f.getSize() > 4 * 1024 * 1024)
+        r.result = juce::Result::fail ("That text file is too large to be a tab.");
+    else
+        r = tab::importAsciiTab (score, f.loadFileAsString(), f.getFileNameWithoutExtension(), &doc.undo());
+    if (r.result.failed())
+    {
+        doc.undo().undoCurrentTransactionOnly();
+        message ("Import failed", f.getFileName() + ":\n" + r.result.getErrorMessage());
+        return;
+    }
+    refreshTracks();
+    editor.setTrackIndex (replace ? 0 : before);
+    editor.layoutChanged();
+    refreshTracks();
+    rebuildSequence();
+    pushEngineOverrides();
+    juce::String msg = (replace ? "Imported " : "Added ") + juce::String (r.tracksAdded) + (r.tracksAdded == 1 ? " track" : " tracks")
+                       + " and " + juce::String (tab::numMeasures (score)) + " bars.";
+    if (! r.warnings.isEmpty()) msg << "\n\n" << r.warnings.joinIntoString ("\n");
+    message ("Import complete", msg);
 }
 
 void TabPage::exportDialog()
 {
+    juce::PopupMenu m;
+    m.addItem (1, "MIDI file (.mid)...");
+    m.addItem (2, "MusicXML (.musicxml)...");
+    m.addItem (3, "PDF (notation + tab)...");
+    m.addSeparator();
+    m.addItem (4, "Print (opens the PDF in your viewer)...");
+    juce::Component::SafePointer<TabPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportButton), [safe] (int r) {
+        if (safe != nullptr && r > 0) safe->exportAs (r);
+    });
+}
+
+void TabPage::exportAs (int kind)
+{
+    if (! tab::tracks (score).getNumChildren()) { message ("Nothing to export", "Add a tab track first."); return; }
+    auto baseName = score[tids::title].toString().trim();
+    if (baseName.isEmpty() || baseName == "Untitled tab") baseName = doc.tree()["name"].toString();
+    baseName = juce::File::createLegalFileName (baseName.isEmpty() ? juce::String ("Score") : baseName);
+
+    if (kind == 4)
+    {
+        auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (baseName + " (print).pdf");
+        ScorePdf::Options opt;
+        auto r = ScorePdf::write (doc, host, score, f, opt);
+        if (r.failed()) { message ("Print failed", r.getErrorMessage()); return; }
+        if (! f.startAsProcess())
+            message ("Print", "The PDF was written to\n" + f.getFullPathName() + "\nOpen it and print from your PDF viewer.");
+        return;
+    }
+    const char* ext = kind == 1 ? ".mid" : kind == 2 ? ".musicxml" : ".pdf";
     const auto start = doc.hasLocation() ? doc.getBundle().getParentDirectory() : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
-    chooser = std::make_unique<juce::FileChooser> ("Export MIDI", start.getChildFile (juce::File::createLegalFileName (doc.tree()["name"].toString()) + ".mid"), "*.mid");
+    chooser = std::make_unique<juce::FileChooser> (kind == 1 ? "Export MIDI" : kind == 2 ? "Export MusicXML" : "Export PDF",
+                                                   start.getChildFile (baseName + ext), juce::String ("*") + ext);
     juce::Component::SafePointer<TabPage> safe (this);
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
-                          [safe] (const juce::FileChooser& fc) {
+                          [safe, kind, ext] (const juce::FileChooser& fc) {
                               if (safe == nullptr || fc.getResult() == juce::File()) return;
-                              const auto f = fc.getResult().withFileExtension (".mid");
-                              const auto r = tab::exportMidi (safe->score, f);
+                              const auto f = fc.getResult().withFileExtension (ext);
+                              juce::Result r = juce::Result::ok();
+                              if (kind == 1) r = tab::exportMidi (safe->score, f);
+                              else if (kind == 2) r = tab::musicxml::exportFile (safe->score, f);
+                              else
+                              {
+                                  ScorePdf::Options opt;
+                                  r = ScorePdf::write (safe->doc, safe->host, safe->score, f, opt);
+                              }
                               safe->message (r.wasOk() ? "Export complete" : "Export failed", r.wasOk() ? "Wrote " + f.getFullPathName() : r.getErrorMessage());
                           });
+}
+
+void TabPage::showBarMenu()
+{
+    juce::PopupMenu m;
+    m.addItem (1, "Insert bar after");
+    m.addItem (2, "Insert bar before");
+    m.addItem (3, "Delete bar", tab::numMeasures (score) > 1);
+    m.addSeparator();
+    m.addItem (4, "Tempo, key and marker...");
+    juce::Component::SafePointer<TabPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&barButton), [safe] (int r) {
+        if (safe == nullptr || r == 0) return;
+        if (r == 1) safe->editor.insertMeasure (true);
+        else if (r == 2) safe->editor.insertMeasure (false);
+        else if (r == 3) safe->editor.deleteMeasure();
+        else if (r == 4) { safe->showBarDialog(); return; }
+        safe->editor.grabKeyboardFocus();
+    });
+}
+
+void TabPage::showBarDialog()
+{
+    auto meas = tab::measures (score).getChild (editor.cursor.bar);
+    if (! meas.isValid()) return;
+    const int bar = editor.cursor.bar;
+    auto* w = new juce::AlertWindow ("Bar " + juce::String (bar + 1), "Leave the tempo empty for no change at this bar.",
+                                     juce::MessageBoxIconType::NoIcon, this);
+    const double t = (double) meas[tids::tempo];
+    w->addTextEditor ("tempo", t > 0.0 ? juce::String (t, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") : juce::String(),
+                      bar == 0 ? "Tempo (bar 1 uses the score tempo)" : "Tempo change (BPM)");
+    juce::StringArray keys;
+    const char* names[] = { "Cb major / Ab minor (7 flats)", "Gb / Eb m (6 flats)", "Db / Bb m (5 flats)", "Ab / F m (4 flats)", "Eb / C m (3 flats)",
+                            "Bb / G m (2 flats)", "F / D m (1 flat)", "C major / A minor", "G / E m (1 sharp)", "D / B m (2 sharps)",
+                            "A / F# m (3 sharps)", "E / C# m (4 sharps)", "B / G# m (5 sharps)", "F# / D# m (6 sharps)", "C# / A# m (7 sharps)" };
+    for (auto* n : names) keys.add (n);
+    w->addComboBox ("key", keys, "Key signature from this bar");
+    w->getComboBoxComponent ("key")->setSelectedItemIndex (tab::measureKey (score, bar) + 7);
+    w->addTextEditor ("marker", meas[tids::marker].toString(), "Section marker (e.g. Verse, Chorus)");
+    w->addButton ("Apply", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<TabPage> safe (this);
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, meas, bar] (int r) mutable {
+        if (safe == nullptr || r != 1) return;
+        auto& d = safe->doc;
+        d.undo().beginNewTransaction ("Bar settings");
+        const auto tempoText = w->getTextEditorContents ("tempo").trim();
+        if (bar == 0 && tempoText.getDoubleValue() >= 10.0) d.set (safe->score, tids::tempo, juce::jlimit (10.0, 999.0, tempoText.getDoubleValue()));
+        else if (tempoText.getDoubleValue() >= 10.0) d.set (meas, tids::tempo, juce::jlimit (10.0, 999.0, tempoText.getDoubleValue()));
+        else if (meas.hasProperty (tids::tempo)) meas.removeProperty (tids::tempo, &d.undo());
+        const int key = w->getComboBoxComponent ("key")->getSelectedItemIndex() - 7;
+        const int before = bar > 0 ? tab::measureKey (safe->score, bar - 1) : 0;
+        if (key != before || bar == 0) d.set (meas, tids::key, key);
+        else if (meas.hasProperty (tids::key)) meas.removeProperty (tids::key, &d.undo());
+        d.set (meas, tids::marker, w->getTextEditorContents ("marker").trim());
+        safe->pushEngineOverrides();
+    }), true);
+}
+
+void TabPage::showBeatTextDialog()
+{
+    auto beat = tab::bar (editor.track(), editor.cursor.bar).getChild (editor.cursor.beat);
+    if (! beat.isValid()) { message ("Text", "Move the cursor onto a beat first."); return; }
+    auto* w = new juce::AlertWindow ("Beat text", "Bar " + juce::String (editor.cursor.bar + 1) + ", beat " + juce::String (editor.cursor.beat + 1)
+                                                   + ". End a syllable with \"-\" when the word continues.",
+                                     juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("chord", beat[tids::chord].toString(), "Chord name (shown with a diagram of the beat's notes)");
+    w->addTextEditor ("lyric", beat[tids::lyric].toString(), "Lyric");
+    w->addTextEditor ("text", beat[tids::text].toString(), "Text / instruction");
+    w->addButton ("Apply", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<TabPage> safe (this);
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, beat] (int r) mutable {
+        if (safe == nullptr || r != 1) return;
+        auto& d = safe->doc;
+        d.undo().beginNewTransaction ("Beat text");
+        const auto chord = w->getTextEditorContents ("chord").trim();
+        if (chord != beat[tids::chord].toString())
+        {
+            d.set (beat, tids::chord, chord);
+            if (beat.hasProperty (tids::chordFrets)) beat.removeProperty (tids::chordFrets, &d.undo()); // diagram follows the notes again
+        }
+        d.set (beat, tids::lyric, w->getTextEditorContents ("lyric").trim());
+        d.set (beat, tids::text, w->getTextEditorContents ("text").trim());
+        safe->editor.grabKeyboardFocus();
+    }), true);
+}
+
+// ------------------------------------------------------------------ MIDI keyboard entry
+
+void TabPage::setMidiInput (bool enabled)
+{
+    auto& dm = host.deviceManager;
+    if (enabled == midiEnabled) return;
+    midiEnabled = enabled;
+    if (enabled)
+    {
+        const auto devices = juce::MidiInput::getAvailableDevices();
+        for (auto& dev : devices)
+            dm.setMidiInputDeviceEnabled (dev.identifier, true);
+        dm.addMidiInputDeviceCallback ({}, this);
+        if (devices.isEmpty())
+            message ("MIDI input", "No MIDI input devices were found. Connect a MIDI keyboard or MIDI guitar interface and turn MIDI In on again.");
+        midiButton.setToggleState (! devices.isEmpty(), juce::dontSendNotification);
+        if (devices.isEmpty()) { dm.removeMidiInputDeviceCallback ({}, this); midiEnabled = false; }
+    }
+    else
+        dm.removeMidiInputDeviceCallback ({}, this);
+}
+
+void TabPage::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
+{
+    if (! m.isNoteOn()) return;
+    const int note = m.getNoteNumber();
+    juce::Component::SafePointer<TabPage> safe (this);
+    juce::MessageManager::callAsync ([safe, note] { if (safe != nullptr) safe->midiNoteOn (note); });
+}
+
+void TabPage::midiNoteOn (int note)
+{
+    if (! active || ! editor.track().isValid()) return;
+    const auto now = juce::Time::getMillisecondCounter();
+    const bool sameChord = ! midiChord.empty() && now - lastMidiMs < 90;  // notes struck together form one beat
+    lastMidiMs = now;
+    if (! sameChord) midiChord.clear();
+    midiChord.push_back (note);
+    editor.enterPitches (midiChord, ! sameChord);
 }
 
 // ------------------------------------------------------------------ layout
@@ -524,43 +752,51 @@ void TabPage::resized()
 {
     auto r = getLocalBounds();
     auto row1 = r.removeFromTop (42).reduced (8, 7);
-    trackCombo.setBounds (row1.removeFromLeft (230));
+    const bool roomy = row1.getWidth() >= 1330;
+    tempoLabel.setVisible (roomy);
+    speedLabel.setVisible (roomy);
+    if (roomy && tempoLabel.getParentComponent() == nullptr) { addAndMakeVisible (tempoLabel); addAndMakeVisible (speedLabel); }
+    trackCombo.setBounds (row1.removeFromLeft (roomy ? 230 : 190));
     row1.removeFromLeft (6);
     addTrackButton.setBounds (row1.removeFromLeft (72));
     row1.removeFromLeft (4);
     tuningButton.setBounds (row1.removeFromLeft (74));
     row1.removeFromLeft (4);
     trackMenuButton.setBounds (row1.removeFromLeft (64));
-    row1.removeFromLeft (14);
-    tempoLabel.setBounds (row1.removeFromLeft (44));
+    row1.removeFromLeft (12);
+    if (roomy) tempoLabel.setBounds (row1.removeFromLeft (44));
     tempoSlider.setBounds (row1.removeFromLeft (92));
-    row1.removeFromLeft (10);
-    speedLabel.setBounds (row1.removeFromLeft (44));
+    row1.removeFromLeft (8);
+    if (roomy) speedLabel.setBounds (row1.removeFromLeft (44));
     speedCombo.setBounds (row1.removeFromLeft (76));
     row1.removeFromLeft (10);
-    playButton.setBounds (row1.removeFromLeft (64));
+    playButton.setBounds (row1.removeFromLeft (60));
     row1.removeFromLeft (4);
-    loopButton.setBounds (row1.removeFromLeft (52));
+    loopButton.setBounds (row1.removeFromLeft (50));
     row1.removeFromLeft (4);
-    clickButton.setBounds (row1.removeFromLeft (52));
+    clickButton.setBounds (row1.removeFromLeft (50));
     row1.removeFromLeft (4);
     countButton.setBounds (row1.removeFromLeft (72));
-    exportButton.setBounds (row1.removeFromRight (104));
+    exportButton.setBounds (row1.removeFromRight (70));
     row1.removeFromRight (4);
-    importButton.setBounds (row1.removeFromRight (78));
+    importButton.setBounds (row1.removeFromRight (70));
+    row1.removeFromRight (8);
+    midiButton.setBounds (row1.removeFromRight (64));
+    row1.removeFromRight (4);
+    notationButton.setBounds (row1.removeFromRight (76));
 
     auto row2 = r.removeFromTop (42).reduced (8, 8);
-    for (auto* b : durButtons) { b->setBounds (row2.removeFromLeft (38)); row2.removeFromLeft (2); }
+    for (auto* b : durButtons) { b->setBounds (row2.removeFromLeft (34)); row2.removeFromLeft (2); }
     row2.removeFromLeft (4);
     dotButton.setBounds (row2.removeFromLeft (26)); row2.removeFromLeft (2);
     tripletButton.setBounds (row2.removeFromLeft (26)); row2.removeFromLeft (2);
     restButton.setBounds (row2.removeFromLeft (44));
-    row2.removeFromLeft (12);
-    transUpButton.setBounds (row2.removeFromRight (34)); row2.removeFromRight (2);
-    transDownButton.setBounds (row2.removeFromRight (34)); row2.removeFromRight (8);
-    sigCombo.setBounds (row2.removeFromRight (70)); row2.removeFromRight (4);
-    measDelButton.setBounds (row2.removeFromRight (52)); row2.removeFromRight (2);
-    measAddButton.setBounds (row2.removeFromRight (52)); row2.removeFromRight (10);
+    row2.removeFromLeft (10);
+    transUpButton.setBounds (row2.removeFromRight (30)); row2.removeFromRight (2);
+    transDownButton.setBounds (row2.removeFromRight (30)); row2.removeFromRight (8);
+    sigCombo.setBounds (row2.removeFromRight (66)); row2.removeFromRight (4);
+    textButton.setBounds (row2.removeFromRight (50)); row2.removeFromRight (2);
+    barButton.setBounds (row2.removeFromRight (48)); row2.removeFromRight (10);
     const int tw = juce::jmax (30, (row2.getWidth() - 2 * techButtons.size()) / juce::jmax (1, techButtons.size()));
     for (auto* b : techButtons) { b->setBounds (row2.removeFromLeft (tw)); row2.removeFromLeft (2); }
 

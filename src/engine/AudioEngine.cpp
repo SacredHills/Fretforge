@@ -64,6 +64,40 @@ void AudioEngine::renderTab (float* const* bus, int numBus, int offset, int len)
         tabNeedsSeek = false;
     }
 
+    if (tabNeedsSeekClicks && tabSeq != nullptr)
+    {
+        const double t = (double) pos / sr - 1.0e-9;
+        const auto& c = tabSeq->clicks;
+        tabNextClick = (size_t) (std::lower_bound (c.begin(), c.end(), t,
+                                                   [] (const TabSequence::Click& k, double v) { return k.sec < v; }) - c.begin());
+        tabNeedsSeekClicks = false;
+    }
+
+    // score clicks (follow meter and tempo changes) — rendered straight into the bus
+    if (playing && tabSeq != nullptr && clickWhilePlaying.load())
+    {
+        float* out[2] = { bus[0] + offset, numBus > 1 ? bus[1] + offset : nullptr };
+        const double t1 = (double) (pos + len) / sr;
+        const auto& c = tabSeq->clicks;
+        int ccur = 0;
+        while (tabNextClick < c.size() && c[tabNextClick].sec < t1)
+        {
+            const int off = juce::jlimit (ccur, len, (int) (std::llround (c[tabNextClick].sec * sr) - pos));
+            float* seg[2] = { out[0] + ccur, out[1] != nullptr ? out[1] + ccur : nullptr };
+            metronome.renderTriggered (seg, numBus, off - ccur);
+            ccur = off;
+            metronome.triggerClick (c[tabNextClick].accent);
+            ++tabNextClick;
+        }
+        float* seg[2] = { out[0] + ccur, out[1] != nullptr ? out[1] + ccur : nullptr };
+        metronome.renderTriggered (seg, numBus, len - ccur);
+    }
+    else if (playing && tabSeq != nullptr)
+    {
+        const double t1 = (double) (pos + len) / sr;
+        while (tabNextClick < tabSeq->clicks.size() && tabSeq->clicks[tabNextClick].sec < t1) ++tabNextClick;
+    }
+
     int cursor = 0;
     if (playing && tabSeq != nullptr)
     {
@@ -128,7 +162,7 @@ void AudioEngine::prepare (double sr, int maximumBlockSize)
     blockSize = maximumBlockSize;
     metronome.prepare (sr);
     synth.prepare (sr);
-    tabNeedsSeek = true;
+    tabNeedsSeek = tabNeedsSeekClicks = true;
     smoothedGain.reset (sr, 0.02);
     smoothedGain.setCurrentAndTargetValue (masterGain.load());
     const int scratch = juce::jmax (maximumBlockSize, 4096);
@@ -227,7 +261,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
     {
         if (tabSeq != nullptr && retiredTabs.push (&tabSeq, 1) == 0) {}
         tabSeq = t;
-        tabNeedsSeek = true;
+        tabNeedsSeek = tabNeedsSeekClicks = true;
     }
     const bool tab = tabMode.load();
 
@@ -237,7 +271,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
     {
         pos = loc;
         closeRecordSegments();
-        tabNeedsSeek = true;
+        tabNeedsSeek = tabNeedsSeekClicks = true;
         synth.allNotesOff();
         if (playing && countInRemaining == 0)
             metronome.resetAtBeat (beatsAt (pos));
@@ -247,7 +281,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
     if (wantPlay && ! playing)
     {
         playing = true;
-        tabNeedsSeek = true;
+        tabNeedsSeek = tabNeedsSeekClicks = true;
         countInRemaining = countInRequest.exchange (0);
         if (countInRemaining > 0)
             metronome.reset();
@@ -337,7 +371,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         if (tab)
             renderTab (bus, numBus, done, len);
 
-        if (numBus > 0 && ((playing && clickWhilePlaying.load()) || (! playing && practice)))
+        if (numBus > 0 && ((playing && clickWhilePlaying.load() && ! tab) || (! playing && practice)))
             metronome.process (clickOut, numBus, len);
 
         if (playing)
@@ -348,7 +382,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
                 pos = loopS;
                 closeRecordSegments();
                 metronome.resetAtBeat (beatsAt (pos));
-                tabNeedsSeek = true;
+                tabNeedsSeek = tabNeedsSeekClicks = true;
                 synth.allNotesOff();
             }
         }
