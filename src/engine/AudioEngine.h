@@ -94,6 +94,9 @@ public:
     // ---- tablature playback ----
     /** When true the engine plays the tab sequence (guitar synth) instead of the arrangement. */
     std::atomic<bool> tabMode { false };
+    /** Hands a drum sample (at the engine's sample rate) to the audio thread for a kit piece; nullptr restores the
+        built-in sound. Message thread only. Returns false if the hand-over queue is full (try again later). */
+    bool setDrumSample (int piece, std::unique_ptr<juce::AudioBuffer<float>> sample);
     /** Auditions a drum piece on the next audio block (score mode only). Lock-free. */
     void previewDrum (int piece, float velocity) noexcept { drumPreview.store ((piece & 0xff) | (juce::jlimit (1, 127, (int) (velocity * 127.0f)) << 8)); }
     void submitTabSequence (std::unique_ptr<TabSequence> seq);
@@ -137,6 +140,10 @@ private:
     GuitarSynth synth;
     DrumSynth drumSynth;
     std::atomic<int> drumPreview { -1 };
+    struct SampleSwap { int piece = 0; juce::AudioBuffer<float>* buffer = nullptr; };
+    SpscFifo<SampleSwap> pendingSamples;
+    SpscFifo<juce::AudioBuffer<float>*> retiredSamples;
+    std::array<juce::AudioBuffer<float>*, DrumSynth::maxPieces> drumSamples {};
     size_t tabNext = 0, tabNextClick = 0, drumNext = 0;
     bool tabNeedsSeek = true, tabNeedsSeekClicks = true;
     void renderTab (float* const* bus, int numBus, int offset, int len) noexcept;

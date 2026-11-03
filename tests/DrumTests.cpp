@@ -317,6 +317,63 @@ struct DrumTests : juce::UnitTest
             expect (peak (soft, 0, soft.getNumSamples()) < 0.3f * peak (loud, 0, loud.getNumSamples()));
         }
 
+        beginTest ("sample kits: name matching, sample playback, engine hand-over");
+        {
+            const std::pair<const char*, int> names[] = {
+                { "Kick_01.wav", d::kick }, { "BD hard.wav", d::kick }, { "Snare Center.wav", d::snare }, { "Rimshot.wav", d::snare }, { "Rim Click.wav", d::sideStick },
+                { "HiHat Closed.wav", d::hhClosed }, { "hh_open_2.wav", d::hhOpen }, { "Hat Pedal.flac", d::hhPedal },
+                { "Tom 1.wav", d::tomHigh }, { "tom-low.wav", d::tomLow }, { "Floor Tom.wav", d::tomFloor }, { "Crash 18.wav", d::crash },
+                { "crash2.wav", d::crash2 }, { "Ride Bell.wav", d::rideBell }, { "ride.wav", d::ride }, { "China.wav", d::china },
+                { "splash 10in.wav", d::splash }, { "Cowbell.wav", d::cowbell }, { "Clap.wav", d::clap }, { "Side Stick.wav", d::sideStick },
+                { "vocals.wav", -1 }, { "Tom Mid.wav", d::tomMid } };
+            for (auto& [n, piece] : names) expectEquals (d::pieceForSampleName (n), piece, n);
+
+            juce::ValueTree pr ("PROJECT");
+            auto dr = d::getOrCreate (pr);
+            d::setSamplePath (dr, d::snare, "Audio/DrumKit/snare.wav", nullptr);
+            expectEquals (d::samplePath (dr, d::snare), juce::String ("Audio/DrumKit/snare.wav"));
+            expect (d::samplePath (dr, d::kick).isEmpty());
+            d::setSamplePath (dr, d::snare, {}, nullptr);
+            expect (d::samplePath (dr, d::snare).isEmpty());
+
+            // a sample plays back as recorded (velocity scales it), stereo kept
+            constexpr double sr = 48000.0;
+            juce::AudioBuffer<float> smp (2, 4800);
+            for (int i = 0; i < 4800; ++i) { smp.setSample (0, i, 0.5f * std::sin (i * 0.05f)); smp.setSample (1, i, 0.25f); }
+            DrumSynth::SampleSet set {};
+            set[(size_t) d::snare] = &smp;
+            juce::AudioBuffer<float> out;
+            DrumSynth::renderOffline ({ { 0.5, d::snare, 1.0f } }, sr, 1.0, 1.0f, out, &set);
+            const int at = 24000;
+            expectEquals (out.getSample (0, at - 1), 0.0f);
+            expectWithinAbsoluteError (out.getSample (1, at + 100), 0.25f * 0.9f, 1e-5f);
+            expectWithinAbsoluteError (out.getSample (0, at + 100), 0.5f * std::sin (100 * 0.05f) * 0.9f, 1e-5f);
+            expectEquals (out.getSample (0, at + 4900), 0.0f, "ends with the sample");
+
+            AudioEngine e;
+            e.prepare (sr, 256);
+            e.tabMode = true;
+            auto b = std::make_unique<juce::AudioBuffer<float>> (1, 1000);
+            b->clear();
+            b->setSample (0, 10, 0.8f);
+            expect (e.setDrumSample (d::kick, std::move (b)));
+            auto seq = std::make_unique<TabSequence>();
+            seq->drumHits.push_back ({ 0.0, d::kick, 1.0f });
+            seq->lengthSec = 1.0;
+            e.submitTabSequence (std::move (seq));
+            std::vector<float> l (256), r (256);
+            float* outs[2] = { l.data(), r.data() };
+            e.play();
+            e.process (nullptr, 0, outs, 2, 256);
+            float pk = 0.0f;
+            int pkAt = -1;
+            for (int i = 0; i < 256; ++i) if (std::abs (l[(size_t) i]) > pk) { pk = std::abs (l[(size_t) i]); pkAt = i; }
+            expectEquals (pkAt, 10, "the sample is what plays");
+            expect (e.setDrumSample (d::kick, nullptr));   // back to the built-in kick; old buffer retired
+            e.process (nullptr, 0, outs, 2, 256);
+            e.collectGarbage();
+        }
+
         beginTest ("engine plays drum sequences on time");
         {
             juce::ValueTree proj3 ("PROJECT");

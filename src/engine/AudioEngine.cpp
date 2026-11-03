@@ -29,6 +29,8 @@ AudioEngine::AudioEngine()
     analysis.prepare (1 << 18);
     retired.prepare (1024);
     retiredTabs.prepare (256);
+    pendingSamples.prepare (128);
+    retiredSamples.prepare (256);
 }
 
 AudioEngine::~AudioEngine()
@@ -38,6 +40,18 @@ AudioEngine::~AudioEngine()
     collectGarbage();
     delete graph;
     delete tabSeq;
+    SampleSwap sw;
+    while (pendingSamples.pop (&sw, 1) == 1) delete sw.buffer;
+    for (auto* b : drumSamples) delete b;
+}
+
+bool AudioEngine::setDrumSample (int piece, std::unique_ptr<juce::AudioBuffer<float>> sample)
+{
+    if (! juce::isPositiveAndBelow (piece, DrumSynth::maxPieces)) return true;
+    SampleSwap sw { piece, sample.get() };
+    if (pendingSamples.push (&sw, 1) != 1) return false;
+    sample.release();
+    return true;
 }
 
 void AudioEngine::submitTabSequence (std::unique_ptr<TabSequence> seq)
@@ -117,7 +131,17 @@ void AudioEngine::renderTab (float* const* bus, int numBus, int offset, int len)
     }
     synth.render (L + cursor, R + cursor, len - cursor);
 
-    // drums
+    // drums: take over new samples (the old buffer goes back to the message thread to be freed)
+    {
+        SampleSwap sw;
+        while (pendingSamples.freeSpace() >= 0 && retiredSamples.freeSpace() > 0 && pendingSamples.pop (&sw, 1) == 1)
+        {
+            auto* old = drumSamples[(size_t) sw.piece];
+            drumSamples[(size_t) sw.piece] = sw.buffer;
+            drumSynth.setSample (sw.piece, sw.buffer);
+            if (old != nullptr) retiredSamples.push (&old, 1);
+        }
+    }
     if (const int pv = drumPreview.exchange (-1); pv >= 0)
         drumSynth.trigger (pv & 0xff, (float) ((pv >> 8) & 0x7f) / 127.0f);
     cursor = 0;
@@ -173,6 +197,10 @@ void AudioEngine::collectGarbage()
     while ((n = retired.pop (old, 64)) > 0)
         for (int i = 0; i < n; ++i)
             delete old[i];
+    juce::AudioBuffer<float>* oldSamples[32];
+    while ((n = retiredSamples.pop (oldSamples, 32)) > 0)
+        for (int i = 0; i < n; ++i)
+            delete oldSamples[i];
     TabSequence* oldTabs[32];
     while ((n = retiredTabs.pop (oldTabs, 32)) > 0)
         for (int i = 0; i < n; ++i)

@@ -2,6 +2,7 @@
 #include "engine/TabSynth.h"
 #include "engine/DrumSynth.h"
 #include "core/Timeline.h"
+#include "core/ProjectFile.h"
 #include <cmath>
 
 namespace ff
@@ -68,9 +69,11 @@ void DrumGrid::paint (juce::Graphics& g)
         g.fillRect (0.0f, (float) y, gridRight, (float) laneHeight);
         g.setColour (laneColour (l));
         g.fillRect (2, y + 4, 3, laneHeight - 8);
-        g.setColour (palette::text);
-        g.setFont (uiFont (12.0f));
-        g.drawText (drums::pieceInfo (l).name, 10, y, nameWidth - 14, laneHeight, juce::Justification::centredLeft);
+        const bool sampled = laneHasSample && laneHasSample (l);
+        g.setColour (sampled ? palette::accent : palette::text);
+        g.setFont (uiFont (12.0f, sampled));
+        g.drawText (juce::String (drums::pieceInfo (l).name) + (sampled ? " *" : ""), 10, y, nameWidth - 14, laneHeight,
+                    juce::Justification::centredLeft);
     }
     if (! pat.isValid())
     {
@@ -143,7 +146,8 @@ void DrumGrid::mouseDown (const juce::MouseEvent& e)
     if (! juce::isPositiveAndBelow (lane, (int) drums::numPieces) || e.y < headerHeight) return;
     if (e.x < nameWidth)
     {
-        host.engine.previewDrum (lane, 0.9f);
+        if (e.mods.isPopupMenu()) { if (onLaneMenu) onLaneMenu (lane); }
+        else host.engine.previewDrum (lane, 0.9f);
         return;
     }
     if (! pat.isValid()) return;
@@ -297,6 +301,8 @@ void SongStrip::mouseDown (const juce::MouseEvent& e)
 DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juce::PropertiesFile& st)
     : doc (d), host (h), session (s), settings (st), grid (d, h), strip (d)
 {
+    grid.onLaneMenu = [this] (int lane) { showLaneMenu (lane); };
+    grid.laneHasSample = [this] (int lane) { return drums::samplePath (drums, lane).isNotEmpty(); };
     viewport.setViewedComponent (&grid, false);
     viewport.setScrollBarsShown (true, true);
     addAndMakeVisible (viewport);
@@ -566,6 +572,7 @@ void DrumPage::rebind()
     strip.selected = -1;
     refresh();
     rebuildSequence();
+    reloadKit (true);
 }
 
 juce::ValueTree DrumPage::current() const
@@ -622,13 +629,14 @@ void DrumPage::refresh()
     strip.repaint();
     status.setText (has ? juce::String (cur.getNumChildren()) + " hits" + dotSep() + "click: add / remove" + dotSep() + "Shift-click: ghost"
                               + dotSep() + "Alt-click: accent" + dotSep() + "drag a hit up/down: velocity" + dotSep() + "right-click: presets"
-                              + dotSep() + "click a name to hear it" + dotSep() + "Space: play / stop"
+                              + dotSep() + "click a name to hear it, right-click to load a sample" + dotSep() + "Space: play / stop"
                         : juce::String(), juce::dontSendNotification);
 }
 
 void DrumPage::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& id)
 {
     if (id == dids::selected) return;
+    if (node.hasType (dids::KIT)) { reloadKit (false); grid.repaint(); return; }
     if (node == drums || node.isAChildOf (drums) || node == doc.transport())
         triggerAsyncUpdate();
     juce::ignoreUnused (id);
@@ -689,6 +697,9 @@ void DrumPage::togglePlay()
 
 void DrumPage::timerCallback()
 {
+    // samples are resampled to the device rate: reload when it changes (and retry hand-overs that did not fit)
+    if (host.engine.getSampleRate() > 0.0 && (std::abs (host.engine.getSampleRate() - loadedRate) > 0.5 || kitDirty))
+        reloadKit (std::abs (host.engine.getSampleRate() - loadedRate) > 0.5);
     if (! active) return;
     auto& e = host.engine;
     const bool playing = e.isPlaying();
@@ -775,8 +786,17 @@ void DrumPage::renderToStudio()
     for (auto& e : c.events) hits.push_back ({ juce::jmax (0.0, e.q * spq + e.offsetSec), e.piece, e.velocity });
     std::stable_sort (hits.begin(), hits.end(), [] (const DrumHit& a, const DrumHit& b) { return a.sec < b.sec; });
     const double sr = host.engine.getSampleRate() > 0 ? host.engine.getSampleRate() : 48000.0;
+    std::vector<std::unique_ptr<juce::AudioBuffer<float>>> owned;
+    DrumSynth::SampleSet set {};
+    for (int p = 0; p < drums::numPieces; ++p)
+        if (auto rel = drums::samplePath (drums, p); rel.isNotEmpty())
+            if (auto b = loadSampleFile (project::Bundle::fromPortablePath (doc.mediaBundle(), rel), sr))
+            {
+                set[(size_t) p] = b.get();
+                owned.push_back (std::move (b));
+            }
     juce::AudioBuffer<float> buf;
-    DrumSynth::renderOffline (hits, sr, c.lengthQ * spq + 3.0, (float) (double) drums.getProperty (dids::volume, 0.8), buf);
+    DrumSynth::renderOffline (hits, sr, c.lengthQ * spq + 3.0, (float) (double) drums.getProperty (dids::volume, 0.8), buf, &set);
 
     const auto name = useSong ? juce::String ("Drums") : "Drums - " + pat[dids::name].toString();
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("FretForgeRender");
@@ -797,6 +817,137 @@ void DrumPage::renderToStudio()
     if (r.failed()) { message ("Render failed", r.getErrorMessage()); return; }
     message ("Rendered to the Studio", "Added the track \"" + name + "\" (" + juce::String (c.lengthQ * spq, 1)
                                            + " s at " + juce::String (doc.tempo(), 1) + " BPM) to the Studio, starting at bar 1.");
+}
+
+// ------------------------------------------------------------------ sample kit
+
+std::unique_ptr<juce::AudioBuffer<float>> DrumPage::loadSampleFile (const juce::File& file, double sampleRate)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+    if (reader == nullptr || reader->sampleRate <= 0.0 || reader->lengthInSamples <= 0) return nullptr;
+    const int channels = juce::jlimit (1, 2, (int) reader->numChannels);
+    const int len = (int) juce::jmin (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 10.0));
+    juce::AudioBuffer<float> raw (channels, len);
+    reader->read (&raw, 0, len, 0, true, channels > 1);
+    if (std::abs (reader->sampleRate - sampleRate) < 0.5) return std::make_unique<juce::AudioBuffer<float>> (std::move (raw));
+    const double ratio = reader->sampleRate / sampleRate;
+    const int outLen = (int) std::ceil (len / ratio);
+    auto out = std::make_unique<juce::AudioBuffer<float>> (channels, outLen);
+    for (int ch = 0; ch < channels; ++ch)
+    {
+        juce::LagrangeInterpolator interp;
+        interp.process (ratio, raw.getReadPointer (ch), out->getWritePointer (ch), outLen, len, 0);
+    }
+    return out;
+}
+
+void DrumPage::reloadKit (bool force)
+{
+    const double sr = host.engine.getSampleRate();
+    if (sr <= 0.0) { kitDirty = true; return; }
+    if (force) for (auto& p : loadedPaths) p = "\x01";   // invalidate
+    kitDirty = false;
+    juce::StringArray missing;
+    for (int p = 0; p < drums::numPieces; ++p)
+    {
+        const auto rel = drums::samplePath (drums, p);
+        if (rel == loadedPaths[(size_t) p]) continue;
+        std::unique_ptr<juce::AudioBuffer<float>> buf;
+        if (rel.isNotEmpty())
+        {
+            buf = loadSampleFile (project::Bundle::fromPortablePath (doc.mediaBundle(), rel), sr);
+            if (buf == nullptr) missing.add (juce::String (drums::pieceInfo (p).name) + ": " + rel);
+        }
+        if (! host.engine.setDrumSample (p, std::move (buf))) { kitDirty = true; continue; }  // queue full: retry
+        loadedPaths[(size_t) p] = rel;
+    }
+    loadedRate = sr;
+    if (! missing.isEmpty())
+        status.setText ("Missing drum samples (built-in sound used): " + missing.joinIntoString ("; "), juce::dontSendNotification);
+}
+
+void DrumPage::showLaneMenu (int lane)
+{
+    const auto name = juce::String (drums::pieceInfo (lane).name);
+    const bool has = drums::samplePath (drums, lane).isNotEmpty();
+    juce::PopupMenu m;
+    m.addSectionHeader (name + (has ? " - sample: " + juce::File::createFileWithoutCheckingPath (drums::samplePath (drums, lane)).getFileName()
+                                    : juce::String (" - built-in sound")));
+    m.addItem (1, "Load sample for " + name + "...");
+    m.addItem (2, "Use the built-in sound", has);
+    m.addSeparator();
+    m.addItem (3, "Load kit from folder (matches file names)...");
+    m.addItem (4, "Reset the whole kit to built-in sounds");
+    juce::Component::SafePointer<DrumPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options(), [safe, lane] (int r) {
+        if (safe == nullptr || r == 0) return;
+        if (r == 1)
+        {
+            safe->chooser = std::make_unique<juce::FileChooser> ("Sample for " + juce::String (drums::pieceInfo (lane).name),
+                                                                 juce::File::getSpecialLocation (juce::File::userMusicDirectory), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+            safe->chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe, lane] (const juce::FileChooser& fc) {
+                if (safe == nullptr || fc.getResult() == juce::File()) return;
+                safe->doc.undo().beginNewTransaction ("Drum sample");
+                safe->assignSample (lane, fc.getResult());
+            });
+        }
+        else if (r == 2)
+        {
+            safe->doc.undo().beginNewTransaction ("Built-in drum sound");
+            drums::setSamplePath (safe->drums, lane, {}, &safe->doc.undo());
+        }
+        else if (r == 3) safe->loadKitFolder();
+        else if (r == 4)
+        {
+            safe->doc.undo().beginNewTransaction ("Built-in drum kit");
+            for (int p = 0; p < drums::numPieces; ++p) drums::setSamplePath (safe->drums, p, {}, &safe->doc.undo());
+        }
+    });
+}
+
+void DrumPage::assignSample (int piece, const juce::File& file)
+{
+    auto probe = loadSampleFile (file, 44100.0);
+    if (probe == nullptr) { message ("Drum sample", "Could not read " + file.getFileName() + " as audio."); return; }
+    project::Bundle::createStructure (doc.mediaBundle());
+    auto dir = kitFolder();
+    dir.createDirectory();
+    auto dst = dir.getChildFile (juce::File::createLegalFileName (juce::String (drums::pieceInfo (piece).name) + " - " + file.getFileName()));
+    if (dst != file && ! file.copyFileTo (dst)) { message ("Drum sample", "Could not copy " + file.getFileName() + " into the project."); return; }
+    drums::setSamplePath (drums, piece, project::Bundle::toPortablePath (doc.mediaBundle(), dst), &doc.undo());
+}
+
+void DrumPage::loadKitFolder()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Choose a folder of drum samples", juce::File::getSpecialLocation (juce::File::userMusicDirectory));
+    juce::Component::SafePointer<DrumPage> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [safe] (const juce::FileChooser& fc) {
+        if (safe == nullptr || ! fc.getResult().isDirectory()) return;
+        std::array<juce::File, drums::numPieces> chosen;
+        juce::StringArray unknown;
+        for (const auto& entry : juce::RangedDirectoryIterator (fc.getResult(), true, "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3"))
+        {
+            const int piece = drums::pieceForSampleName (entry.getFile().getFileName());
+            if (piece < 0) { unknown.add (entry.getFile().getFileName()); continue; }
+            if (chosen[(size_t) piece] == juce::File()) chosen[(size_t) piece] = entry.getFile();
+        }
+        safe->doc.undo().beginNewTransaction ("Load drum kit");
+        juce::StringArray mapped;
+        for (int p = 0; p < drums::numPieces; ++p)
+            if (chosen[(size_t) p] != juce::File())
+            {
+                safe->assignSample (p, chosen[(size_t) p]);
+                mapped.add (juce::String (drums::pieceInfo (p).name) + " = " + chosen[(size_t) p].getFileName());
+            }
+        juce::String msg = mapped.isEmpty() ? juce::String ("No file names matched a kit piece (use names like kick, snare, hihat open, tom 1, ride bell...).")
+                                            : "Loaded " + juce::String (mapped.size()) + " sounds:\n" + mapped.joinIntoString ("\n");
+        if (! unknown.isEmpty())
+            msg << "\n\nNot recognised (" << unknown.size() << "): " << unknown.joinIntoString (", ").substring (0, 400)
+                << "\nRight-click a drum name to assign a file by hand.";
+        safe->message ("Drum kit", msg);
+    });
 }
 
 void DrumPage::message (const juce::String& title, const juce::String& text)

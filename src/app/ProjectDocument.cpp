@@ -121,12 +121,18 @@ juce::Result ProjectDocument::saveTo (const juce::File& dirIn)
 juce::Result ProjectDocument::copyMediaTo (const juce::File& newBundle)
 {
     // Every clip file referenced by the project is copied so the new bundle is self-contained.
-    juce::StringArray done;
+    juce::StringArray done, files;
     const auto from = mediaBundle();
     for (const auto& track : root.getChildWithName (ids::TRACKS))
         for (const auto& clip : track)
+            files.add (clip["file"].toString());
+    // drum kit samples (DRUMS/KIT sampleN properties)
+    const auto kit = root.getChildWithName ("DRUMS").getChildWithName ("KIT");
+    for (int i = 0; i < kit.getNumProperties(); ++i)
+        files.add (kit[kit.getPropertyName (i)].toString());
+    for (const auto& rel0 : files)
         {
-            const auto rel = clip["file"].toString();
+            const auto rel = rel0;
             if (rel.isEmpty() || done.contains (rel))
                 continue;
             done.add (rel);

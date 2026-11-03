@@ -73,6 +73,14 @@ float DrumSynth::noise() noexcept
     return (float) (rng & 0xffffff) / 8388608.0f - 1.0f;
 }
 
+void DrumSynth::setSample (int piece, const juce::AudioBuffer<float>* sample) noexcept
+{
+    if (! juce::isPositiveAndBelow (piece, maxPieces)) return;
+    for (auto& v : voices)
+        if (v.active && v.piece == piece) v.active = false;
+    samples[(size_t) piece] = sample;
+}
+
 void DrumSynth::allNotesOff() noexcept
 {
     for (auto& v : voices)
@@ -111,6 +119,8 @@ void DrumSynth::trigger (int piece, float velocity) noexcept
     v.vel = juce::jlimit (0.02f, 1.0f, velocity);
     v.order = ++counter;
     v.length = decayOf (piece) * 7.0 + 0.02;
+    v.sample = samples[(size_t) piece];
+    if (v.sample != nullptr) v.length = (double) v.sample->getNumSamples() / sr + 0.001;
     const float pan = pieceInfo (piece).pan;
     const float a = (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
     v.gainL = std::cos (a) * 1.41f;
@@ -251,6 +261,30 @@ void DrumSynth::render (float* left, float* right, int n) noexcept
         for (auto& v : voices)
         {
             if (! v.active) continue;
+            if (v.sample != nullptr)
+            {
+                const auto* buf = v.sample;
+                const int total = buf->getNumSamples();
+                const float* l = buf->getReadPointer (0);
+                const float* r = buf->getReadPointer (buf->getNumChannels() > 1 ? 1 : 0);
+                const bool stereo = buf->getNumChannels() > 1;
+                const float g = vol * std::pow (v.vel, 1.5f) * 0.9f;
+                for (int i = 0; i < len; ++i)
+                {
+                    if (v.samplePos >= total) { v.active = false; break; }
+                    float c = g;
+                    if (v.chokeRate > 0.0f)
+                    {
+                        v.choke -= v.chokeRate;
+                        if (v.choke <= 0.0f) { v.active = false; break; }
+                        c *= v.choke;
+                    }
+                    if (stereo) { bl[i] += l[v.samplePos] * c; br[i] += r[v.samplePos] * c; }
+                    else { bl[i] += l[v.samplePos] * c * v.gainL; br[i] += l[v.samplePos] * c * v.gainR; }
+                    ++v.samplePos;
+                }
+                continue;
+            }
             for (int i = 0; i < len; ++i)
             {
                 float s = sample (v) * vol;
@@ -281,7 +315,7 @@ void DrumSynth::render (float* left, float* right, int n) noexcept
 }
 
 void DrumSynth::renderOffline (const std::vector<DrumHit>& hits, double sampleRate, double lengthSec, float volume,
-                               juce::AudioBuffer<float>& out)
+                               juce::AudioBuffer<float>& out, const SampleSet* sampleSet)
 {
     const int total = (int) std::ceil (juce::jmax (0.0, lengthSec) * sampleRate);
     out.setSize (2, total);
@@ -289,6 +323,8 @@ void DrumSynth::renderOffline (const std::vector<DrumHit>& hits, double sampleRa
     DrumSynth s;
     s.prepare (sampleRate);
     s.volume = volume;
+    if (sampleSet != nullptr)
+        for (int i = 0; i < maxPieces; ++i) s.setSample (i, (*sampleSet)[(size_t) i]);
     size_t next = 0;
     int pos = 0;
     while (pos < total)

@@ -19,6 +19,8 @@ public:
     juce::ValueTree pattern() const { return pat; }
     void setPlayheadQ (double q) { if (std::abs (q - playQ) > 1.0e-4) { playQ = q; repaint(); } }
     void updateSize (int visibleWidth);
+    std::function<void (int lane)> onLaneMenu;       // right-click on a lane name
+    std::function<bool (int lane)> laneHasSample;
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -105,6 +107,19 @@ private:
                      lessButton { "x-" }, moreButton { "x+" };
     juce::Label songLabel, status;
     std::unique_ptr<juce::FileChooser> chooser;
+
+    std::array<juce::String, drums::numPieces> loadedPaths;
+    double loadedRate = 0.0;
+    bool kitDirty = true;
+    void reloadKit (bool force);
+    void showLaneMenu (int lane);
+    void assignSample (int piece, const juce::File& file);
+    void loadKitFolder();
+    juce::File kitFolder() const { return doc.mediaBundle().getChildFile ("Audio").getChildFile ("DrumKit"); }
+public:
+    /** Reads an audio file into memory at `sampleRate` (resampled if needed, max 2 channels, max 10 s). */
+    static std::unique_ptr<juce::AudioBuffer<float>> loadSampleFile (const juce::File&, double sampleRate);
+private:
 
     juce::ValueTree current() const;
     void refresh();

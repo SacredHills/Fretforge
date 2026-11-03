@@ -22,7 +22,7 @@ namespace ids
     FF_DRUM_ID (DRUMS) FF_DRUM_ID (PATTERNS) FF_DRUM_ID (PATTERN) FF_DRUM_ID (HIT) FF_DRUM_ID (SONG) FF_DRUM_ID (SECTION)
     FF_DRUM_ID (id) FF_DRUM_ID (name) FF_DRUM_ID (tsNum) FF_DRUM_ID (tsDen) FF_DRUM_ID (bars) FF_DRUM_ID (grid) FF_DRUM_ID (swing)
     FF_DRUM_ID (lane) FF_DRUM_ID (tick) FF_DRUM_ID (vel) FF_DRUM_ID (pattern) FF_DRUM_ID (repeats)
-    FF_DRUM_ID (humanizeMs) FF_DRUM_ID (humanizeVel) FF_DRUM_ID (volume) FF_DRUM_ID (selected)
+    FF_DRUM_ID (humanizeMs) FF_DRUM_ID (humanizeVel) FF_DRUM_ID (volume) FF_DRUM_ID (selected) FF_DRUM_ID (KIT)
     #undef FF_DRUM_ID
 }
 
@@ -55,6 +55,13 @@ juce::ValueTree patternById (const juce::ValueTree& drums, const juce::String& i
 juce::ValueTree makePattern (const juce::String& name, int tsNum, int tsDen, int bars, int grid);
 juce::ValueTree addPattern (juce::ValueTree drums, const juce::String& name, int tsNum, int tsDen, int bars, juce::UndoManager*);
 juce::ValueTree addSection (juce::ValueTree drums, const juce::String& patternId, int repeats, int index, juce::UndoManager*);
+
+// ---- sample kit ----
+/** Project-relative path of the sample used for a piece ("" = built-in synthesized sound). Stored in DRUMS/KIT. */
+juce::String samplePath (const juce::ValueTree& drums, int piece);
+void setSamplePath (juce::ValueTree drums, int piece, const juce::String& relativePath, juce::UndoManager*);
+/** Guesses the kit piece from a sample's file name ("Kick_01.wav", "HH open.wav", "Tom 3", "Ride bell" ...); -1 if unknown. */
+int pieceForSampleName (const juce::String& fileName);
 
 // ---- pattern helpers ----
 int barTicks (const juce::ValueTree& pattern);

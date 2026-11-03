@@ -110,6 +110,64 @@ juce::ValueTree addSection (juce::ValueTree d, const juce::String& patternId, in
     return s;
 }
 
+// ------------------------------------------------------------------ sample kit
+
+namespace
+{
+juce::Identifier sampleId (int piece) { return juce::Identifier ("sample" + juce::String (piece)); }
+}
+
+juce::String samplePath (const juce::ValueTree& d, int piece)
+{
+    return d.getChildWithName (ids::KIT)[sampleId (piece)].toString();
+}
+
+void setSamplePath (juce::ValueTree d, int piece, const juce::String& rel, juce::UndoManager* um)
+{
+    auto kit = d.getChildWithName (ids::KIT);
+    if (! kit.isValid())
+    {
+        kit = juce::ValueTree (ids::KIT);
+        d.appendChild (kit, um);
+    }
+    if (rel.isEmpty()) kit.removeProperty (sampleId (piece), um);
+    else kit.setProperty (sampleId (piece), rel, um);
+}
+
+int pieceForSampleName (const juce::String& fileName)
+{
+    const auto n = " " + juce::File::createFileWithoutCheckingPath (fileName).getFileNameWithoutExtension().toLowerCase()
+                             .replaceCharacters ("_-.()[]", "       ") + " ";
+    auto has = [&] (const char* w) { return n.contains (w); };
+    auto word = [&] (const char* w) { return n.contains (juce::String (" ") + w + " "); };
+    if (has ("ride") && has ("bell")) return rideBell;
+    if (has ("ride")) return ride;
+    if (has ("china")) return china;
+    if (has ("splash")) return splash;
+    if (has ("crash")) return (has ("crash2") || has ("crash 2") || word ("b") || has ("crash right")) ? crash2 : crash;
+    if (has ("cowbell") || has ("cow bell")) return cowbell;
+    if (has ("clap")) return clap;
+    if (has ("side") || has ("xstick") || has ("cross") || word ("stick") || word ("rim")) return sideStick;
+    if (has ("snare") || word ("snr") || word ("sd") || has ("rimshot")) return snare;
+    if (has ("hat") || word ("hh") || has ("hihat"))
+    {
+        if (has ("open") || word ("opn") || word ("oh")) return hhOpen;
+        if (has ("pedal") || has ("foot") || word ("ped") || word ("chick")) return hhPedal;
+        return hhClosed;
+    }
+    if (has ("kick") || has ("kik") || word ("bd") || has ("bass drum") || has ("bassdrum"))
+        return (word ("2") || word ("b")) ? kick2 : kick;
+    if (has ("floor") || has ("ftom")) return tomFloor;
+    if (has ("tom"))
+    {
+        if (has ("high") || word ("hi") || word ("1")) return tomHigh;
+        if (has ("low") || word ("lo") || word ("3")) return tomLow;
+        if (word ("4")) return tomFloor;
+        return tomMid;
+    }
+    return -1;
+}
+
 // ------------------------------------------------------------------ pattern helpers
 
 int barTicks (const juce::ValueTree& p)

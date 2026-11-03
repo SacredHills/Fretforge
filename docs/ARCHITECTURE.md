@@ -100,7 +100,7 @@ Extension points for later: content packs (drum kits, IR packs, lesson plans as 
 | 1 | Foundation: shell, project system, device config, engine, metronome, tuner | **Done** |
 | 2 | Recording studio: tracks, recording, playback, waveforms, timeline, editing, mixer, export | **Done** (comping lanes, time-stretch, tempo map, automation still to come) |
 | 3 | Tab system: editor, notation, playback, MIDI, Guitar Pro import, PDF | **Done**: editor, techniques, synth playback, standard notation, Guitar Pro 3-7 and MusicXML import, MusicXML/MIDI/PDF export, tempo/key changes, chords, lyrics, MIDI-keyboard entry. Open: grace notes, multiple voices, repeat signs kept as signs |
-| 4 | Drum studio: sequencer, piano roll, drum instruments, generator, arrangement | **Part 1 done**: grid sequencer, velocity, swing, humanize, 17-style generator, song arrangement, synthesized kit, MIDI I/O, render to audio. Open: sample kits, piano roll, articulations |
+| 4 | Drum studio: sequencer, piano roll, drum instruments, generator, arrangement | **Done**: grid sequencer, velocity, swing, humanize, 17-style generator, song arrangement, synthesized and sample kits, MIDI song import/export, Guitar Pro drum import, tab play-along, render to audio. Open: piano roll, articulations, velocity layers |
 | 5 | Effects & amps: built-ins, amp/cab sim, IRs, plugin hosting | Planned |
 | 6 | Training centre: exercise generator, lessons, progressive practice, stats | Planned |
 | 7 | Theory, songwriting, analysis, assistance, mastering | Planned |
@@ -204,3 +204,16 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
   square oscillators for metal), with hi-hat choke groups, velocity and constant-power pan. Drum hits travel in the same
   `TabSequence` snapshot as tab notes, so the engine's score mode renders guitars and drums sample-accurately with no
   locks; `renderOffline` produces the audio for "Render to Studio".
+
+## 13. Milestone 4 design notes (part 2)
+
+- **Whole-song import:** `drums::arrangeBars` turns a bar sequence into patterns: at each bar it picks the 1/2/4/8-bar
+  phrase that covers the most bars by repeating (shortest wins ties), identical phrases anywhere share a pattern, and
+  sections with repeats are appended to the song. MIDI import and Guitar Pro drum tracks both use it.
+- **Guitar Pro drums:** GP3-5 store the MIDI drum note in the fret field; GP7 maps a note's InstrumentArticulation to
+  the track's articulation table (OutputMidiNumber); GP6 uses element/variation numbers mapped to General MIDI.
+- **Sample kits:** `DRUMS/KIT` holds a project-relative path per piece (files copied to `Audio/DrumKit`, and copied on
+  Save As). The message thread decodes and resamples to the device rate, hands the buffer to the audio thread through a
+  lock-free FIFO; the audio thread stops that piece's voices, swaps the pointer and returns the old buffer through a
+  second FIFO to be freed on the message thread — no locks or allocation on the audio thread.
+- **Play-along:** `addDrumSong` adds the drum song to the tab `TabSequence`, timed through the score's tempo map.

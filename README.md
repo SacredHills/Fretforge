@@ -4,7 +4,7 @@ A cross-platform guitar workstation (DAW + tab editor + drum studio + training c
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technology evaluation, architecture, audio-engine design,
 project format, plugin system, milestone plan, risks and licensing.
 
-## Status: Milestone 4 (part 1) — Drum Studio (working)
+## Status: Milestone 4 — Drum Studio (working)
 
 | Area | What works now |
 |---|---|
@@ -13,11 +13,12 @@ project format, plugin system, milestone plan, risks and licensing.
 | Generator | 17 styles: rock, hard rock, pop, punk, funk, blues shuffle, reggae one-drop, jazz swing, metal, thrash, d-beat, doom, death metal, black metal, blast beats (traditional / hammer / bomb), double-bass gallop, djent 3-over-4; half-time, complexity, fill, crash on 1; each click gives a new variation |
 | Humanize | Timing (ms) and velocity (%) variation, identical on every playback |
 | Song | Arrange patterns into sections with repeats; reorder; play the song with a moving playhead |
-| Sound | Built-in synthesized kit (no samples needed; hi-hat choke, velocity, stereo placement); click follows the pattern meter |
+| Sound | Built-in synthesized kit (no samples needed; hi-hat choke, velocity, stereo placement), or your own samples: right-click a drum name to load a sample, or load a whole kit folder (files matched by name: kick, snare, hihat open, tom 2, ride bell...); samples are copied into the project |
+| Play-along | Guitar Tabs "Drums" button plays the drum song with the tab, following the score's tempo changes and practice speed; Guitar Pro drum tracks are imported into the Drum Studio automatically |
 | Output | MIDI export (pattern or song, General MIDI drums); MIDI import of whole drum songs of any length (repeating phrases become patterns, arranged as song sections, meter changes followed, tempo adopted); render the song to an audio track in the Studio |
 
-**Not yet in Milestone 4:** sample-based kits (load your own drum samples), a piano roll for melodic MIDI, flams/drags and
-cymbal chokes as articulations, drum tracks inside the tab editor (and Guitar Pro drum tracks), tempo changes inside a drum song.
+**Not yet in Milestone 4:** a piano roll for melodic MIDI, flams/drags and cymbal chokes as articulations, velocity layers
+and round-robin in sample kits, tempo changes inside a drum song (in Guitar Tabs the drums follow the score's tempo).
 
 ## Milestone 3 — Guitar tab editor (working)
 

@@ -26,9 +26,16 @@ public:
     int activeVoices() const noexcept;
     float volume = 0.8f;
 
-    /** Renders hits offline (for "render to audio track" and tests). */
+    static constexpr int maxPieces = 32;
+    using SampleSet = std::array<const juce::AudioBuffer<float>*, maxPieces>;
+    /** Uses a sample (already at the synth's sample rate; mono or stereo) for a piece, or nullptr for the built-in
+        sound. Call on the audio thread (or before rendering): voices of that piece stop, the caller owns the buffer
+        and must keep it alive until it is replaced. */
+    void setSample (int piece, const juce::AudioBuffer<float>* sample) noexcept;
+
+    /** Renders hits offline (for "render to audio track" and tests), optionally with samples. */
     static void renderOffline (const std::vector<DrumHit>& hits, double sampleRate, double lengthSec, float volume,
-                               juce::AudioBuffer<float>& out);
+                               juce::AudioBuffer<float>& out, const SampleSet* samples = nullptr);
 
 private:
     struct Svf
@@ -49,11 +56,14 @@ private:
         double sinePhase = 0, sinePhase2 = 0;
         Svf f1, f2;
         juce::uint32 order = 0;
+        const juce::AudioBuffer<float>* sample = nullptr;
+        int samplePos = 0;
     };
 
     double sr = 48000.0;
     std::array<Voice, 40> voices;
     juce::uint32 counter = 0, rng = 0x2545F491u;
+    SampleSet samples {};
 
     float noise() noexcept;
     float sample (Voice&) noexcept;
