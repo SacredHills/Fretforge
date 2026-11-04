@@ -7,6 +7,11 @@ namespace ff
 {
 using namespace timeline;
 
+int trackLatency (const PlayTrack& t) noexcept
+{
+    return (t.rig != nullptr ? t.rig->totalLatency() : 0) + (t.inserts != nullptr ? t.inserts->latency() : 0);
+}
+
 void panGains (float pan, float gain, float& left, float& right) noexcept
 {
     const float theta = (juce::jlimit (-1.0f, 1.0f, pan) + 1.0f) * juce::MathConstants<float>::pi * 0.25f;

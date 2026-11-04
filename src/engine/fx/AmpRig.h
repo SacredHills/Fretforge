@@ -67,7 +67,9 @@ public:
     std::atomic<bool> modelActive { false };                 // a NAM model is processing
     std::atomic<bool> modelNeedsPrepare { false };           // a model arrived prepared for another device rate
     std::atomic<bool> irActive { false };
-    std::atomic<int> latency { 0 };                          // samples added by the rig (NAM resampling)
+    std::atomic<int> latency { 0 };                          // samples added by NAM resampling
+    /** Everything the rig delays the sound by: NAM resampling + plugins that are switched on. Audio thread. */
+    int totalLatency() const noexcept;
 
 private:
     std::atomic<double> preparedRate { 0.0 };

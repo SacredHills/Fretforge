@@ -6,6 +6,8 @@ project format, plugin system, milestone plan, risks and licensing.
 
 ## Status: Milestone 5 — Effects & Amps with Neural Amp Modeler and plugin hosting (working)
 
+**Studio:** "Follow" (scroll with the playhead, on by default) and "Slice" (click a clip to cut it at the mouse, snapped; Alt = no snap; Esc leaves) buttons in the Studio toolbar.
+
 **Track plugins (new):** every track can have up to 8 insert plugins after its NAM amp and before the fader: the
 Mixer strips have a "+ Plugin" row (click a plugin to open it, right-click to bypass / move / replace / remove), and the
 Studio track menu has "Add plugin..." and the track's plugins. Exports include them.
@@ -20,7 +22,7 @@ the Effects page) scans for them in a separate process, so a plugin that crashes
 down; it is just listed as failed. Click the "+ Plugin" tile at the end of a rig's chain to add one (up to four per rig);
 drag its tile to move it anywhere in the chain, click its lamp to bypass it, "Open plugin window" shows its own editor.
 Plugin settings are saved with the project (and with the live rig and rig presets), and exports render them.
-Plugin latency is not compensated yet; instruments are not listed (effects only).
+Plugin latency is compensated on playback and in exports (each track's clips are read ahead by its amp + plugin latency); live monitoring through a plugin still hears its latency, as in any DAW. Instruments are not listed (effects only).
 
 **Latest changes:** the transport bar is centred and has a live tuner readout (click it for the tuner window);
 right-click the click button (or Transport > Metronome...) for the metronome window — the Tools section is gone.

@@ -87,6 +87,9 @@ private:
     ArrangeView& owner;
     enum class Mode { none, move, trimLeft, trimRight, fadeIn, fadeOut, marquee };
     juce::Rectangle<int> marqueeRect;
+    float sliceX = -1.0f;   // slice tool: where the cut would go (hover)
+    void mouseExit (const juce::MouseEvent&) override { sliceX = -1.0f; repaint(); }
+    bool keyPressed (const juce::KeyPress& k) override;
     struct Orig { juce::ValueTree clip; double start, length, offset, fadeIn, fadeOut; int track; };
     Mode mode = Mode::none;
     std::vector<Orig> originals;
@@ -179,7 +182,13 @@ private:
     juce::OwnedArray<TrackHeader> headers;
     juce::ScrollBar hScroll { false }, vScroll { true };
     juce::TextButton addTrackButton { "+ Track" }, importButton { "Import" }, zoomInButton { "+" }, zoomOutButton { "-" },
-        fitButton { "Fit" };
+        fitButton { "Fit" }, followButton { "Follow" }, sliceButton { "Slice" };
+public:
+    bool sliceMode() const { return sliceButton.getToggleState(); }
+    void setSliceMode (bool on) { sliceButton.setToggleState (on, juce::sendNotificationSync); }
+    /** Splits the clips at time t (seconds). */
+    void splitClipsAt (const juce::Array<juce::ValueTree>& clips, double t);
+private:
     juce::ComboBox snapCombo;
     juce::Label snapLabel;
     juce::ValueTree root;

@@ -28,6 +28,8 @@ public:
     std::array<std::atomic<bool>, maxSlots> bypass {};
 
     void process (float* left, float* right, int numSamples) noexcept;
+    /** Sum of the latencies of the plugins in the order that are not bypassed. Audio thread. */
+    int latency() const noexcept;
 
 private:
     struct Slot

@@ -585,6 +585,86 @@ struct AmpRigTests : juce::UnitTest
             dir.deleteRecursively();
         }
 
+        beginTest ("plugin delay compensation: a resampled NAM model stays in time (export and live playback)");
+        {
+            const double rate = 44100.0;   // identity model trained at 48 kHz -> resampling latency
+            auto dir = tempFile ("pdc.ffproj");
+            dir.deleteRecursively();
+            project::Bundle::createStructure (dir);
+            auto wav = dir.getChildFile ("Audio/click.wav");
+            {
+                juce::AudioBuffer<float> b (1, 44100);
+                b.clear();
+                b.setSample (0, 22050, 1.0f);
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::OutputStream> os (wav.createOutputStream().release());
+                std::unique_ptr<juce::AudioFormatWriter> w (fmt.createWriterFor (os.get(), rate, 1, 32, {}, 0));
+                os.release();
+                w->writeFromAudioSampleBuffer (b, 0, 44100);
+            }
+            auto projectTree = project::createDefault ("T");
+            auto tracks = projectTree.getChildWithName (project::ids::TRACKS);
+            auto t = tl::createTrack ("Gtr", 0);
+            tracks.appendChild (t, nullptr);
+            auto c = tl::createClip ("Audio/click.wav", "c", 0.0, 1.0, 0.0);
+            c.setProperty (tl::ids::fadeIn, 0.0, nullptr);
+            c.setProperty (tl::ids::fadeOut, 0.0, nullptr);
+            t.appendChild (c, nullptr);
+            auto rigTree = rg::getOrCreate (t);
+            rigTree.setProperty (rg::ids::enabled, true, nullptr);
+            for (int b = 0; b < rg::numBlocks; ++b) rg::set (rigTree, rg::switchFor (b), 0.0f);
+            rg::set (rigTree, rg::ampOn, 1.0f);
+            rg::set (rigTree, rg::namNormalize, 0.0f);
+            rigTree.setProperty (rg::ids::namFile, writeLinearModel ("pdc-identity.nam", { 1.0f }).getFullPathName(), nullptr);
+
+            auto peakIndex = [] (const float* x, int n) {
+                int at = 0; float best = 0;
+                for (int i = 0; i < n; ++i) if (std::abs (x[i]) > best) { best = std::abs (x[i]); at = i; }
+                return at;
+            };
+
+            AudioCache cache;
+            ExportSettings s;
+            s.sampleRate = rate;
+            s.bitDepth = 32;
+            s.endSec = 1.0;
+            s.destination = tempFile ("pdc.wav");
+            auto res = exportAudio (tracks, dir, cache, s);
+            expect (res.result.wasOk(), res.result.getErrorMessage());
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (s.destination));
+            juce::AudioBuffer<float> out (2, 44100);
+            rd->read (&out, 0, 44100, 0, true, true);
+            expect (std::abs (peakIndex (out.getReadPointer (0), 44100) - 22050) <= 1, "export: click at "
+                    + juce::String (peakIndex (out.getReadPointer (0), 44100)));
+
+            // live playback through the engine
+            AudioEngine e;
+            e.prepare (rate, 256);
+            auto liveRig = fx::makeOfflineRig (rigTree, rate, 256, res.warnings);
+            expectGreaterThan (liveRig->totalLatency(), 10);
+            GraphBuildOptions o;
+            o.sampleRate = rate;
+            o.waitForAudio = true;
+            o.rigFor = [&] (const juce::ValueTree&) { return liveRig; };
+            e.submitGraph (buildPlaybackGraph (tracks, dir, cache, o));
+            e.play();
+            std::vector<float> captured, l (256), r (256);
+            for (int b = 0; b < 44100 / 256; ++b)
+            {
+                float* outs[2] = { l.data(), r.data() };
+                e.process (nullptr, 0, outs, 2, 256);
+                captured.insert (captured.end(), l.begin(), l.end());
+            }
+            e.stop();
+            const int at = peakIndex (captured.data(), (int) captured.size());
+            logMessage ("  rig latency " + juce::String (liveRig->totalLatency()) + " samples; click at " + juce::String (at) + " (clip has it at 22050)");
+            expect (std::abs (at - 22050) <= 1, "live: click at " + juce::String (at));
+            e.collectGarbage();
+            dir.deleteRecursively();
+        }
+
         beginTest ("rig bank follows the project tree");
         {
             AudioEngine e;

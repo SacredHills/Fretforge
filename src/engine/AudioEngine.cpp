@@ -289,7 +289,20 @@ void AudioEngine::renderSegment (const float* const* inputs, int numInputs, floa
         juce::FloatVectorOperations::clear (sR, len);
 
         if (rolling)
-            renderTrackClips (t, pos, len, sL, sR);
+        {
+            // plugin delay compensation: read the clips ahead by the track's latency (wrapping at the loop end)
+            const juce::int64 from = pos + trackLatency (t);
+            if (segLooping && from >= segLoopEnd)
+                renderTrackClips (t, segLoopStart + (from - segLoopEnd) % juce::jmax ((juce::int64) 1, segLoopEnd - segLoopStart), len, sL, sR);
+            else if (segLooping && from + len > segLoopEnd)
+            {
+                const int first = (int) (segLoopEnd - from);
+                renderTrackClips (t, from, first, sL, sR);
+                renderTrackClips (t, segLoopStart, len - first, sL + first, sR + first);
+            }
+            else
+                renderTrackClips (t, from, len, sL, sR);
+        }
 
         const float* inL = input (t.inputLeft);
         const float* inR = t.inputRight >= 0 ? input (t.inputRight) : inL;
@@ -452,6 +465,9 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
             closeRecordSegments();
         wasRecording = recordingNow;
 
+        segLoopStart = loopS;
+        segLoopEnd = loopE;
+        segLooping = looping;
         renderSegment (inputs, numInputs, bus, numBus, done, len, playing && ! tab, recordingNow && ! tab);
         if (tab)
             renderTab (bus, numBus, done, len);

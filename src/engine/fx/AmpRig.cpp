@@ -291,6 +291,15 @@ std::shared_ptr<juce::AudioPluginInstance> AmpRig::setPlugin (int slot, std::sha
     return old;
 }
 
+int AmpRig::totalLatency() const noexcept
+{
+    int l = latency.load (std::memory_order_relaxed);
+    for (int sl = 0; sl < rig::numPluginSlots; ++sl)
+        if (auto* p = pluginSlots[(size_t) sl].active.load (std::memory_order_acquire))
+            if (getParam (switchFor (plug1 + sl)) >= 0.5f) l += juce::jmax (0, p->getLatencySamples());
+    return l;
+}
+
 std::shared_ptr<juce::AudioPluginInstance> AmpRig::getPlugin (int slot) const
 {
     return juce::isPositiveAndBelow (slot, rig::numPluginSlots) ? pluginSlots[(size_t) slot].owner : nullptr;

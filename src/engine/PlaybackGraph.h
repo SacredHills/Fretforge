@@ -56,6 +56,10 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
 /** Adds one track's clips for timeline range [t0, t0+n) into L/R (does not clear). Real-time safe. */
 void renderTrackClips (const PlayTrack& track, juce::int64 t0, int n, float* left, float* right) noexcept;
 
+/** Samples the track's rig and inserts delay its sound by (audio thread). Playback reads the track's clips that much
+    earlier, so recorded audio stays in time with the other tracks (live monitoring cannot be compensated). */
+int trackLatency (const PlayTrack&) noexcept;
+
 /** Constant-power pan with unity at centre. */
 void panGains (float pan, float gain, float& left, float& right) noexcept;
 } // namespace ff

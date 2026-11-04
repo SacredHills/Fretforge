@@ -649,6 +649,14 @@ void TimelineCanvas::paint (juce::Graphics& g)
         g.drawRect (marqueeRect, 1);
     }
 
+    // slice tool: where the cut goes
+    if (owner.sliceMode() && sliceX >= 0.0f)
+    {
+        g.setColour (juce::Colours::white.withAlpha (0.85f));
+        const float dashes[] = { 4.0f, 3.0f };
+        g.drawDashedLine ({ sliceX, 0.0f, sliceX, (float) getHeight() }, dashes, 2, 1.5f);
+    }
+
     // playhead
     g.setColour (e.isRecordingActive() ? palette::bad : palette::accent);
     g.drawVerticalLine ((int) geo.xFor (owner.playhead()), 0.0f, (float) getHeight());
@@ -709,6 +717,22 @@ void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
             showLaneMenu (ti, owner.geo.timeFor (p.x));
         }
         owner.repaintAll();
+        return;
+    }
+
+    if (owner.sliceMode())
+    {
+        // slice tool: cut the clip under the mouse (and the other selected clips under that time) at the click
+        if (clip.isValid())
+        {
+            const double t = owner.geo.snap (owner.geo.timeFor (p.x), ! e.mods.isAltDown());
+            juce::Array<juce::ValueTree> targets { clip };
+            if (owner.selection.contains (clip))
+                for (auto& c : owner.selection)
+                    if (c != clip && t > prop (c, ids::start) + 0.001 && t < clipEnd (c) - 0.001) targets.add (c);
+            if (t > prop (clip, ids::start) + 0.001 && t < clipEnd (clip) - 0.001) owner.splitClipsAt (targets, t);
+        }
+        mode = Mode::none;
         return;
     }
 
@@ -882,9 +906,23 @@ void TimelineCanvas::mouseUp (const juce::MouseEvent& e)
     originals.clear();
 }
 
+bool TimelineCanvas::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::escapeKey && owner.sliceMode()) { owner.setSliceMode (false); return true; }
+    return false;
+}
+
 void TimelineCanvas::mouseMove (const juce::MouseEvent& e)
 {
     auto clip = clipAt (owner, e.position);
+    if (owner.sliceMode())
+    {
+        sliceX = clip.isValid() ? owner.geo.xFor (owner.geo.snap (owner.geo.timeFor (e.position.x), ! e.mods.isAltDown())) : -1.0f;
+        setMouseCursor (juce::MouseCursor::IBeamCursor);
+        repaint();
+        return;
+    }
+    if (sliceX >= 0.0f) { sliceX = -1.0f; repaint(); }
     auto newCursor = juce::MouseCursor::NormalCursor;
     if (clip.isValid())
     {
@@ -1062,6 +1100,20 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
     snapLabel.setText ("Snap", juce::dontSendNotification);
     styleLabel (snapLabel, 12.0f, palette::textDim, true);
     addAndMakeVisible (snapLabel);
+
+    followButton.setClickingTogglesState (true);
+    followButton.setToggleState (settings.getBoolValue ("studioFollow", true), juce::dontSendNotification);
+    followButton.setTooltip ("Follow: the view scrolls along with the playhead while playing");
+    followButton.onClick = [this] { settings.setValue ("studioFollow", followButton.getToggleState()); };
+    sliceButton.setClickingTogglesState (true);
+    sliceButton.setTooltip ("Slice: click a clip to cut it there (snaps to the grid; hold Alt for no snap). "
+                            "Click Slice again (or press Esc) to go back to normal editing.");
+    sliceButton.onClick = [this] { canvas.setMouseCursor (sliceMode() ? juce::MouseCursor::IBeamCursor : juce::MouseCursor::NormalCursor); repaintAll(); };
+    for (auto* b : { &followButton, &sliceButton })
+    {
+        b->setWantsKeyboardFocus (false);
+        addAndMakeVisible (b);
+    }
     const std::pair<int, const char*> snaps[] = { { 1, "Off" }, { 2, "Bar" }, { 3, "1/2" }, { 4, "1/4 (beat)" }, { 5, "1/8" }, { 6, "1/16" } };
     for (auto& [id, n] : snaps) snapCombo.addItem (n, id);
     snapCombo.setSelectedId (settings.getIntValue ("arrangeSnap", 4), juce::dontSendNotification);
@@ -1203,7 +1255,7 @@ void ArrangeView::timerCallback()
     for (auto* h : headers)
         h->tickMeter();
 
-    if (host.engine.isPlaying())
+    if (host.engine.isPlaying() && followButton.getToggleState())
     {
         const double ph = playhead();
         const double viewSec = canvas.getWidth() / geo.pixelsPerSecond;
@@ -1269,6 +1321,10 @@ void ArrangeView::resized()
     tb.removeFromLeft (20);
     snapLabel.setBounds (tb.removeFromLeft (40));
     snapCombo.setBounds (tb.removeFromLeft (110));
+    tb.removeFromLeft (20);
+    sliceButton.setBounds (tb.removeFromLeft (64));
+    tb.removeFromLeft (6);
+    followButton.setBounds (tb.removeFromLeft (70));
     fitButton.setBounds (tb.removeFromRight (44));
     tb.removeFromRight (4);
     zoomInButton.setBounds (tb.removeFromRight (30));
@@ -1348,10 +1404,15 @@ void ArrangeView::splitAtPlayhead()
         for (auto tr : session.selectedTracks)
             for (auto c : tr)
                 if (c.hasType (ids::CLIP) && t > prop (c, ids::start) + 0.001 && t < clipEnd (c) - 0.001) targets.add (c);
+    splitClipsAt (targets, t);
+}
+
+void ArrangeView::splitClipsAt (const juce::Array<juce::ValueTree>& targets, double t)
+{
     if (targets.isEmpty()) return;
 
     doc.undo().beginNewTransaction ("Split");
-    for (auto& c : targets)
+    for (auto c : targets)
     {
         const double s = prop (c, ids::start), len = prop (c, ids::length);
         auto right = c.createCopy();

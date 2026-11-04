@@ -135,7 +135,7 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
                 const auto& t = graph->tracks[(size_t) ti];
                 std::fill (l.begin(), l.begin() + n, 0.0f);
                 std::fill (r.begin(), r.begin() + n, 0.0f);
-                renderTrackClips (t, start + done, n, l.data(), r.data());
+                renderTrackClips (t, start + done + trackLatency (t), n, l.data(), r.data());   // delay compensation
                 if (t.rig != nullptr) t.rig->process (l.data(), r.data(), n);
                 if (t.inserts != nullptr) t.inserts->process (l.data(), r.data(), n);
                 out.addFrom (0, (int) done, l.data(), n, t.gainL);

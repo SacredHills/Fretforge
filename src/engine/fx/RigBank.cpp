@@ -92,6 +92,11 @@ std::shared_ptr<AmpRig> makeOfflineRig (const juce::ValueTree& t, double sr, int
         preparePlugin (*inst, sr, block);
         rig->setPlugin (slot, std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
     }
+    {
+        // take over the model now, so the rig reports its latency before the first rendered block
+        float z1[32] = {}, z2[32] = {};
+        rig->process (z1, z2, 32);
+    }
     rig->reset();
     return rig;
 }

@@ -168,6 +168,8 @@ private:
     SpscFifo<float> analysis;
 
     double beatsAt (juce::int64 samplePos) const noexcept;
+    juce::int64 segLoopStart = 0, segLoopEnd = 0;   // loop range of the segment being rendered (latency read-ahead wraps)
+    bool segLooping = false;
     void closeRecordSegments() noexcept;
     void renderSegment (const float* const* inputs, int numInputs, float* const* bus, int numBus,
                         int offset, int len, bool rolling, bool recordingNow) noexcept;

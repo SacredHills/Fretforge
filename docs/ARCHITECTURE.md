@@ -294,3 +294,6 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
   before fader and pan; exports build offline chains (`makeOfflineInserts`).
 - **Formats:** VST3, AU (macOS) and LV2 (JUCE's bundled lilv) are always built in. VST2 needs Steinberg's proprietary
   VST 2 SDK: `-DFF_VST2_SDK_DIR` enables `JUCE_PLUGINHOST_VST` for licence holders; it is never bundled.
+- **Delay compensation:** `trackLatency()` = rig latency (NAM resampling + active rig plugins) + active insert latencies,
+  read on the audio thread each block. Playback renders a track's clips that many samples ahead (wrapping at the loop end),
+  so the processed sound lines up with the timeline; exports do the same. Live input cannot be read ahead.

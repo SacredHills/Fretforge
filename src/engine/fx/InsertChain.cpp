@@ -35,6 +35,20 @@ void InsertChain::setOrder (const std::array<int, maxSlots>& o, int count) noexc
     order.store (v, std::memory_order_release);
 }
 
+int InsertChain::latency() const noexcept
+{
+    const auto v = order.load (std::memory_order_acquire);
+    const int count = (int) (v >> 56);
+    int l = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        const int slot = (int) ((v >> (4 * i)) & 0xf);
+        if (slot >= maxSlots || bypass[(size_t) slot].load (std::memory_order_relaxed)) continue;
+        if (auto* p = slots[(size_t) slot].active.load (std::memory_order_acquire)) l += juce::jmax (0, p->getLatencySamples());
+    }
+    return l;
+}
+
 void InsertChain::process (float* L, float* R, int n) noexcept
 {
     if (! isPreparedFor (sr) || maxBlock == 0) return;

@@ -578,7 +578,7 @@ void RigEditor::refreshAll()
         else if (ps.loaded)
         {
             text << "Running";
-            if (ps.latency > 0) text << ", latency " << ps.latency << " samples (not compensated)";
+            if (ps.latency > 0) text << ", latency " << ps.latency << " samples (compensated on playback)";
         }
         text << "\n" << d.fileOrIdentifier;
         pluginInfo.setText (text, juce::dontSendNotification);
