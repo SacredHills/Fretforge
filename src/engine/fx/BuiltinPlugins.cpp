@@ -3,6 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <cmath>
+#include <cstring>
 
 namespace ff::fx::builtin
 {
