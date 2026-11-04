@@ -29,6 +29,34 @@ struct ProjectFileTests : juce::UnitTest
             expect (r.warnings.isEmpty(), r.warnings.joinIntoString ("; "));
         }
 
+        beginTest ("a track's amp rig and plugins survive saving and loading");
+        {
+            auto p = createDefault ("Amp");
+            juce::ValueTree track ("TRACK");
+            track.setProperty ("id", "t-2", nullptr);
+            juce::ValueTree rig ("RIG");
+            rig.setProperty ("enabled", true, nullptr);
+            rig.setProperty ("namFile", "/x/amp.nam", nullptr);
+            juce::ValueTree plugin ("PLUGIN");
+            plugin.setProperty ("slot", 0, nullptr);
+            rig.appendChild (plugin, nullptr);
+            track.appendChild (rig, nullptr);
+            juce::ValueTree inserts ("INSERTS");
+            inserts.appendChild (plugin.createCopy(), nullptr);
+            track.appendChild (inserts, nullptr);
+            juce::ValueTree badClip ("CLIP");   // still repaired
+            track.appendChild (badClip, nullptr);
+            p.getChildWithName (ids::TRACKS).appendChild (track, nullptr);
+
+            auto r = parse (serialise (p));
+            const auto t = r.tree.getChildWithName (ids::TRACKS).getChild (0);
+            expect (t.getChildWithName ("RIG").isValid(), "the amp rig was dropped");
+            expectEquals (t.getChildWithName ("RIG")["namFile"].toString(), juce::String ("/x/amp.nam"));
+            expect (t.getChildWithName ("RIG").getChildWithName ("PLUGIN").isValid());
+            expect (t.getChildWithName ("INSERTS").getChildWithName ("PLUGIN").isValid());
+            expect (! t.getChildWithName ("CLIP").isValid(), "the broken clip is still removed");
+        }
+
         beginTest ("rejects garbage, foreign and future files");
         {
             expect (parse ("{ not json").result.failed());

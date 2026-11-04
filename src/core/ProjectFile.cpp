@@ -189,8 +189,9 @@ void validate (juce::ValueTree& root, juce::StringArray& warnings)
         for (int c = tr.getNumChildren(); --c >= 0;)
         {
             auto clip = tr.getChild (c);
+            if (! clip.hasType ("CLIP")) continue;   // other track children (amp rig, insert plugins) are kept as they are
             const double len = clip["length"];
-            if (! clip.hasType ("CLIP") || clip["file"].toString().isEmpty() || ! (len > 0.0) || (double) clip["start"] < 0.0)
+            if (clip["file"].toString().isEmpty() || ! (len > 0.0) || (double) clip["start"] < 0.0)
             {
                 tr.removeChild (c, nullptr);
                 warnings.add ("An invalid clip on track \"" + tr["name"].toString() + "\" was removed.");
