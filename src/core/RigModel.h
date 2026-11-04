@@ -20,6 +20,7 @@ namespace ids
     #define FF_RIG_ID(n) inline const juce::Identifier n { #n };
     FF_RIG_ID (RIG) FF_RIG_ID (enabled) FF_RIG_ID (order) FF_RIG_ID (namFile) FF_RIG_ID (irFile) FF_RIG_ID (rigName)
     FF_RIG_ID (input) FF_RIG_ID (PLUGIN) FF_RIG_ID (slot) FF_RIG_ID (desc) FF_RIG_ID (state) FF_RIG_ID (name)
+    FF_RIG_ID (INSERTS) FF_RIG_ID (bypass)
     #undef FF_RIG_ID
 }
 
@@ -94,6 +95,20 @@ void removePlugin (juce::ValueTree rig, int slot, juce::UndoManager* = nullptr);
 int freePluginSlot (const juce::ValueTree& rig);
 /** Chain label of a block: the plugin's name for an occupied plugin slot. */
 juce::String blockLabel (const juce::ValueTree& rig, int block);
+
+// ---- track inserts: plugins on a track after its amp rig, before the fader ----
+//   TRACK / INSERTS / PLUGIN {slot, desc, state, name, bypass}; slots play in order 0..maxInserts-1
+constexpr int maxInserts = 8;
+juce::ValueTree findInserts (const juce::ValueTree& track);
+juce::ValueTree insertNode (const juce::ValueTree& track, int slot);
+int numInserts (const juce::ValueTree& track);
+/** Adds a plugin after the last insert; returns its slot (-1 if the track is full). */
+int addInsert (juce::ValueTree track, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* = nullptr);
+void replaceInsert (juce::ValueTree track, int slot, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* = nullptr);
+/** Removes a slot; the ones after it move up. */
+void removeInsert (juce::ValueTree track, int slot, juce::UndoManager* = nullptr);
+/** Swaps a slot with its neighbour (direction -1 / +1). */
+void moveInsert (juce::ValueTree track, int slot, int direction, juce::UndoManager* = nullptr);
 
 // ---- presets ----
 /** All rig settings as JSON (a preset). Model and IR are stored as absolute paths. */

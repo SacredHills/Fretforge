@@ -125,6 +125,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     session->onOpenRig = [this] (juce::ValueTree t) { openRigWindow (t); };
     session->rigs().onPluginRemoved = [this] (juce::AudioPluginInstance* p) { if (pluginManager != nullptr) pluginManager->closeEditor (p); };
     effectsPage->setPluginManager (pluginManager.get());
+    session->plugins = pluginManager.get();
     transport->onOpenMetronome = [this] { openMetronome(); };
     session->onError = [this] (const juce::String& t, const juce::String& m) { showError (t, m); };
     host.onDeviceChanged = [this] {

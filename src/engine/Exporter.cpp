@@ -65,6 +65,7 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
         const auto r = rig::find (t);
         return rig::isEnabled (r) ? fx::makeOfflineRig (r, s.sampleRate, 4096, rigWarnings) : nullptr;
     };
+    opt.insertsFor = [&] (const juce::ValueTree& t) { return fx::makeOfflineInserts (t, s.sampleRate, 4096, rigWarnings); };
     juce::ScopedNoDenormals noDenormals;
     auto graph = buildPlaybackGraph (tracks, mediaBundle, cache, opt);
     if (graph->missingClips > 0)
@@ -136,6 +137,7 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
                 std::fill (r.begin(), r.begin() + n, 0.0f);
                 renderTrackClips (t, start + done, n, l.data(), r.data());
                 if (t.rig != nullptr) t.rig->process (l.data(), r.data(), n);
+                if (t.inserts != nullptr) t.inserts->process (l.data(), r.data(), n);
                 out.addFrom (0, (int) done, l.data(), n, t.gainL);
                 out.addFrom (1, (int) done, r.data(), n, t.gainR);
             }

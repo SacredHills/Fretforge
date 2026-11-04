@@ -287,3 +287,10 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
 - **State** is copied into the PLUGIN nodes every two seconds and right before saving; presets carry plugins too.
 - **Tests:** `-DFF_BUILD_TEST_PLUGIN=ON` builds "FF Test Gain", a tiny VST3; with `FF_TEST_VST3` pointing to it the tests
   scan, load, process, bypass, save/restore state and render it offline. Linux CI runs them.
+
+- **Track inserts:** `TRACK/INSERTS/PLUGIN {slot, desc, state, name, bypass}` (up to 8, played by slot number).
+  `fx::InsertChain` keeps plugins in fixed physical slots with a packed play order (8 x 4 bits + count), so moving an
+  insert never reloads it; the bank maps PLUGIN nodes to physical slots. `PlayTrack::inserts` runs after the rig,
+  before fader and pan; exports build offline chains (`makeOfflineInserts`).
+- **Formats:** VST3, AU (macOS) and LV2 (JUCE's bundled lilv) are always built in. VST2 needs Steinberg's proprietary
+  VST 2 SDK: `-DFF_VST2_SDK_DIR` enables `JUCE_PLUGINHOST_VST` for licence holders; it is never bundled.

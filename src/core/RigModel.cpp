@@ -221,6 +221,78 @@ juce::String blockLabel (const juce::ValueTree& rig, int block)
     return blockName (block);
 }
 
+juce::ValueTree findInserts (const juce::ValueTree& track) { return track.getChildWithName (ids::INSERTS); }
+
+juce::ValueTree insertNode (const juce::ValueTree& track, int slot)
+{
+    for (auto c : findInserts (track))
+        if ((int) c[ids::slot] == slot) return c;
+    return {};
+}
+
+int numInserts (const juce::ValueTree& track)
+{
+    int n = 0;
+    for (auto c : findInserts (track)) n += c.hasType (ids::PLUGIN) ? 1 : 0;
+    return n;
+}
+
+int addInsert (juce::ValueTree track, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* um)
+{
+    auto list = findInserts (track);
+    if (! list.isValid())
+    {
+        list = juce::ValueTree (ids::INSERTS);
+        track.appendChild (list, um);
+    }
+    const int slot = numInserts (track);
+    if (slot >= maxInserts) return -1;
+    juce::ValueTree p (ids::PLUGIN);
+    p.setProperty (ids::slot, slot, nullptr);
+    p.setProperty (ids::desc, descXml, nullptr);
+    p.setProperty (ids::name, displayName, nullptr);
+    p.setProperty (ids::state, juce::String(), nullptr);
+    p.setProperty (ids::bypass, false, nullptr);
+    list.appendChild (p, um);
+    return slot;
+}
+
+void replaceInsert (juce::ValueTree track, int slot, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* um)
+{
+    auto n = insertNode (track, slot);
+    if (! n.isValid()) return;
+    // remove + add so the plugin is rebuilt (the bank reacts to the child change)
+    auto list = findInserts (track);
+    const int index = list.indexOf (n);
+    list.removeChild (n, um);
+    juce::ValueTree p (ids::PLUGIN);
+    p.setProperty (ids::slot, slot, nullptr);
+    p.setProperty (ids::desc, descXml, nullptr);
+    p.setProperty (ids::name, displayName, nullptr);
+    p.setProperty (ids::state, juce::String(), nullptr);
+    p.setProperty (ids::bypass, false, nullptr);
+    list.addChild (p, index, um);
+}
+
+void removeInsert (juce::ValueTree track, int slot, juce::UndoManager* um)
+{
+    auto list = findInserts (track);
+    auto n = insertNode (track, slot);
+    if (! n.isValid()) return;
+    list.removeChild (n, um);
+    for (auto c : list)
+        if ((int) c[ids::slot] > slot) c.setProperty (ids::slot, (int) c[ids::slot] - 1, um);
+}
+
+void moveInsert (juce::ValueTree track, int slot, int direction, juce::UndoManager* um)
+{
+    const int other = slot + (direction < 0 ? -1 : 1);
+    auto a = insertNode (track, slot), b = insertNode (track, other);
+    if (! a.isValid() || ! b.isValid()) return;
+    a.setProperty (ids::slot, other, um);
+    b.setProperty (ids::slot, slot, um);
+}
+
 juce::var toPreset (const juce::ValueTree& rig, const juce::String& presetName)
 {
     auto* o = new juce::DynamicObject();

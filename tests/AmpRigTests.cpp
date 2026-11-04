@@ -728,6 +728,30 @@ struct PluginSlotTests : juce::UnitTest
             expect (! rg::pluginNode (b, 0).isValid());
         }
 
+        beginTest ("track inserts: add, move, remove, replace");
+        {
+            juce::ValueTree t ("TRACK");
+            expectEquals (rg::numInserts (t), 0);
+            expectEquals (rg::addInsert (t, "<A/>", "A"), 0);
+            expectEquals (rg::addInsert (t, "<B/>", "B"), 1);
+            expectEquals (rg::addInsert (t, "<C/>", "C"), 2);
+            rg::moveInsert (t, 2, -1);
+            expectEquals (rg::insertNode (t, 1)[rg::ids::name].toString(), juce::String ("C"));
+            rg::removeInsert (t, 0);
+            expectEquals (rg::numInserts (t), 2);
+            expectEquals (rg::insertNode (t, 0)[rg::ids::name].toString(), juce::String ("C"));
+            expectEquals (rg::insertNode (t, 1)[rg::ids::name].toString(), juce::String ("B"));
+            rg::replaceInsert (t, 0, "<D/>", "D");
+            expectEquals (rg::insertNode (t, 0)[rg::ids::name].toString(), juce::String ("D"));
+            for (int i = 0; i < 10; ++i) rg::addInsert (t, "<E/>", "E");
+            expectEquals (rg::numInserts (t), rg::maxInserts);
+            juce::StringArray w;
+            expect (fx::makeOfflineInserts (t, 48000.0, 512, w) != nullptr);
+            expect (w.size() == rg::maxInserts, "every insert reported without a host");
+            juce::ValueTree empty ("TRACK");
+            expect (fx::makeOfflineInserts (empty, 48000.0, 512, w) == nullptr);
+        }
+
         beginTest ("offline rig without a plugin host reports the plugin");
         {
             auto r = rg::makeDefault();
@@ -737,6 +761,33 @@ struct PluginSlotTests : juce::UnitTest
             expect (warnings.joinIntoString (" ").contains ("Missing"));
             auto out = runRig (*rig, sine (200.0, 48000.0, 4800), 512);
             expect (allFinite (out));
+        }
+
+        if (const auto lv2 = juce::SystemStats::getEnvironmentVariable ("FF_TEST_LV2", {}); lv2.isNotEmpty())
+        {
+            beginTest ("LV2: scan, load and process (" + lv2 + ")");
+            TestPluginHost host;
+            juce::OwnedArray<juce::PluginDescription> found;
+            for (auto* f : host.formats.getFormats())
+                if (f->getName() == "LV2")
+                    for (auto& id : f->searchPathsForPlugins (juce::FileSearchPath ("/usr/lib/lv2"), true, false))
+                        if (id.contains (lv2)) f->findAllTypesForFile (found, id);
+            expect (! found.isEmpty(), "no LV2 plugin matching " + lv2);
+            for (auto* d : found)
+            {
+                juce::String err;
+                auto inst = host.formats.createPluginInstance (*d, 48000.0, 512, err);
+                expect (inst != nullptr, d->name + ": " + err);
+                if (inst == nullptr) continue;
+                fx::preparePlugin (*inst, 48000.0, 512);
+                juce::AudioBuffer<float> scratch (8, 512);
+                juce::MidiBuffer midi;
+                auto l = sine (300.0, 48000.0, 512, 0.3f), r2 = l;
+                fx::runPluginStereo (*inst, scratch, midi, l.data(), r2.data(), 512);
+                expect (allFinite (l) && allFinite (r2), d->name);
+                logMessage ("  " + d->name + ": in " + juce::String (inst->getTotalNumInputChannels()) + " / out "
+                            + juce::String (inst->getTotalNumOutputChannels()) + ", peak " + juce::String (peakOf (l), 3));
+            }
         }
 
         const auto path = juce::SystemStats::getEnvironmentVariable ("FF_TEST_VST3", {});
@@ -794,6 +845,25 @@ struct PluginSlotTests : juce::UnitTest
             out = runRig (*offline, sine (300.0, 48000.0, 4800, 0.4f), 512);
             expectWithinAbsoluteError (peakOf (out, 2400), 0.6f, 0.01f);
             offline.reset();
+
+            // track inserts: two gain plugins in a chain (0.5 x 1.5), bypass, order
+            juce::ValueTree track ("TRACK");
+            rg::addInsert (track, desc, "A");
+            rg::addInsert (track, desc, "B");
+            rg::insertNode (track, 1).setProperty (rg::ids::state, state, nullptr);   // gain 1.5
+            warnings.clear();
+            auto chain = fx::makeOfflineInserts (track, 48000.0, 512, warnings);
+            expect (warnings.isEmpty(), warnings.joinIntoString ("; "));
+            auto run = [&] (fx::InsertChain& c, float amp) {
+                auto l = sine (300.0, 48000.0, 4800, amp), r2 = l;
+                for (size_t p = 0; p < l.size(); p += 480) c.process (l.data() + p, r2.data() + p, 480);
+                return peakOf (l, 2400);
+            };
+            expectWithinAbsoluteError (run (*chain, 0.4f), 0.4f * 0.5f * 1.5f, 0.01f);
+            chain->bypass[0] = true;
+            expectWithinAbsoluteError (run (*chain, 0.4f), 0.4f * 1.5f, 0.01f);
+            chain->setOrder ({ { 0 } }, 1);   // only slot 0 (bypassed) left in the order
+            expectWithinAbsoluteError (run (*chain, 0.4f), 0.4f, 0.003f);
             fx::setPluginHost (nullptr);
         }
     }

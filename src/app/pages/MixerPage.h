@@ -6,8 +6,23 @@
 
 namespace ff
 {
+/** A strip's insert plugins: one row per plugin (click: plugin window, right-click: bypass / move / replace / remove)
+    and a "+ Plugin" row. */
+class InsertList : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    InsertList (SessionController& s, juce::ValueTree t) : session (s), track (t) {}
+    int rowsWanted() const;
+    static constexpr int rowHeight = 20;
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+private:
+    SessionController& session;
+    juce::ValueTree track;
+};
+
 /** One mixer channel strip bound to a TRACK node; meter reads the engine's track meter. */
-class ChannelStrip : public juce::Component, private juce::ValueTree::Listener
+class ChannelStrip : public juce::Component, private juce::ValueTree::Listener, private juce::ChangeListener
 {
 public:
     ChannelStrip (ProjectDocument&, EngineHost&, SessionController&, juce::ValueTree track, int slot);
@@ -29,14 +44,16 @@ private:
     juce::Slider fader, pan;
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" }, ampButton { "NAM AMP" };
     juce::Label nameLabel;
+    InsertList insertList { session, track };
     void showMenu();
     float level = -100.0f, hold = -100.0f;
     int holdTicks = 0;
     bool updating = false;
     void refresh();
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { refresh(); }
-    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { refresh(); }
-    void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { refresh(); }
+    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { refresh(); resized(); }
+    void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { refresh(); resized(); }
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { insertList.repaint(); }
 };
 
 /** Mixer: a channel strip per track plus the main output. */

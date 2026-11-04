@@ -176,7 +176,7 @@ void ChainView::paint (juce::Graphics& g)
         g.fillPath (dashed);
         g.setColour (palette::textDim);
         g.setFont (uiFont (13.0f, true));
-        g.drawFittedText ("+ Plugin\n(" + juce::String (pluginFormatsLabel()) + ")", r.toNearestInt(), juce::Justification::centred, 2);
+        g.drawFittedText ("+ Plugin\n(" + pluginFormatsLabel() + ")", r.toNearestInt(), juce::Justification::centred, 2);
     }
     if (dragBlock >= 0 && dropIndex >= 0)
     {

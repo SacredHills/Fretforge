@@ -23,6 +23,9 @@ PluginHost* pluginHost();
 /** Restores a plugin's state from base64 (as stored in a PLUGIN node). */
 void restorePluginState (juce::AudioPluginInstance&, const juce::String& base64);
 juce::String capturePluginState (juce::AudioPluginInstance&);
+/** Runs a plugin on a stereo pair in place (real-time safe). `scratch` must have >= 8 channels and >= n samples. */
+void runPluginStereo (juce::AudioPluginInstance&, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& midi,
+                      float* left, float* right, int n) noexcept;
 /** Asks for a stereo (or else mono) main bus and prepares the plugin. */
 void preparePlugin (juce::AudioPluginInstance&, double sampleRate, int blockSize);
 } // namespace ff::fx

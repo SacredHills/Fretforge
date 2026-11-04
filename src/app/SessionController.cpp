@@ -1,4 +1,5 @@
 #include "SessionController.h"
+#include "plugins/PluginManager.h"
 
 namespace ff
 {
@@ -172,6 +173,84 @@ void SessionController::removeTrackRig (juce::ValueTree track)
     track.removeChild (r, &doc.undo());
 }
 
+void SessionController::showAddInsertMenu (juce::ValueTree track, juce::Component* target)
+{
+    if (plugins == nullptr || ! track.isValid()) return;
+    if (rig::numInserts (track) >= rig::maxInserts)
+    {
+        if (onError) onError ("Plugins", "This track already has " + juce::String (rig::maxInserts) + " plugins.");
+        return;
+    }
+    juce::PopupMenu m;
+    plugins->addToMenu (m, 1);
+    if (m.getNumItems() == 0) m.addItem (-1, "No plugins found yet", false);
+    m.addSeparator();
+    m.addItem (-2, "Scan for plugins / manage...");
+    juce::Component::SafePointer<juce::Component> safeTarget (target);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, track, safeTarget] (int r) {
+        if (r == 0) return;
+        if (r == -2) { plugins->showManager(); return; }
+        juce::String name;
+        const auto desc = plugins->descriptionForMenuResult (r, 1, name);
+        if (desc.isEmpty()) return;
+        doc.undo().beginNewTransaction ("Add plugin " + name);
+        const int slot = rig::addInsert (track, desc, name, &doc.undo());
+        if (slot >= 0) openInsertWhenLoaded (track, slot, 40);   // its window opens once it has loaded
+    });
+}
+
+void SessionController::openInsertWhenLoaded (juce::ValueTree track, int slot, int triesLeft)
+{
+    const auto st = rigBank->insertStatus (track, slot);
+    if (st.loaded) { openInsert (track, slot); return; }
+    if (st.error.isNotEmpty()) { if (onError) onError ("Plugin", st.name + " could not be loaded: " + st.error); return; }
+    if (triesLeft > 0)
+        juce::Timer::callAfterDelay (250, [this, track, slot, triesLeft] { openInsertWhenLoaded (track, slot, triesLeft - 1); });
+}
+
+void SessionController::openInsert (juce::ValueTree track, int slot)
+{
+    if (plugins == nullptr) return;
+    if (auto p = rigBank->insertPlugin (track, slot))
+        plugins->showEditor (p, rig::insertNode (track, slot)[rig::ids::name].toString() + "  (" + track[ids::name].toString() + ")");
+}
+
+void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::Component* target)
+{
+    const auto node = rig::insertNode (track, slot);
+    if (! node.isValid()) return;
+    const auto st = rigBank->insertStatus (track, slot);
+    juce::PopupMenu m;
+    m.addSectionHeader (node[rig::ids::name].toString() + (st.error.isNotEmpty() ? "  (not loaded)" : juce::String()));
+    m.addItem (1, "Open plugin window", st.loaded);
+    m.addItem (2, "Bypass", true, (bool) node[rig::ids::bypass]);
+    m.addItem (3, "Move up", slot > 0);
+    m.addItem (4, "Move down", slot < rig::numInserts (track) - 1);
+    m.addItem (5, "Replace...");
+    m.addItem (6, "Remove");
+    if (st.error.isNotEmpty()) { m.addSeparator(); m.addItem (-1, st.error, false); }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, track, slot, target] (int r) {
+        auto n = rig::insertNode (track, slot);
+        if (! n.isValid()) return;
+        if (r == 1) openInsert (track, slot);
+        else if (r == 2) { doc.undo().beginNewTransaction ("Bypass plugin"); n.setProperty (rig::ids::bypass, ! (bool) n[rig::ids::bypass], &doc.undo()); }
+        else if (r == 3 || r == 4) { doc.undo().beginNewTransaction ("Move plugin"); rig::moveInsert (track, slot, r == 3 ? -1 : 1, &doc.undo()); }
+        else if (r == 6) { doc.undo().beginNewTransaction ("Remove plugin"); rig::removeInsert (track, slot, &doc.undo()); }
+        else if (r == 5 && plugins != nullptr)
+        {
+            juce::PopupMenu pm;
+            plugins->addToMenu (pm, 1);
+            pm.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, track, slot] (int rr) {
+                juce::String name;
+                const auto desc = plugins->descriptionForMenuResult (rr, 1, name);
+                if (desc.isEmpty()) return;
+                doc.undo().beginNewTransaction ("Replace plugin");
+                rig::replaceInsert (track, slot, desc, name, &doc.undo());
+            });
+        }
+    });
+}
+
 bool SessionController::trackHasRig (const juce::ValueTree& track) const
 {
     return rig::isEnabled (rig::find (track));
@@ -184,6 +263,7 @@ void SessionController::rebuildGraphNow()
     opt.sampleRate = host.engine.getSampleRate() > 0 ? host.engine.getSampleRate() : 48000.0;
     opt.recorders = &recorders;
     opt.rigFor = [this] (const juce::ValueTree& t) { return rigBank->rigForTrack (t[ids::id].toString()); };
+    opt.insertsFor = [this] (const juce::ValueTree& t) { return rigBank->insertsForTrack (t[ids::id].toString()); };
     host.engine.submitGraph (buildPlaybackGraph (doc.tracks(), doc.mediaBundle(), cache, opt));
 }
 

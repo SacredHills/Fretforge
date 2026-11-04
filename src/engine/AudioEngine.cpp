@@ -311,6 +311,8 @@ void AudioEngine::renderSegment (const float* const* inputs, int numInputs, floa
         }
         if (t.rig != nullptr)
             t.rig->process (sL, sR, len);
+        if (t.inserts != nullptr)
+            t.inserts->process (sL, sR, len);
         juce::FloatVectorOperations::multiply (sL, t.gainL, len);
         juce::FloatVectorOperations::multiply (sR, t.gainR, len);
         meter.update (sL, len);

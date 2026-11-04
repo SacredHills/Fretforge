@@ -8,14 +8,20 @@ namespace ff
 {
 /** Command-line id that turns an instance of the app into a plugin-scanning child process. */
 inline constexpr const char* pluginScannerProcessId = "fretforge-plugin-scanner";
-/** "VST3", or "VST3 / AU" on macOS. */
-inline const char* pluginFormatsLabel()
+/** The formats this build hosts, e.g. "VST3 / LV2" or "VST3 / AU / LV2". */
+inline juce::String pluginFormatsLabel()
 {
-   #if JUCE_MAC
-    return "VST3 / AU";
-   #else
-    return "VST3";
+    juce::StringArray f { "VST3" };
+   #if JUCE_PLUGINHOST_VST
+    f.add ("VST");
    #endif
+   #if JUCE_MAC
+    f.add ("AU");
+   #endif
+   #if JUCE_PLUGINHOST_LV2
+    f.add ("LV2");
+   #endif
+    return f.joinIntoString (" / ");
 }
 
 /** Runs in the child process: scans one plugin file per request and answers with its descriptions. A plugin that

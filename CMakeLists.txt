@@ -10,6 +10,9 @@ option(FF_BUILD_APP    "Build the GUI application" ON)
 option(FF_BUILD_TEST_PLUGIN "Build a tiny VST3 effect used to test plugin hosting (FF_TEST_VST3=<path> runs the tests)" OFF)
 option(FF_ENABLE_ASIO  "Enable ASIO on Windows (requires the Steinberg ASIO SDK)" OFF)
 set(FF_ASIO_SDK_DIR "" CACHE PATH "Path to the ASIO SDK root (contains common/iasiodrv.h)")
+# VST2 hosting needs Steinberg's VST 2 SDK, which is not open source and cannot be shipped with FretForge.
+# If you hold a VST 2 licence, point this at the SDK folder (the one containing pluginterfaces/vst2.x/aeffect.h).
+set(FF_VST2_SDK_DIR "" CACHE PATH "Path to the VST 2 SDK (enables VST2 plugin hosting)")
 set(FF_JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/JUCE" CACHE PATH "Local JUCE checkout (fetched automatically if missing)")
 
 # ---------------------------------------------------------------- JUCE
@@ -33,7 +36,7 @@ set(FF_COMMON_DEFS
     JUCE_USE_MP3AUDIOFORMAT=1
     JUCE_PLUGINHOST_VST3=1
     JUCE_PLUGINHOST_AU=1
-    JUCE_PLUGINHOST_LV2=0
+    JUCE_PLUGINHOST_LV2=1
     JUCE_MODAL_LOOPS_PERMITTED=0
     FF_VERSION_STRING="${PROJECT_VERSION}")
 
@@ -44,6 +47,15 @@ if(UNIX AND NOT APPLE)
     list(APPEND FF_COMMON_DEFS JUCE_JACK=1 JUCE_ALSA=1 JUCE_USE_CURL=1)
 else()
     list(APPEND FF_COMMON_DEFS JUCE_JACK=0)
+endif()
+
+if(FF_VST2_SDK_DIR)
+    if(NOT EXISTS "${FF_VST2_SDK_DIR}/pluginterfaces/vst2.x/aeffect.h")
+        message(FATAL_ERROR "FF_VST2_SDK_DIR does not contain pluginterfaces/vst2.x/aeffect.h")
+    endif()
+    juce_set_vst2_sdk_path ("${FF_VST2_SDK_DIR}")
+    list(APPEND FF_COMMON_DEFS JUCE_PLUGINHOST_VST=1)
+    message(STATUS "VST2 hosting enabled with the SDK in ${FF_VST2_SDK_DIR}")
 endif()
 
 if(FF_ENABLE_ASIO AND WIN32)
@@ -90,6 +102,7 @@ target_sources(ff_core PRIVATE
     src/engine/fx/AmpRig.cpp
     src/engine/fx/RigBank.cpp
     src/engine/fx/PluginHost.cpp
+    src/engine/fx/InsertChain.cpp
     src/engine/TabSynth.cpp
     src/engine/DrumSynth.cpp
     src/engine/AudioCache.cpp
@@ -119,6 +132,9 @@ target_link_libraries(ff_core
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 set_target_properties(ff_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(FF_VST2_SDK_DIR)
+    target_include_directories(ff_core PUBLIC "${FF_VST2_SDK_DIR}")
+endif()
 if(APPLE)
     # Audio Unit hosting (generic AU editor views) lives in CoreAudioKit
     target_link_libraries(ff_core PUBLIC "-framework CoreAudioKit")

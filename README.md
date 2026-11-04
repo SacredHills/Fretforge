@@ -6,7 +6,16 @@ project format, plugin system, milestone plan, risks and licensing.
 
 ## Status: Milestone 5 — Effects & Amps with Neural Amp Modeler and plugin hosting (working)
 
-**Plugins (new):** VST3 plugins (and Audio Units on macOS) in any amp rig. Track > Plugins... (or "Manage plugins..." on
+**Track plugins (new):** every track can have up to 8 insert plugins after its NAM amp and before the fader: the
+Mixer strips have a "+ Plugin" row (click a plugin to open it, right-click to bypass / move / replace / remove), and the
+Studio track menu has "Add plugin..." and the track's plugins. Exports include them.
+
+**Plugin formats:** VST3 everywhere, Audio Units on macOS, LV2 everywhere (common on Linux). **VST2** cannot be shipped:
+it needs Steinberg's VST 2 SDK, which is closed and has not been licensed to new developers since 2018 (the 2025 MIT
+release covers VST 3 only). If you have the SDK under a VST 2 licence, build with `-DFF_VST2_SDK_DIR=<path>` and VST2
+hosting is switched on (scanned and used like the others).
+
+**Plugins:** VST3 plugins (and Audio Units on macOS) in any amp rig. Track > Plugins... (or "Manage plugins..." on
 the Effects page) scans for them in a separate process, so a plugin that crashes while being scanned cannot take the app
 down; it is just listed as failed. Click the "+ Plugin" tile at the end of a rig's chain to add one (up to four per rig);
 drag its tile to move it anywhere in the chain, click its lamp to bypass it, "Open plugin window" shows its own editor.

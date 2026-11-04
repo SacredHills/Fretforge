@@ -3,6 +3,7 @@
 #include "AudioCache.h"
 #include "Recorder.h"
 #include "fx/AmpRig.h"
+#include "fx/InsertChain.h"
 #include <map>
 
 namespace ff
@@ -27,6 +28,7 @@ struct PlayTrack
     int meterSlot = 0;
     std::shared_ptr<TrackRecorder> recorder; // only while recording
     std::shared_ptr<fx::AmpRig> rig;         // amp rig insert (Effects & Amps), applied before fader / pan
+    std::shared_ptr<fx::InsertChain> inserts; // plugin inserts, after the rig
 };
 
 /** Immutable snapshot of everything the audio thread needs to play the arrangement.
@@ -44,6 +46,7 @@ struct GraphBuildOptions
     bool waitForAudio = false;   // export: load synchronously instead of skipping unloaded clips
     const std::map<juce::String, std::shared_ptr<TrackRecorder>>* recorders = nullptr; // by track id
     std::function<std::shared_ptr<fx::AmpRig> (const juce::ValueTree& track)> rigFor;    // amp rig per track (optional)
+    std::function<std::shared_ptr<fx::InsertChain> (const juce::ValueTree& track)> insertsFor;
 };
 
 /** Builds the graph from the TRACKS node. Clip files are resolved relative to mediaBundle. */

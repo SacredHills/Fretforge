@@ -246,6 +246,10 @@ void TrackHeader::showMenu()
         m.addItem (11, "Remove NAM amp");
     }
     else m.addItem (10, "Add NAM amp...");
+    m.addItem (12, "Add plugin...", owner.session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
+    for (int i = 0; i < rig::numInserts (track); ++i)
+        m.addItem (200 + i, "Plugin: " + rig::insertNode (track, i)[rig::ids::name].toString()
+                                + ((bool) rig::insertNode (track, i)[rig::ids::bypass] ? "  (bypassed)" : "") + "...");
     m.addSeparator();
     m.addItem (2, "Move up", index > 0);
     m.addItem (3, "Move down", index < owner.numTracks() - 1);
@@ -264,6 +268,8 @@ void TrackHeader::showMenu()
         if (r == 1) safe->name.showEditor();
         else if (r == 10) o.session.addTrackRig (t);
         else if (r == 11) o.session.removeTrackRig (t);
+        else if (r == 12) o.session.showAddInsertMenu (t, safe.getComponent());
+        else if (r >= 200 && r < 200 + rig::maxInserts) o.session.showInsertMenu (t, r - 200, safe.getComponent());
         else if (r >= 100) { o.doc.undo().beginNewTransaction ("Track colour"); o.doc.set (t, ids::colour, trackPalette()[r - 100]); }
         else if (r == 2) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx - 1, &o.doc.undo()); }
         else if (r == 3) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx + 1, &o.doc.undo()); }

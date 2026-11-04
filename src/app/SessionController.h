@@ -9,6 +9,7 @@
 
 namespace ff
 {
+class PluginManager;
 /** Glue between the project document and the real-time engine: rebuilds playback
     snapshots when the arrangement changes, owns the audio cache, runs recording
     sessions (recorders, disk writer, turning segments into clips) and imports media. */
@@ -59,6 +60,15 @@ public:
     void removeTrackRig (juce::ValueTree track);
     bool trackHasRig (const juce::ValueTree& track) const;
     std::function<void (juce::ValueTree track)> onOpenRig;   // set by the app: shows the track's NAM window
+
+    // ---- track insert plugins ----
+    PluginManager* plugins = nullptr;                        // set by the app
+    /** Menu of known plugins; the chosen one is added after the track's last insert. */
+    void showAddInsertMenu (juce::ValueTree track, juce::Component* target);
+    /** Open / bypass / move / replace / remove for one insert slot. */
+    void showInsertMenu (juce::ValueTree track, int slot, juce::Component* target);
+    void openInsert (juce::ValueTree track, int slot);
+    void openInsertWhenLoaded (juce::ValueTree track, int slot, int triesLeft);
 
     // ---- media ----
     /** Copies files into the project's Audio folder and places clips on `track` from `atSec`. */

@@ -1,5 +1,6 @@
 #pragma once
 #include "AmpRig.h"
+#include "InsertChain.h"
 #include <map>
 
 namespace ff { class AudioEngine; }
@@ -14,6 +15,9 @@ bool loadImpulseFile (const juce::File&, juce::AudioBuffer<float>& out, double& 
     Problems (missing files, bad model) are added to `warnings`; the rig then uses its built-in amp / cab. */
 std::shared_ptr<AmpRig> makeOfflineRig (const juce::ValueTree& rigTree, double sampleRate, int maxBlock,
                                         juce::StringArray& warnings);
+/** The same for a track's inserts (nullptr if the track has none). */
+std::shared_ptr<InsertChain> makeOfflineInserts (const juce::ValueTree& track, double sampleRate, int maxBlock,
+                                                 juce::StringArray& warnings);
 
 /** Message-thread owner of the live rigs: one per track whose RIG is enabled, plus the live practice rig.
 
@@ -56,12 +60,20 @@ public:
 
     /** The running plugin in a slot of a RIG node (for its editor window), nullptr if none. */
     std::shared_ptr<juce::AudioPluginInstance> pluginFor (const juce::ValueTree& rigTree, int slot) const;
+    // ---- track inserts ----
+    /** Insert chain for a track id (nullptr if the track has no inserts). */
+    std::shared_ptr<InsertChain> insertsForTrack (const juce::String& trackId) const;
+    /** Load status / running plugin of a track's insert slot (by its slot number in the INSERTS list). */
+    Status::Plugin insertStatus (const juce::ValueTree& track, int slot) const;
+    std::shared_ptr<juce::AudioPluginInstance> insertPlugin (const juce::ValueTree& track, int slot) const;
+
     /** Copies every plugin's current state into its PLUGIN node (also done every two seconds). */
     void captureAllPluginStates();
 
     std::function<void (juce::AudioPluginInstance*)> onPluginRemoved;   // close its editor window before it is deleted
     std::function<void()> onRigsChanged;    // a track rig was created or removed (rebuild the playback graph)
     std::function<void()> onStatusChanged;  // a model / IR finished loading or failed
+    juce::ChangeBroadcaster statusChanged;  // the same, for any number of listeners (mixer strips)
     std::function<void()> onLiveChanged;    // the live rig's settings changed (persist them)
 
 private:
@@ -73,6 +85,20 @@ private:
         int generation = 0;
         std::array<int, rig::numPluginSlots> pluginGeneration {};
     };
+
+    struct InsertEntry
+    {
+        std::shared_ptr<InsertChain> chain;
+        juce::ValueTree track;
+        std::array<juce::ValueTree, InsertChain::maxSlots> nodes;   // PLUGIN node held by each physical slot
+        std::array<Status::Plugin, InsertChain::maxSlots> status;
+        std::array<int, InsertChain::maxSlots> generation {};
+    };
+    std::map<juce::String, InsertEntry> inserts;
+    void syncInserts (InsertEntry&);
+    void loadInsert (InsertEntry&, int physical);
+    void releaseInsertPlugins (InsertEntry&);
+    int physicalOf (const InsertEntry&, const juce::ValueTree& node) const;
 
     AudioEngine& engine;
     juce::ValueTree root, live;
@@ -95,6 +121,7 @@ private:
     Entry* entryByKey (const juce::String& key);
     juce::String keyOf (const Entry&) const;
     int ticks = 0;
+    void notifyStatus() { if (onStatusChanged) onStatusChanged(); statusChanged.sendChangeMessage(); }
     Entry* entryFor (const juce::ValueTree& rigTree);
     const Entry* entryFor (const juce::ValueTree& rigTree) const;
     std::shared_ptr<AmpRig> makeRig();

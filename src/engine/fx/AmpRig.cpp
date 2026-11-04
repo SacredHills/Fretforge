@@ -298,24 +298,8 @@ std::shared_ptr<juce::AudioPluginInstance> AmpRig::getPlugin (int slot) const
 
 void AmpRig::runPlugin (int slot, float* L, float* R, int n) noexcept
 {
-    auto* p = pluginSlots[(size_t) slot].active.load (std::memory_order_acquire);
-    if (p == nullptr || n > pluginBuffer.getNumSamples()) return;
-    const int ins = p->getTotalNumInputChannels(), outs = p->getTotalNumOutputChannels();
-    const int ch = juce::jmin (pluginBuffer.getNumChannels(), juce::jmax (ins, outs, 1));
-    float* const* chans = pluginBuffer.getArrayOfWritePointers();
-    if (ins >= 2) { std::copy (L, L + n, chans[0]); std::copy (R, R + n, chans[1]); }
-    else for (int i = 0; i < n; ++i) chans[0][i] = 0.5f * (L[i] + R[i]);
-    for (int c = ins >= 2 ? 2 : 1; c < ch; ++c)
-        juce::FloatVectorOperations::clear (chans[c], n);
-    juce::AudioBuffer<float> view (chans, ch, n);
-    pluginMidi.clear();
-    {
-        const juce::ScopedLock sl (p->getCallbackLock());
-        if (p->isSuspended()) return;
-        p->processBlock (view, pluginMidi);
-    }
-    if (outs >= 2) { std::copy (chans[0], chans[0] + n, L); std::copy (chans[1], chans[1] + n, R); }
-    else if (outs == 1) { std::copy (chans[0], chans[0] + n, L); std::copy (chans[0], chans[0] + n, R); }
+    if (auto* p = pluginSlots[(size_t) slot].active.load (std::memory_order_acquire))
+        runPluginStereo (*p, pluginBuffer, pluginMidi, L, R, n);
 }
 
 void AmpRig::runGate (float* x, int n) noexcept

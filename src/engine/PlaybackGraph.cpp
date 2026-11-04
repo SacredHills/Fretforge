@@ -44,6 +44,7 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
             if (auto it = opt.recorders->find (t[ids::id].toString()); it != opt.recorders->end())
                 pt.recorder = it->second;
         if (opt.rigFor) pt.rig = opt.rigFor (t);
+        if (opt.insertsFor) pt.inserts = opt.insertsFor (t);
 
         // gather clips in layer order with their audio
         std::vector<ClipSpan> spans;

@@ -81,11 +81,64 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
         doc.set (track, ids::name, n);
     };
     addAndMakeVisible (nameLabel);
+    insertList.setTooltip ("Plugins on this track (after its NAM amp, before the fader). Click a plugin to open it, right-click for more.");
+    addAndMakeVisible (insertList);
+    session.rigs().statusChanged.addChangeListener (this);
     track.addListener (this);
     refresh();
 }
 
-ChannelStrip::~ChannelStrip() { track.removeListener (this); }
+ChannelStrip::~ChannelStrip()
+{
+    session.rigs().statusChanged.removeChangeListener (this);
+    track.removeListener (this);
+}
+
+int InsertList::rowsWanted() const
+{
+    const int n = rig::numInserts (track);
+    return n + (n < rig::maxInserts && session.plugins != nullptr ? 1 : 0);
+}
+
+void InsertList::paint (juce::Graphics& g)
+{
+    const int n = rig::numInserts (track);
+    for (int i = 0; i < rowsWanted(); ++i)
+    {
+        auto r = juce::Rectangle<int> (0, i * rowHeight, getWidth(), rowHeight - 2).toFloat();
+        if (i < n)
+        {
+            const auto node = rig::insertNode (track, i);
+            const auto st = session.rigs().insertStatus (track, i);
+            const bool bypassed = (bool) node[rig::ids::bypass];
+            g.setColour (st.error.isNotEmpty() ? palette::bad.withAlpha (0.25f) : palette::info.withAlpha (bypassed ? 0.08f : 0.22f));
+            g.fillRoundedRectangle (r, 3.0f);
+            g.setColour (bypassed ? palette::textDim : palette::text);
+            g.setFont (uiFont (11.0f, ! bypassed));
+            g.drawText ((st.loading ? "... " : juce::String()) + node[rig::ids::name].toString(), r.reduced (5.0f, 0.0f), juce::Justification::centredLeft, true);
+        }
+        else
+        {
+            g.setColour (palette::outline);
+            g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+            g.setColour (palette::textDim);
+            g.setFont (uiFont (11.0f));
+            g.drawText ("+ Plugin", r, juce::Justification::centred);
+        }
+    }
+}
+
+void InsertList::mouseUp (const juce::MouseEvent& e)
+{
+    if (! e.mouseWasClicked()) return;
+    const int row = e.y / rowHeight, n = rig::numInserts (track);
+    if (row < n)
+    {
+        if (e.mods.isPopupMenu()) session.showInsertMenu (track, row, this);
+        else session.openInsert (track, row);
+    }
+    else if (row < rowsWanted()) session.showAddInsertMenu (track, this);
+}
 
 void ChannelStrip::refresh()
 {
@@ -134,6 +187,7 @@ void ChannelStrip::showMenu()
     m.addSeparator();
     if (session.trackHasRig (track)) { m.addItem (10, "Open NAM amp..."); m.addItem (11, "Remove NAM amp"); }
     else m.addItem (10, "Add NAM amp...");
+    m.addItem (12, "Add plugin...", session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
     m.addSeparator();
     m.addItem (4, "Duplicate track");
     m.addItem (5, "Delete track");
@@ -144,6 +198,7 @@ void ChannelStrip::showMenu()
         auto& sc = safe->session;
         if (r == 1) safe->nameLabel.showEditor();
         else if (r == 10) sc.addTrackRig (t);
+        else if (r == 12) sc.showAddInsertMenu (t, safe.getComponent());
         else if (r == 11) sc.removeTrackRig (t);
         else if (r == 4) sc.duplicateTrack (t);
         else if (r == 5) sc.deleteTrack (t);   // destroys this strip
@@ -165,7 +220,7 @@ void ChannelStrip::paint (juce::Graphics& g)
     g.setColour (colour);
     g.fillRoundedRectangle (r.removeFromTop (6).toFloat(), 3.0f);
 
-    auto meter = getLocalBounds().reduced (3, 0).withTrimmedTop (150).withTrimmedBottom (34).removeFromRight (16).reduced (3, 0);
+    auto meter = getLocalBounds().reduced (3, 0).withTrimmedTop (fader.getY()).withTrimmedBottom (34).removeFromRight (16).reduced (3, 0);
     g.setColour (palette::well);
     g.fillRect (meter);
     auto norm = [] (float db) { return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f); };
@@ -192,6 +247,8 @@ void ChannelStrip::resized()
     mute.setBounds (buttons.removeFromLeft (w).reduced (1));
     solo.setBounds (buttons.reduced (1));
     ampButton.setBounds (r.removeFromTop (30).reduced (1, 4));
+    insertList.setBounds (r.removeFromTop (insertList.rowsWanted() * InsertList::rowHeight).withTrimmedRight (0));
+    r.removeFromTop (insertList.rowsWanted() > 0 ? 6 : 0);
     nameLabel.setBounds (getLocalBounds().reduced (5, 0).withTrimmedTop (6).withHeight (24));
     r.removeFromBottom (6);
     fader.setBounds (r.withTrimmedRight (16));
