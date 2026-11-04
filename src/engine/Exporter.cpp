@@ -2,6 +2,7 @@
 #include "core/Timeline.h"
 #include "core/RigModel.h"
 #include "fx/RigBank.h"
+#include "GraphMixer.h"
 
 namespace ff
 {
@@ -90,7 +91,8 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
         {
             if (t.hasType (timeline::ids::TRACK) && i < (int) graph->tracks.size())
             {
-                if (graph->tracks[(size_t) i].audible && ! graph->tracks[(size_t) i].pieces.empty())
+                if (graph->tracks[(size_t) i].audible && ! graph->tracks[(size_t) i].pieces.empty()
+                    && graph->tracks[(size_t) i].kind == timeline::TrackKind::audio)
                     jobs.push_back ({ juce::File::createLegalFileName (t[timeline::ids::name].toString()), { i } });
                 ++i;
             }
@@ -118,29 +120,47 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
     const int block = 4096;
     std::vector<float> l ((size_t) block), r ((size_t) block);
     juce::StringArray usedNames;
+    GraphMixer mixer;
+    mixer.prepare (block, s.sampleRate);
+    mixer.allowIdle = false;   // offline: always run the effects
+
+    struct Source final : GraphMixer::Source
+    {
+        const std::vector<char>* include = nullptr;
+        juce::int64 at = 0;
+        bool fill (int index, PlayTrack& t, float* L, float* R, int n) noexcept override
+        {
+            if (! t.audible) return false;
+            if (t.kind != timeline::TrackKind::audio) return true;   // buses and FX returns play in every render
+            if (include != nullptr && ! (*include)[(size_t) index]) return false;
+            renderTrackClips (t, at + readAhead (t), n, L, R);   // delay compensation
+            return true;
+        }
+    } source;
 
     for (size_t ji = 0; ji < jobs.size(); ++ji)
     {
         const auto& job = jobs[ji];
         juce::AudioBuffer<float> out (2, (int) total);
         out.clear();
-        for (int ti : job.trackIndices)
-            if (auto& rg = graph->tracks[(size_t) ti].rig) rg->reset();   // every render starts from silence
+        std::vector<char> include (graph->tracks.size(), 0);
+        for (int ti : job.trackIndices) include[(size_t) ti] = 1;
+        source.include = &include;
+        for (auto& t : graph->tracks)   // every render starts from silence
+        {
+            if (t.rig != nullptr) t.rig->reset();
+            t.resetState();
+        }
 
         for (juce::int64 done = 0; done < total; done += block)
         {
             const int n = (int) juce::jmin ((juce::int64) block, total - done);
-            for (int ti : job.trackIndices)
-            {
-                const auto& t = graph->tracks[(size_t) ti];
-                std::fill (l.begin(), l.begin() + n, 0.0f);
-                std::fill (r.begin(), r.begin() + n, 0.0f);
-                renderTrackClips (t, start + done + trackLatency (t), n, l.data(), r.data());   // delay compensation
-                if (t.rig != nullptr) t.rig->process (l.data(), r.data(), n);
-                if (t.inserts != nullptr) t.inserts->process (l.data(), r.data(), n);
-                out.addFrom (0, (int) done, l.data(), n, t.gainL);
-                out.addFrom (1, (int) done, r.data(), n, t.gainR);
-            }
+            std::fill (l.begin(), l.begin() + n, 0.0f);
+            std::fill (r.begin(), r.begin() + n, 0.0f);
+            source.at = start + done;
+            mixer.mix (*graph, source, l.data(), r.data(), n);
+            out.addFrom (0, (int) done, l.data(), n);
+            out.addFrom (1, (int) done, r.data(), n);
             if (progress && ! progress (((double) ji + (double) done / (double) total) / (double) jobs.size()))
             {
                 res.result = juce::Result::fail ("Export cancelled.");

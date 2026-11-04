@@ -28,6 +28,92 @@ juce::ValueTree createTrack (const juce::String& name, int paletteIndex)
     return t;
 }
 
+TrackKind kindOf (const juce::ValueTree& t)
+{
+    const auto k = t[ids::kind].toString();
+    if (k == "bus") return TrackKind::bus;
+    if (k == "fx") return TrackKind::fx;
+    return TrackKind::audio;
+}
+
+juce::String kindName (TrackKind k)
+{
+    return k == TrackKind::bus ? "bus" : k == TrackKind::fx ? "fx" : "audio";
+}
+
+juce::ValueTree createBusTrack (const juce::String& name, int paletteIndex, TrackKind kind)
+{
+    auto t = createTrack (name, paletteIndex);
+    t.setProperty (ids::kind, kindName (kind), nullptr);
+    return t;
+}
+
+juce::ValueTree findTrack (const juce::ValueTree& tracks, const juce::String& id)
+{
+    if (id.isEmpty()) return {};
+    for (const auto& t : tracks)
+        if (t.hasType (ids::TRACK) && t[ids::id].toString() == id) return t;
+    return {};
+}
+
+juce::String outputOf (const juce::ValueTree& t)
+{
+    return t[ids::output].toString();
+}
+
+namespace
+{
+    /** Every track `t` feeds (its output and its sends). */
+    juce::StringArray destinationsOf (const juce::ValueTree& t)
+    {
+        juce::StringArray d;
+        if (outputOf (t).isNotEmpty()) d.add (outputOf (t));
+        for (const auto& c : t)
+            if (c.hasType (ids::SEND) && c[ids::target].toString().isNotEmpty()) d.addIfNotAlreadyThere (c[ids::target].toString());
+        return d;
+    }
+}
+
+bool canRouteTo (const juce::ValueTree& tracks, const juce::ValueTree& from, const juce::ValueTree& to)
+{
+    if (! from.isValid() || ! to.isValid() || from == to || isAudioTrack (to)) return false;
+    // would `to` reach `from`? (then from -> to closes a loop)
+    juce::StringArray seen, stack { to[ids::id].toString() };
+    const auto fromId = from[ids::id].toString();
+    while (! stack.isEmpty())
+    {
+        const auto id = stack[stack.size() - 1];
+        stack.remove (stack.size() - 1);
+        if (id == fromId) return false;
+        if (seen.contains (id)) continue;
+        seen.add (id);
+        stack.addArray (destinationsOf (findTrack (tracks, id)));
+    }
+    return true;
+}
+
+juce::ValueTree addSend (juce::ValueTree track, const juce::String& targetId, double levelDb, bool preFader, juce::UndoManager* um)
+{
+    juce::ValueTree s (ids::SEND);
+    s.setProperty (ids::id, newId(), nullptr);
+    s.setProperty (ids::target, targetId, nullptr);
+    s.setProperty (ids::level, levelDb, nullptr);
+    s.setProperty (ids::pre, preFader, nullptr);
+    track.appendChild (s, um);
+    return s;
+}
+
+void removeRoutesTo (juce::ValueTree tracks, const juce::String& id, juce::UndoManager* um)
+{
+    for (auto t : tracks)
+    {
+        if (! t.hasType (ids::TRACK)) continue;
+        if (outputOf (t) == id) t.setProperty (ids::output, juce::String(), um);
+        for (int i = t.getNumChildren(); --i >= 0;)
+            if (t.getChild (i).hasType (ids::SEND) && t.getChild (i)[ids::target].toString() == id) t.removeChild (i, um);
+    }
+}
+
 juce::ValueTree createClip (const juce::String& file, const juce::String& name, double start, double length, double offset)
 {
     juce::ValueTree c (ids::CLIP);

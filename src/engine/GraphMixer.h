@@ -1,0 +1,47 @@
+#pragma once
+#include "PlaybackGraph.h"
+#include "TrackWorkers.h"
+
+namespace ff
+{
+/** Mixes a PlaybackGraph: every track's signal goes through its rig and plugins (in parallel on the worker threads),
+    then its sends, fader and pan, into the bus it plays into or the master. Bus and FX tracks are processed after
+    the tracks that feed them. Used by live playback and by export. Real-time safe after prepare(). */
+class GraphMixer
+{
+public:
+    /** Fills the pre-effects signal of each track. */
+    struct Source
+    {
+        virtual ~Source() = default;
+        /** Audio tracks: add the track's clips / input into L and R (they arrive cleared). Bus and FX tracks: L and R
+            already hold what was routed to them. Return false to leave the track out (muted / nothing to do). */
+        virtual bool fill (int index, PlayTrack&, float* L, float* R, int n) noexcept = 0;
+        /** The track's final signal after fader and pan (meters). */
+        virtual void post (int, const PlayTrack&, const float*, const float*, int) noexcept {}
+    };
+
+    void prepare (int maxBlock, double sampleRate);
+    int maxBlock() const noexcept { return blockSize; }
+    TrackWorkers* workers = nullptr;   // optional
+    bool allowIdle = true;             // skip rigs and plugins on tracks that have been silent for a while
+
+    /** Adds the mix of the graph into outL / outR (n <= maxBlock()). */
+    void mix (PlaybackGraph&, Source&, float* outL, float* outR, int n) noexcept;
+
+    /** Updates every track's downstreamLatency (call before Source::fill reads the clips). */
+    static void updateLatencies (PlaybackGraph&) noexcept;
+
+private:
+    int blockSize = 0;
+    double sr = 48000.0;
+    std::vector<std::vector<float>> bufL, bufR;
+    std::vector<float> tmpL, tmpR;
+    std::vector<char> active;
+    std::vector<int> stage;   // tracks of the level being processed
+
+    struct JobContext { GraphMixer* self; PlaybackGraph* graph; int n; };
+    static void processJob (void* ctx, int i) noexcept;
+    void processTrack (PlayTrack&, float* L, float* R, int n) noexcept;
+};
+} // namespace ff

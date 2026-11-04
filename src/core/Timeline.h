@@ -15,6 +15,7 @@ namespace ids
     FF_TL_ID (armed) FF_TL_ID (monitor) FF_TL_ID (inputChannel) FF_TL_ID (inputStereo)
     FF_TL_ID (file) FF_TL_ID (start) FF_TL_ID (length) FF_TL_ID (offset) FF_TL_ID (fadeIn) FF_TL_ID (fadeOut)
     FF_TL_ID (muted) FF_TL_ID (takeGroup) FF_TL_ID (time)
+    FF_TL_ID (kind) FF_TL_ID (output) FF_TL_ID (SEND) FF_TL_ID (target) FF_TL_ID (level) FF_TL_ID (pre)
     #undef FF_TL_ID
 }
 
@@ -29,6 +30,26 @@ juce::ValueTree createTrack (const juce::String& name, int paletteIndex);
 juce::ValueTree createClip (const juce::String& portableFile, const juce::String& name,
                             double start, double length, double offset);
 juce::ValueTree createMarker (const juce::String& name, double time);
+
+// ------------------------------------------------------------------ routing (bus and FX tracks)
+
+/** Audio tracks hold clips and record; bus tracks mix the tracks routed to them; FX (return) tracks are fed
+    by sends. All three can have an amp rig and plugins, a fader and pan, and an output. */
+enum class TrackKind { audio, bus, fx };
+TrackKind kindOf (const juce::ValueTree& track);
+inline bool isAudioTrack (const juce::ValueTree& t) { return kindOf (t) == TrackKind::audio; }
+juce::String kindName (TrackKind);
+juce::ValueTree createBusTrack (const juce::String& name, int paletteIndex, TrackKind kind);
+juce::ValueTree findTrack (const juce::ValueTree& tracks, const juce::String& id);
+/** The bus a track plays into ("" = master); a missing bus also means master. */
+juce::String outputOf (const juce::ValueTree& track);
+/** False if routing `from` into `to` (output or send) would feed `to` back into itself, or `to` cannot take input. */
+bool canRouteTo (const juce::ValueTree& tracks, const juce::ValueTree& from, const juce::ValueTree& to);
+/** Sends: SEND children { target (track id), level (dB), pre (pre-fader) }. */
+constexpr int maxSends = 8;
+juce::ValueTree addSend (juce::ValueTree track, const juce::String& targetId, double levelDb, bool preFader, juce::UndoManager*);
+/** Removes sends and outputs that point at a track that is gone (call after deleting a track). */
+void removeRoutesTo (juce::ValueTree tracks, const juce::String& id, juce::UndoManager*);
 
 double clipEnd (const juce::ValueTree& clip);
 /** End time of the last unmuted clip on any track (0 if none). */

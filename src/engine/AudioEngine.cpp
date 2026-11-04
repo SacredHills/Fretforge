@@ -35,6 +35,7 @@ AudioEngine::AudioEngine()
 
 AudioEngine::~AudioEngine()
 {
+    workers.stop();
     delete pendingGraph.exchange (nullptr);
     delete pendingTab.exchange (nullptr);
     collectGarbage();
@@ -245,6 +246,14 @@ void AudioEngine::prepare (double sr, int maximumBlockSize)
     silence.assign ((size_t) scratch, 0.0f);
     liveL.assign ((size_t) scratch, 0.0f);
     liveR.assign ((size_t) scratch, 0.0f);
+    mixer.prepare (scratch, sr);
+    mixer.workers = &workers;
+    if (workers.size() != threadCount.load() || std::abs (workersRate - sr) > 0.5 || workersBlock != maximumBlockSize)
+    {
+        workers.start (juce::jmax (0, threadCount.load()), sr, maximumBlockSize);
+        workersRate = sr;
+        workersBlock = maximumBlockSize;
+    }
     playing = false;
     practiceRunning = false;
     playingState = false;
@@ -271,34 +280,40 @@ void AudioEngine::closeRecordSegments() noexcept
                 t.recorder->closeSegment();
 }
 
-void AudioEngine::renderSegment (const float* const* inputs, int numInputs, float* const* bus, int numBus,
-                                 int offset, int len, bool rolling, bool recordingNow) noexcept
+struct AudioEngine::Segment final : GraphMixer::Source
 {
-    if (graph == nullptr || numBus == 0)
-        return;
+    AudioEngine& e;
+    const float* const* inputs;
+    int numInputs, offset;
+    bool rolling, recordingNow;
 
-    auto input = [&] (int ch) -> const float* {
-        return (ch >= 0 && ch < numInputs && inputs[ch] != nullptr) ? inputs[ch] + offset : nullptr;
-    };
+    Segment (AudioEngine& en, const float* const* in, int nIn, int off, bool roll, bool rec)
+        : e (en), inputs (in), numInputs (nIn), offset (off), rolling (roll), recordingNow (rec) {}
 
-    float* sL = scratchL.data();
-    float* sR = scratchR.data();
-    for (auto& t : graph->tracks)
+    const float* input (int ch) const noexcept
     {
-        juce::FloatVectorOperations::clear (sL, len);
-        juce::FloatVectorOperations::clear (sR, len);
+        return (ch >= 0 && ch < numInputs && inputs[ch] != nullptr) ? inputs[ch] + offset : nullptr;
+    }
 
+    bool fill (int, PlayTrack& t, float* sL, float* sR, int len) noexcept override
+    {
+        auto& meter = e.trackMeters[(size_t) juce::jlimit (0, timeline::maxTracks - 1, t.meterSlot)];
+        if (t.kind != timeline::TrackKind::audio)
+        {
+            if (! t.audible) meter.rms.store (0.0f, std::memory_order_relaxed);
+            return t.audible;
+        }
         if (rolling)
         {
             // plugin delay compensation: read the clips ahead by the track's latency (wrapping at the loop end)
-            const juce::int64 from = pos + trackLatency (t);
-            if (segLooping && from >= segLoopEnd)
-                renderTrackClips (t, segLoopStart + (from - segLoopEnd) % juce::jmax ((juce::int64) 1, segLoopEnd - segLoopStart), len, sL, sR);
-            else if (segLooping && from + len > segLoopEnd)
+            const juce::int64 from = e.pos + readAhead (t);
+            if (e.segLooping && from >= e.segLoopEnd)
+                renderTrackClips (t, e.segLoopStart + (from - e.segLoopEnd) % juce::jmax ((juce::int64) 1, e.segLoopEnd - e.segLoopStart), len, sL, sR);
+            else if (e.segLooping && from + len > e.segLoopEnd)
             {
-                const int first = (int) (segLoopEnd - from);
+                const int first = (int) (e.segLoopEnd - from);
                 renderTrackClips (t, from, first, sL, sR);
-                renderTrackClips (t, segLoopStart, len - first, sL + first, sR + first);
+                renderTrackClips (t, e.segLoopStart, len - first, sL + first, sR + first);
             }
             else
                 renderTrackClips (t, from, len, sL, sR);
@@ -306,37 +321,46 @@ void AudioEngine::renderSegment (const float* const* inputs, int numInputs, floa
 
         const float* inL = input (t.inputLeft);
         const float* inR = t.inputRight >= 0 ? input (t.inputRight) : inL;
-
         if (t.monitor && inL != nullptr)
         {
             juce::FloatVectorOperations::add (sL, inL, len);
             juce::FloatVectorOperations::add (sR, inR != nullptr ? inR : inL, len);
         }
-
         if (recordingNow && t.recorder != nullptr && inL != nullptr)
-            t.recorder->push (inL, t.recorder->numChannels > 1 ? inR : nullptr, len, pos);
+            t.recorder->push (inL, t.recorder->numChannels > 1 ? inR : nullptr, len, e.pos);
 
-        auto& meter = trackMeters[(size_t) juce::jlimit (0, timeline::maxTracks - 1, t.meterSlot)];
         if (! t.audible)
         {
             meter.rms.store (0.0f, std::memory_order_relaxed);
-            continue;
+            return false;
         }
-        if (t.rig != nullptr)
-            t.rig->process (sL, sR, len);
-        if (t.inserts != nullptr)
-            t.inserts->process (sL, sR, len);
-        juce::FloatVectorOperations::multiply (sL, t.gainL, len);
-        juce::FloatVectorOperations::multiply (sR, t.gainR, len);
-        meter.update (sL, len);
-        meter.update (sR, len);
-
-        juce::FloatVectorOperations::add (bus[0] + offset, sL, len);
-        if (numBus > 1)
-            juce::FloatVectorOperations::add (bus[1] + offset, sR, len);
-        else
-            juce::FloatVectorOperations::add (bus[0] + offset, sR, len);
+        return true;
     }
+
+    void post (int, const PlayTrack& t, const float* L, const float* R, int len) noexcept override
+    {
+        auto& meter = e.trackMeters[(size_t) juce::jlimit (0, timeline::maxTracks - 1, t.meterSlot)];
+        meter.update (L, len);
+        meter.update (R, len);
+    }
+};
+
+void AudioEngine::renderSegment (const float* const* inputs, int numInputs, float* const* bus, int numBus,
+                                 int offset, int len, bool rolling, bool recordingNow) noexcept
+{
+    if (graph == nullptr || numBus == 0)
+        return;
+    float* sL = scratchL.data();
+    float* sR = scratchR.data();
+    juce::FloatVectorOperations::clear (sL, len);
+    juce::FloatVectorOperations::clear (sR, len);
+    Segment seg (*this, inputs, numInputs, offset, rolling, recordingNow);
+    mixer.mix (*graph, seg, sL, sR, len);
+    juce::FloatVectorOperations::add (bus[0] + offset, sL, len);
+    if (numBus > 1)
+        juce::FloatVectorOperations::add (bus[1] + offset, sR, len);
+    else
+        juce::FloatVectorOperations::add (bus[0] + offset, sR, len);
 }
 
 void AudioEngine::process (const float* const* inputs, int numInputs, float* const* outputs, int numOutputs,
@@ -557,6 +581,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, 
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
     prepare (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples());
+    workers.setWorkgroup (device->getWorkgroup());
     deviceRunning = true;
 }
 

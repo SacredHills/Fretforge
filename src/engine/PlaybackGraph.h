@@ -1,4 +1,5 @@
 #pragma once
+#include "core/Timeline.h"
 #include <juce_data_structures/juce_data_structures.h>
 #include "AudioCache.h"
 #include "Recorder.h"
@@ -29,6 +30,18 @@ struct PlayTrack
     std::shared_ptr<TrackRecorder> recorder; // only while recording
     std::shared_ptr<fx::AmpRig> rig;         // amp rig insert (Effects & Amps), applied before fader / pan
     std::shared_ptr<fx::InsertChain> inserts; // plugin inserts, after the rig
+
+    // routing
+    timeline::TrackKind kind = timeline::TrackKind::audio;
+    int output = -1;                          // index of the bus track this one plays into, -1 = master
+    struct Send { int target = -1; float gain = 0.0f; bool pre = false; };
+    std::vector<Send> sends;                  // into FX / bus tracks
+    int level = 0;                            // processing stage: a track's sources all have lower levels
+
+    // audio-thread state
+    struct Idle { juce::int64 silentIn = 0, quietOut = 0; bool sleeping = false; } idle;   // skip effects that have nothing to do
+    int downstreamLatency = 0;                // latency of the buses this track plays through
+    void resetState() noexcept { idle = {}; }
 };
 
 /** Immutable snapshot of everything the audio thread needs to play the arrangement.
@@ -36,6 +49,7 @@ struct PlayTrack
 struct PlaybackGraph
 {
     std::vector<PlayTrack> tracks;
+    std::vector<int> order;                  // track indices sorted by level (sources before the buses they feed)
     double sampleRate = 48000.0;
     int missingClips = 0; // clips whose audio is not loaded (yet)
 };
@@ -59,6 +73,8 @@ void renderTrackClips (const PlayTrack& track, juce::int64 t0, int n, float* lef
 /** Samples the track's rig and inserts delay its sound by (audio thread). Playback reads the track's clips that much
     earlier, so recorded audio stays in time with the other tracks (live monitoring cannot be compensated). */
 int trackLatency (const PlayTrack&) noexcept;
+/** How far ahead to read a track's clips so it lines up after its own effects and the buses it plays through. */
+inline int readAhead (const PlayTrack& t) noexcept { return trackLatency (t) + t.downstreamLatency; }
 
 /** Constant-power pan with unity at centre. */
 void panGains (float pan, float gain, float& left, float& right) noexcept;

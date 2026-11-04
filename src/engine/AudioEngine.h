@@ -4,6 +4,8 @@
 #include "core/SpscFifo.h"
 #include "core/Timeline.h"
 #include "PlaybackGraph.h"
+#include "GraphMixer.h"
+#include "TrackWorkers.h"
 #include "TabSynth.h"
 #include "fx/AmpRig.h"
 #include <array>
@@ -116,6 +118,9 @@ public:
         (or at once if no device is running), so a pointer it read before can no longer be in use. */
     void waitForAudioCallback();
 
+    /** Helper threads that process tracks' rigs and plugins in parallel (applied at the next prepare). */
+    std::atomic<int> threadCount { TrackWorkers::defaultThreadCount() };
+
     // ---- driving ----
     void prepare (double sampleRate, int maximumBlockSize);
     void process (const float* const* inputs, int numInputs, float* const* outputs, int numOutputs, int numSamples) noexcept;
@@ -173,5 +178,10 @@ private:
     void closeRecordSegments() noexcept;
     void renderSegment (const float* const* inputs, int numInputs, float* const* bus, int numBus,
                         int offset, int len, bool rolling, bool recordingNow) noexcept;
+    GraphMixer mixer;
+    TrackWorkers workers;
+    double workersRate = 0.0;
+    int workersBlock = -1;
+    struct Segment;   // GraphMixer::Source for renderSegment
 };
 } // namespace ff

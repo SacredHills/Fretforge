@@ -2,6 +2,8 @@
 #include "core/Timeline.h"
 #include "core/ProjectFile.h"
 #include <cmath>
+#include <functional>
+#include <map>
 
 namespace ff
 {
@@ -28,7 +30,8 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
 
     bool anySolo = false;
     for (const auto& t : tracks)
-        anySolo = anySolo || (bool) t[ids::solo];
+        anySolo = anySolo || (t.hasType (ids::TRACK) && isAudioTrack (t) && (bool) t[ids::solo]);
+    std::vector<juce::ValueTree> trees;
 
     int slot = 0;
     for (const auto& t : tracks)
@@ -39,7 +42,9 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
         pt.meterSlot = slot++;
         const float gain = juce::Decibels::decibelsToGain ((float) (double) t[ids::gainDb], -96.0f);
         panGains ((float) (double) t[ids::pan], gain, pt.gainL, pt.gainR);
-        pt.audible = ! (bool) t[ids::mute] && (! anySolo || (bool) t[ids::solo]);
+        pt.kind = kindOf (t);
+        // buses and FX returns stay audible when other tracks are soloed (the soloed track plays through them)
+        pt.audible = ! (bool) t[ids::mute] && (! anySolo || (bool) t[ids::solo] || pt.kind != TrackKind::audio);
         pt.monitor = (bool) t[ids::monitor];
         pt.armed = (bool) t[ids::armed];
         pt.inputLeft = (int) t[ids::inputChannel];
@@ -99,7 +104,59 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
             pt.pieces.push_back (std::move (pp));
         }
         g->tracks.push_back (std::move (pt));
+        trees.push_back (t);
     }
+
+    // ---- routing: outputs and sends by index, then processing levels (loops are cut) ----
+    std::map<juce::String, int> byId;
+    for (int i = 0; i < (int) trees.size(); ++i) byId[trees[(size_t) i][ids::id].toString()] = i;
+    auto indexOf = [&] (const juce::String& id) { auto it = byId.find (id); return it == byId.end() ? -1 : it->second; };
+    for (int i = 0; i < (int) trees.size(); ++i)
+    {
+        auto& pt = g->tracks[(size_t) i];
+        const int o = indexOf (outputOf (trees[(size_t) i]));
+        pt.output = (o >= 0 && o != i && g->tracks[(size_t) o].kind != TrackKind::audio) ? o : -1;
+        for (const auto& c : trees[(size_t) i])
+            if (c.hasType (ids::SEND) && (int) pt.sends.size() < maxSends)
+            {
+                const int target = indexOf (c[ids::target].toString());
+                if (target < 0 || target == i || g->tracks[(size_t) target].kind == TrackKind::audio) continue;
+                pt.sends.push_back ({ target, juce::Decibels::decibelsToGain ((float) (double) c[ids::level], -96.0f), (bool) c[ids::pre] });
+            }
+    }
+    // level = longest chain of sources; an edge that would close a loop is dropped
+    const int n = (int) g->tracks.size();
+    std::vector<int> state ((size_t) n, 0);   // 0 new, 1 visiting, 2 done
+    std::vector<std::vector<int>> sources ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        auto& pt = g->tracks[(size_t) i];
+        if (pt.output >= 0) sources[(size_t) pt.output].push_back (i);
+        for (auto& sd : pt.sends) sources[(size_t) sd.target].push_back (i);
+    }
+    std::function<int (int)> levelOf = [&] (int i) -> int {
+        if (state[(size_t) i] == 2) return g->tracks[(size_t) i].level;
+        state[(size_t) i] = 1;
+        int lv = g->tracks[(size_t) i].kind == TrackKind::audio ? 0 : 1;
+        for (int src : sources[(size_t) i])
+        {
+            if (state[(size_t) src] == 1)   // loop: cut this route
+            {
+                auto& s = g->tracks[(size_t) src];
+                if (s.output == i) s.output = -1;
+                s.sends.erase (std::remove_if (s.sends.begin(), s.sends.end(), [i] (const PlayTrack::Send& x) { return x.target == i; }), s.sends.end());
+                continue;
+            }
+            lv = juce::jmax (lv, levelOf (src) + 1);
+        }
+        state[(size_t) i] = 2;
+        g->tracks[(size_t) i].level = lv;
+        return lv;
+    };
+    for (int i = 0; i < n; ++i) levelOf (i);
+    g->order.resize ((size_t) n);
+    for (int i = 0; i < n; ++i) g->order[(size_t) i] = i;
+    std::stable_sort (g->order.begin(), g->order.end(), [&] (int a, int b) { return g->tracks[(size_t) a].level < g->tracks[(size_t) b].level; });
     return g;
 }
 
