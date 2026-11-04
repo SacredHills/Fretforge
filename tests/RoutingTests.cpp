@@ -286,6 +286,47 @@ public:
                     expectWithinAbsoluteError (b.getMagnitude (0, 24000, 24000), 0.25f, 0.003f);
                 }
             }
+
+            // master plugins in the export, with the tracks copied (as the app does), like a limiter on the master
+            struct BuiltinHost final : fx::PluginHost
+            {
+                void createAsync (const juce::String& d, double r, int b, std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> done) override
+                { juce::String e; done (createBlocking (d, r, b, e), e); }
+                std::unique_ptr<juce::AudioPluginInstance> createBlocking (const juce::String& d, double r, int b, juce::String&) override
+                {
+                    juce::PluginDescription pd;
+                    if (auto x = juce::parseXML (d)) pd.loadFromXml (*x);
+                    auto p = fx::builtin::create (pd.fileOrIdentifier);
+                    if (p != nullptr) p->setRateAndBufferSizeDetails (r, b);
+                    return p;
+                }
+            } host;
+            fx::setPluginHost (&host);
+            t.setProperty (tl::ids::gainDb, 6.0, nullptr);
+            bus.setProperty (tl::ids::gainDb, 6.0, nullptr);   // 0.5 * 2 * 2 = +6 dB over full scale
+            auto master = project::masterNode (projectTree);
+            rg::addInsert (master, fx::builtin::descriptionXml ("fretforge:limiter"), "Limiter", nullptr,
+                           fx::builtin::stateWith ("fretforge:limiter", { { "ceiling", -1.0f } }));
+            ExportSettings s;
+            s.sampleRate = sr;
+            s.bitDepth = 32;
+            s.endSec = 1.0;
+            s.destination = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ff_routing_limited.wav");
+            s.master = master.createCopy();
+            auto res = exportAudio (tracks.createCopy(), dir, cache, s);
+            fx::setPluginHost (nullptr);
+            expect (res.result.wasOk(), res.result.getErrorMessage());
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (s.destination));
+            expect (rd != nullptr);
+            if (rd != nullptr)
+            {
+                juce::AudioBuffer<float> b (2, 48000);
+                rd->read (&b, 0, 48000, 0, true, true);
+                const float pk = b.getMagnitude (0, 48000);
+                expect (pk <= juce::Decibels::decibelsToGain (-1.0f) + 1.0e-5f && pk > 0.8f, "limited export peak " + juce::String (pk));
+            }
             dir.deleteRecursively();
         }
     }

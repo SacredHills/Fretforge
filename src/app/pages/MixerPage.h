@@ -69,6 +69,8 @@ public:
     void resized() override;
     void tick();
     static constexpr int width = 104;
+    int wantedFaderTop() const;
+    int alignTop = 0;   // set by the mixer: the lowest fader top of all strips
 
 private:
     ProjectDocument& doc;
@@ -120,6 +122,7 @@ private:
     juce::TextButton addTrackButton { "+ Track" };
     std::unique_ptr<InsertList> masterInserts;   // plugins on the master bus
     int masterRows = 0;
+    int faderTop = 0;
 
     void rebuild();
     void timerCallback() override;

@@ -61,6 +61,23 @@ DrumSynth::Svf::Out DrumSynth::Svf::process (float x) noexcept
     return { v2, v1, x - k * v1 - v2 };
 }
 
+DrumSynth::DrumSynth()
+{
+    for (int i = 0; i < maxPieces; ++i)
+    {
+        pieceGain[(size_t) i] = 1.0f;
+        piecePan[(size_t) i] = i < (int) drums::numPieces ? pieceInfo (i).pan : 0.0f;
+        piecePeak[(size_t) i] = 0.0f;
+    }
+}
+
+DrumSynth::Mix DrumSynth::currentMix() const noexcept
+{
+    Mix m;
+    for (int i = 0; i < maxPieces; ++i) { m.gain[(size_t) i] = pieceGain[(size_t) i].load(); m.pan[(size_t) i] = piecePan[(size_t) i].load(); }
+    return m;
+}
+
 void DrumSynth::prepare (double sampleRate)
 {
     sr = sampleRate > 0.0 ? sampleRate : 48000.0;
@@ -121,10 +138,11 @@ void DrumSynth::trigger (int piece, float velocity) noexcept
     v.length = decayOf (piece) * 7.0 + 0.02;
     v.sample = samples[(size_t) piece];
     if (v.sample != nullptr) v.length = (double) v.sample->getNumSamples() / sr + 0.001;
-    const float pan = pieceInfo (piece).pan;
+    const float pan = juce::jlimit (-1.0f, 1.0f, piecePan[(size_t) piece].load (std::memory_order_relaxed));
+    const float pg = juce::jmax (0.0f, pieceGain[(size_t) piece].load (std::memory_order_relaxed));
     const float a = (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
-    v.gainL = std::cos (a) * 1.41f;
-    v.gainR = std::sin (a) * 1.41f;
+    v.gainL = std::cos (a) * 1.41421356f * pg;
+    v.gainR = std::sin (a) * 1.41421356f * pg;
     for (size_t i = 0; i < v.phase.size(); ++i) v.phase[i] = (double) ((rng >> (i * 4)) & 0xff) / 256.0;
 
     switch (piece)
@@ -261,6 +279,7 @@ void DrumSynth::render (float* left, float* right, int n) noexcept
         for (auto& v : voices)
         {
             if (! v.active) continue;
+            float vp = 0.0f;
             if (v.sample != nullptr)
             {
                 const auto* buf = v.sample;
@@ -279,10 +298,13 @@ void DrumSynth::render (float* left, float* right, int n) noexcept
                         if (v.choke <= 0.0f) { v.active = false; break; }
                         c *= v.choke;
                     }
-                    if (stereo) { bl[i] += l[v.samplePos] * c; br[i] += r[v.samplePos] * c; }
-                    else { bl[i] += l[v.samplePos] * c * v.gainL; br[i] += l[v.samplePos] * c * v.gainR; }
+                    const float ol = (stereo ? l[v.samplePos] : l[v.samplePos]) * c * v.gainL;
+                    const float orr = (stereo ? r[v.samplePos] : l[v.samplePos]) * c * v.gainR;
+                    bl[i] += ol; br[i] += orr;
+                    vp = juce::jmax (vp, std::abs (ol), std::abs (orr));
                     ++v.samplePos;
                 }
+                notePeak (v.piece, vp);
                 continue;
             }
             for (int i = 0; i < len; ++i)
@@ -296,9 +318,11 @@ void DrumSynth::render (float* left, float* right, int n) noexcept
                 }
                 bl[i] += s * v.gainL;
                 br[i] += s * v.gainR;
+                vp = juce::jmax (vp, std::abs (s * v.gainL), std::abs (s * v.gainR));
                 v.t += 1.0;
                 if (v.t / sr > v.length) { v.active = false; break; }
             }
+            notePeak (v.piece, vp);
         }
         // soft knee above -2 dB so stacked hits (blasts, crash + kick) never clip hard
         auto knee = [] (float x) {
@@ -315,7 +339,7 @@ void DrumSynth::render (float* left, float* right, int n) noexcept
 }
 
 void DrumSynth::renderOffline (const std::vector<DrumHit>& hits, double sampleRate, double lengthSec, float volume,
-                               juce::AudioBuffer<float>& out, const SampleSet* sampleSet)
+                               juce::AudioBuffer<float>& out, const SampleSet* sampleSet, const Mix* mix)
 {
     const int total = (int) std::ceil (juce::jmax (0.0, lengthSec) * sampleRate);
     out.setSize (2, total);
@@ -323,6 +347,8 @@ void DrumSynth::renderOffline (const std::vector<DrumHit>& hits, double sampleRa
     DrumSynth s;
     s.prepare (sampleRate);
     s.volume = volume;
+    if (mix != nullptr)
+        for (int i = 0; i < maxPieces; ++i) { s.pieceGain[(size_t) i] = mix->gain[(size_t) i]; s.piecePan[(size_t) i] = mix->pan[(size_t) i]; }
     if (sampleSet != nullptr)
         for (int i = 0; i < maxPieces; ++i) s.setSample (i, (*sampleSet)[(size_t) i]);
     size_t next = 0;

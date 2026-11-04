@@ -148,6 +148,28 @@ public:
             expect (std::abs (at - (100 + 4800)) <= 3, "echo at " + juce::String (at));
         }
 
+        beginTest ("limiter: nothing passes the ceiling, quiet audio is untouched (only delayed)");
+        {
+            auto p = make ("fretforge:limiter");
+            setP (*p, "ceiling", -1.0f);
+            setP (*p, "gain", 12.0f);
+            p->prepareToPlay (sr, 256);
+            expect (p->getLatencySamples() > 0 && p->getLatencySamples() < 200);
+            juce::AudioBuffer<float> loud (2, 48000);
+            juce::Random rnd (3);
+            for (int c = 0; c < 2; ++c) for (int i = 0; i < 48000; ++i) loud.setSample (c, i, (rnd.nextFloat() * 2.0f - 1.0f) * (i % 9000 < 300 ? 1.0f : 0.3f));
+            auto out = run (*p, loud);
+            expect (out.getMagnitude (0, 48000) <= juce::Decibels::decibelsToGain (-1.0f) + 1.0e-6f, "peak " + juce::String (out.getMagnitude (0, 48000)));
+            setP (*p, "gain", 0.0f);
+            p->prepareToPlay (sr, 256);
+            auto quiet = sine (440.0, 0.25f, 24000);
+            auto q = run (*p, quiet);
+            const int lat = p->getLatencySamples();
+            float maxErr = 0.0f;
+            for (int i = 12000; i < 24000; ++i) maxErr = juce::jmax (maxErr, std::abs (q.getSample (0, i) - quiet.getSample (0, i - lat)));
+            expect (maxErr < 1.0e-3f, "quiet audio changed by " + juce::String (maxErr));
+        }
+
         beginTest ("reverb: decays, and mix 0 is dry");
         {
             auto p = make ("fretforge:reverb");

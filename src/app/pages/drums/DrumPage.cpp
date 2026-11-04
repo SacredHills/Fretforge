@@ -414,6 +414,12 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
     };
     kitButton.setTooltip ("Drum sounds: load your own samples (one per drum or a whole folder) and set a default kit");
     kitButton.onClick = [this] { showKitMenu(); };
+    mixerButton.setTooltip ("Volume, pan, mute and solo for each drum");
+    mixerButton.setClickingTogglesState (true);
+    mixerButton.setColour (juce::TextButton::buttonOnColourId, palette::accent);
+    mixerButton.onClick = [this] { mixer.setVisible (mixerButton.getToggleState()); viewport.setVisible (! mixerButton.getToggleState()); };
+    addAndMakeVisible (mixerButton);
+    addChildComponent (mixer);
     addAndMakeVisible (kitButton);
     deleteButton.setTooltip ("Delete this pattern, unused patterns, all patterns, or clear the song");
     deleteButton.onClick = [this] {
@@ -703,6 +709,16 @@ void DrumPage::rebind()
     refresh();
     rebuildSequence();
     reloadKit (true);
+    mixer.setDrums (drums);
+    pushMix();
+}
+
+void DrumPage::pushMix()
+{
+    float g[drums::numPieces], p[drums::numPieces];
+    drums::effectiveMix (drums, g, p);
+    auto& synth = host.engine.drums();
+    for (int i = 0; i < drums::numPieces; ++i) { synth.pieceGain[(size_t) i] = g[i]; synth.piecePan[(size_t) i] = p[i]; }
 }
 
 juce::ValueTree DrumPage::current() const
@@ -799,7 +815,7 @@ void DrumPage::refresh()
 void DrumPage::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& id)
 {
     if (id == dids::selected) return;
-    if (node.hasType (dids::KIT)) { reloadKit (false); grid.repaint(); return; }
+    if (node.hasType (dids::KIT)) { reloadKit (false); pushMix(); mixer.refresh(); grid.repaint(); return; }
     if (node == drums || node.isAChildOf (drums) || node == doc.transport())
         triggerAsyncUpdate();
     juce::ignoreUnused (id);
@@ -970,7 +986,8 @@ void DrumPage::renderToStudio()
                 owned.push_back (std::move (b));
             }
     juce::AudioBuffer<float> buf;
-    DrumSynth::renderOffline (hits, sr, c.lengthQ * spq + 3.0, (float) (double) drums.getProperty (dids::volume, 0.8), buf, &set);
+    const auto mix = host.engine.drums().currentMix();
+    DrumSynth::renderOffline (hits, sr, c.lengthQ * spq + 3.0, (float) (double) drums.getProperty (dids::volume, 0.8), buf, &set, &mix);
 
     const auto name = useSong ? juce::String ("Drums") : "Drums - " + pat[dids::name].toString();
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("FretForgeRender");
@@ -1247,7 +1264,8 @@ void DrumPage::resized()
     renderButton.setBounds (row2.removeFromRight (116)); row2.removeFromRight (4);
     exportButton.setBounds (row2.removeFromRight (100)); row2.removeFromRight (2);
     importButton.setBounds (row2.removeFromRight (98)); row2.removeFromRight (4);
-    kitButton.setBounds (row2.removeFromRight (56)); row2.removeFromRight (10);
+    kitButton.setBounds (row2.removeFromRight (56)); row2.removeFromRight (4);
+    mixerButton.setBounds (row2.removeFromRight (60)); row2.removeFromRight (10);
     humanLabel.setBounds (row2.removeFromLeft (64));
     humanTimeSlider.setBounds (row2.removeFromLeft (juce::jmax (60, juce::jmin (84, row2.getWidth() / 3)))); row2.removeFromLeft (2);
     humanVelSlider.setBounds (row2.removeFromLeft (juce::jmax (60, juce::jmin (84, row2.getWidth() / 2)))); row2.removeFromLeft (6);
@@ -1265,6 +1283,7 @@ void DrumPage::resized()
     }
     strip.setBounds (songArea);
     viewport.setBounds (r.reduced (0, 2));
+    mixer.setBounds (r.reduced (0, 2));
     grid.updateSize (viewport.getMaximumVisibleWidth());
 }
 } // namespace ff

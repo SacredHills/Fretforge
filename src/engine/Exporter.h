@@ -15,6 +15,8 @@ struct ExportSettings
     double startSec = 0.0, endSec = 0.0;
     juce::File destination;         // mix: the file; stems: the folder
     juce::String baseName = "Mix";
+    /** The master bus (its plugins process every render). If invalid, the MASTER node next to `tracks` is used. */
+    juce::ValueTree master;
 
     juce::String extension() const { return format == Format::flac ? ".flac" : ".wav"; }
 };

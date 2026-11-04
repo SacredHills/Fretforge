@@ -61,6 +61,14 @@ juce::ValueTree addSection (juce::ValueTree drums, const juce::String& patternId
 /** Project-relative path of the sample used for a piece ("" = built-in synthesized sound). Stored in DRUMS/KIT. */
 juce::String samplePath (const juce::ValueTree& drums, int piece);
 void setSamplePath (juce::ValueTree drums, int piece, const juce::String& relativePath, juce::UndoManager*);
+// ---- per-piece mix (DRUMS/KIT: gain<n> dB, pan<n> -1..1, mute<n>, solo<n>) ----
+struct PieceMix { float gainDb = 0.0f, pan = 0.0f; bool mute = false, solo = false; };
+PieceMix pieceMix (const juce::ValueTree& drums, int piece);
+/** what = "gain", "pan", "mute" or "solo". */
+void setPieceMix (juce::ValueTree drums, int piece, const juce::String& what, const juce::var& value, juce::UndoManager*);
+/** Linear gain after mute / solo, and pan, for every piece. */
+void effectiveMix (const juce::ValueTree& drums, float* gains, float* pans);
+
 /** Guesses the kit piece from a sample's file name ("Kick_01.wav", "HH open.wav", "Tom 3", "Ride bell" ...); -1 if unknown. */
 int pieceForSampleName (const juce::String& fileName);
 

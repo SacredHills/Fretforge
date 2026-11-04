@@ -135,6 +135,42 @@ void setSamplePath (juce::ValueTree d, int piece, const juce::String& rel, juce:
     else kit.setProperty (sampleId (piece), rel, um);
 }
 
+PieceMix pieceMix (const juce::ValueTree& d, int piece)
+{
+    const auto kit = d.getChildWithName (ids::KIT);
+    const auto n = juce::String (piece);
+    PieceMix m;
+    m.gainDb = (float) (double) kit.getProperty ("gain" + n, 0.0);
+    m.pan = (float) (double) kit.getProperty ("pan" + n, (double) pieceInfo (piece).pan);
+    m.mute = (bool) kit.getProperty ("mute" + n, false);
+    m.solo = (bool) kit.getProperty ("solo" + n, false);
+    return m;
+}
+
+void setPieceMix (juce::ValueTree d, int piece, const juce::String& what, const juce::var& value, juce::UndoManager* um)
+{
+    auto kit = d.getChildWithName (ids::KIT);
+    if (! kit.isValid())
+    {
+        kit = juce::ValueTree (ids::KIT);
+        d.appendChild (kit, um);
+    }
+    kit.setProperty (juce::Identifier (what + juce::String (piece)), value, um);
+}
+
+void effectiveMix (const juce::ValueTree& d, float* gains, float* pans)
+{
+    bool anySolo = false;
+    for (int p = 0; p < numPieces; ++p) anySolo = anySolo || pieceMix (d, p).solo;
+    for (int p = 0; p < numPieces; ++p)
+    {
+        const auto m = pieceMix (d, p);
+        const bool on = ! m.mute && (! anySolo || m.solo);
+        gains[p] = on ? juce::Decibels::decibelsToGain (m.gainDb, -60.0f) : 0.0f;
+        pans[p] = m.pan;
+    }
+}
+
 int pieceForSampleName (const juce::String& fileName)
 {
     const auto n = " " + juce::File::createFileWithoutCheckingPath (fileName).getFileNameWithoutExtension().toLowerCase()

@@ -68,7 +68,7 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
         return rig::isEnabled (r) ? fx::makeOfflineRig (r, s.sampleRate, 4096, rigWarnings) : nullptr;
     };
     opt.insertsFor = [&] (const juce::ValueTree& t) { return fx::makeOfflineInserts (t, s.sampleRate, 4096, rigWarnings); };
-    if (const auto master = tracks.getParent().getChildWithName (project::ids::MASTER); master.isValid())
+    if (const auto master = s.master.isValid() ? s.master : tracks.getParent().getChildWithName (project::ids::MASTER); master.isValid())
         opt.masterInserts = fx::makeOfflineInserts (master, s.sampleRate, 4096, rigWarnings);
     juce::ScopedNoDenormals noDenormals;
     auto graph = buildPlaybackGraph (tracks, mediaBundle, cache, opt);

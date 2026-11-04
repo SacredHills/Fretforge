@@ -1,4 +1,5 @@
 #include "ExportDialog.h"
+#include "core/ProjectFile.h"
 
 namespace ff
 {
@@ -180,6 +181,8 @@ void ExportDialog::startExport()
 
 void ExportDialog::runExport (ExportSettings s)
 {
+    session.rigs().captureAllPluginStates();   // the export uses every plugin's current settings
+    s.master = project::masterNode (doc.tree()).createCopy();   // master plugins (the tracks are copied without their parent)
     auto* job = new ExportJob (doc.tracks().createCopy(), doc.mediaBundle(), session.cache, s, [] (ExportResult r) {
         juce::String msg;
         if (r.result.failed())

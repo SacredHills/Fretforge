@@ -647,6 +647,124 @@ private:
 
 std::unique_ptr<juce::Component> Compressor::createDisplay() { return std::make_unique<CompDisplay> (*this); }
 
+// =====================================================================================================  limiter
+
+/** Look-ahead brick-wall limiter: the gain each sample needs is held over the look-ahead window and smoothed with
+    a box filter of the same length, so the gain is already down when a peak leaves the delay; a final clip at the
+    ceiling catches anything left (there is nothing left in practice). */
+class Limiter final : public Base
+{
+public:
+    explicit Limiter (const Info& i) : Base (i, layout()) {}
+    static Layout layout()
+    {
+        Layout l;
+        l.add (param ("gain", "Input gain", 0.0f, 24.0f, 0.0f, "dB"));
+        l.add (param ("ceiling", "Ceiling", -12.0f, 0.0f, -1.0f, "dB"));
+        l.add (param ("release", "Release", 1.0f, 1000.0f, 80.0f, "ms", 100.0f));
+        return l;
+    }
+    void prepareToPlay (double, int) override
+    {
+        look = juce::jmax (1, (int) std::round (sampleRate() * 0.0015));
+        setLatencySamples (look);
+        for (auto& d : delay) d.assign ((size_t) look + 1, 0.0f);
+        held.assign ((size_t) look + 1, 1.0f);
+        dqVal.assign ((size_t) look + 2, 1.0f);
+        dqIdx.assign ((size_t) look + 2, 0);
+        dqHead = dqTail = 0;
+        box.assign ((size_t) look, 1.0f);
+        boxSum = (double) look;
+        pos = 0; t = 0; env = 1.0f;
+        inGain.reset (sampleRate(), 0.05);
+        inGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (p ("gain")));
+    }
+    void process (float* L, float* R, int n) noexcept override
+    {
+        if (delay[0].empty()) return;
+        const float ceiling = juce::Decibels::decibelsToGain (p ("ceiling"));
+        const float rel = 1.0f - std::exp (-1.0f / (float) (sampleRate() * p ("release") * 0.001));
+        inGain.setTargetValue (juce::Decibels::decibelsToGain (p ("gain")));
+        const int len = look + 1, qcap = (int) dqVal.size();
+        float maxGr = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const float g0 = inGain.getNextValue();
+            const float xl = L[i] * g0, xr = R != nullptr ? R[i] * g0 : xl;
+            const float pk = juce::jmax (std::abs (xl), std::abs (xr));
+            const float need = pk > ceiling ? ceiling / pk : 1.0f;
+            // sliding minimum of `need` over the last look + 1 samples (monotonic queue)
+            while (dqHead != dqTail && dqVal[(size_t) ((dqTail - 1 + qcap) % qcap)] >= need) dqTail = (dqTail - 1 + qcap) % qcap;
+            dqVal[(size_t) dqTail] = need;
+            dqIdx[(size_t) dqTail] = t;
+            dqTail = (dqTail + 1) % qcap;
+            while (dqIdx[(size_t) dqHead] <= t - len) dqHead = (dqHead + 1) % qcap;
+            const float hold = dqVal[(size_t) dqHead];
+            // box filter over `look` samples
+            const int bi = (int) (t % look);
+            boxSum += (double) hold - (double) box[(size_t) bi];
+            box[(size_t) bi] = hold;
+            const float target = (float) (boxSum / look);
+            env = target < env ? target : env + rel * (target - env);
+            // delay the audio by `look`
+            const float dl = delay[0][(size_t) pos], dr = delay[1][(size_t) pos];
+            delay[0][(size_t) pos] = xl;
+            delay[1][(size_t) pos] = xr;
+            pos = (pos + 1) % look;
+            L[i] = juce::jlimit (-ceiling, ceiling, dl * env);
+            if (R != nullptr) R[i] = juce::jlimit (-ceiling, ceiling, dr * env);
+            maxGr = juce::jmax (maxGr, -juce::Decibels::gainToDecibels (env, -60.0f));
+            ++t;
+        }
+        grDb.store (juce::jmax (maxGr, grDb.load (std::memory_order_relaxed)), std::memory_order_relaxed);
+    }
+    std::unique_ptr<juce::Component> createDisplay() override;
+    int displayHeight() const override { return 70; }
+    std::atomic<float> grDb { 0.0f };
+private:
+    int look = 1, pos = 0, dqHead = 0, dqTail = 0;
+    juce::int64 t = 0;
+    std::array<std::vector<float>, 2> delay;
+    std::vector<float> held, dqVal, box;
+    std::vector<juce::int64> dqIdx;
+    double boxSum = 0.0;
+    float env = 1.0f;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inGain;
+};
+
+class GrMeter final : public juce::Component, private juce::Timer
+{
+public:
+    explicit GrMeter (std::atomic<float>& g) : gr (g) { startTimerHz (30); }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (col::well);
+        g.fillRoundedRectangle (r, 6.0f);
+        auto m = r.reduced (16.0f, 10.0f);
+        g.setColour (col::dim);
+        g.setFont (juce::Font (juce::FontOptions (12.0f)));
+        g.drawText ("Gain reduction  " + juce::String (shown, 1) + " dB", m.removeFromTop (18.0f), juce::Justification::centredLeft);
+        m.removeFromTop (6.0f);
+        auto bar = m.removeFromTop (14.0f);
+        g.setColour (col::panel);
+        g.fillRoundedRectangle (bar, 3.0f);
+        g.setColour (col::bad.withAlpha (0.85f));
+        g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, shown / 12.0f)), 3.0f);
+    }
+private:
+    std::atomic<float>& gr;
+    float shown = 0.0f;
+    void timerCallback() override
+    {
+        const float v = gr.exchange (0.0f);
+        shown = v > shown ? v : juce::jmax (v, shown - 0.5f);
+        repaint();
+    }
+};
+
+std::unique_ptr<juce::Component> Limiter::createDisplay() { return std::make_unique<GrMeter> (grDb); }
+
 // =====================================================================================================  delay
 
 class Delay final : public Base
@@ -927,6 +1045,7 @@ const std::vector<Info>& all()
         { "fretforge:delay", "Delay", "Delay", "Stereo or ping-pong delay with filtered repeats." },
         { "fretforge:chorus", "Chorus", "Modulation", "Stereo chorus." },
         { "fretforge:reverb", "Reverb", "Reverb", "Room to hall reverb. On an FX track, set Mix to 100 %." },
+        { "fretforge:limiter", "Limiter", "Dynamics", "Look-ahead brick-wall limiter: nothing gets past the ceiling. Put it last on the master." },
     };
     return list;
 }
@@ -971,6 +1090,7 @@ std::unique_ptr<juce::AudioPluginInstance> create (const juce::String& id)
     if (s == "fretforge:delay") return std::make_unique<Delay> (*i);
     if (s == "fretforge:chorus") return std::make_unique<Chorus> (*i);
     if (s == "fretforge:reverb") return std::make_unique<Reverb> (*i);
+    if (s == "fretforge:limiter") return std::make_unique<Limiter> (*i);
     return nullptr;
 }
 

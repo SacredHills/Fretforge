@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
+#include <atomic>
 #include <vector>
 
 namespace ff
@@ -27,6 +28,13 @@ public:
     float volume = 0.8f;
 
     static constexpr int maxPieces = 32;
+    /** Per-piece mix (any thread; applied to hits that start after the change): linear gain and pan (-1..1). */
+    std::array<std::atomic<float>, maxPieces> pieceGain, piecePan;
+    /** Per-piece output peaks since the UI last took them. */
+    std::array<std::atomic<float>, maxPieces> piecePeak;
+    struct Mix { std::array<float, maxPieces> gain, pan; };
+    Mix currentMix() const noexcept;
+    DrumSynth();
     using SampleSet = std::array<const juce::AudioBuffer<float>*, maxPieces>;
     /** Uses a sample (already at the synth's sample rate; mono or stereo) for a piece, or nullptr for the built-in
         sound. Call on the audio thread (or before rendering): voices of that piece stop, the caller owns the buffer
@@ -35,7 +43,7 @@ public:
 
     /** Renders hits offline (for "render to audio track" and tests), optionally with samples. */
     static void renderOffline (const std::vector<DrumHit>& hits, double sampleRate, double lengthSec, float volume,
-                               juce::AudioBuffer<float>& out, const SampleSet* samples = nullptr);
+                               juce::AudioBuffer<float>& out, const SampleSet* samples = nullptr, const Mix* mix = nullptr);
 
 private:
     struct Svf
@@ -66,6 +74,11 @@ private:
     SampleSet samples {};
 
     float noise() noexcept;
+    void notePeak (int piece, float v) noexcept
+    {
+        auto& p = piecePeak[(size_t) juce::jlimit (0, maxPieces - 1, piece)];
+        if (v > p.load (std::memory_order_relaxed)) p.store (v, std::memory_order_relaxed);
+    }
     float sample (Voice&) noexcept;
 };
 } // namespace ff

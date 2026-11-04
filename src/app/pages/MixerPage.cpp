@@ -162,7 +162,10 @@ void InsertList::mouseDrag (const juce::MouseEvent& e)
     if (auto* c = juce::DragAndDropContainer::findParentDragContainerFor (this))
     {
         dragging = true;
-        c->startDragging ("ffinsert|" + track[ids::id].toString() + "|" + juce::String (row), this);
+        const auto rowArea = juce::Rectangle<int> (0, row * rowHeight, getWidth(), rowHeight - 2);
+        const juce::Point<int> offset (-e.getMouseDownX(), -(e.getMouseDownY() - rowArea.getY()));
+        c->startDragging ("ffinsert|" + track[ids::id].toString() + "|" + juce::String (row), this,
+                          juce::ScaledImage (createComponentSnapshot (rowArea, true, 2.0f), 2.0), false, &offset);
     }
 }
 
@@ -418,7 +421,15 @@ void ChannelStrip::resized()
     r.removeFromTop (6);
     nameLabel.setBounds (getLocalBounds().reduced (5, 0).withTrimmedTop (6).withHeight (24));
     r.removeFromBottom (6);
+    r.setTop (juce::jmax (r.getY(), alignTop));   // every strip's fader starts at the same height
     fader.setBounds (r.withTrimmedRight (16));
+}
+
+int ChannelStrip::wantedFaderTop() const
+{
+    const int ins = insertList.rowsWanted(), routes = routeList.rowsWanted();
+    return 44 + 40 + 6 + 24 + (isAudioTrack (track) ? 30 : 6) + ins * InsertList::rowHeight + (ins > 0 ? 6 : 0)
+           + routes * RouteList::rowHeight + 6;
 }
 
 // ------------------------------------------------------------------ page
@@ -489,6 +500,11 @@ void MixerPage::timerCallback()
 {
     meterL.tick();
     meterR.tick();
+    {
+        int top = 0;
+        for (auto* st : strips) top = juce::jmax (top, st->wantedFaderTop());
+        if (top != faderTop) resized();   // a strip gained or lost a plugin / send row
+    }
     if (masterInserts != nullptr)
     {
         if (masterInserts->rowsWanted() != masterRows) resized();
@@ -523,6 +539,9 @@ void MixerPage::resized()
     viewport.setBounds (r);
     emptyLabel.setBounds (r);
     stripHolder.setSize (juce::jmax (r.getWidth(), strips.size() * ChannelStrip::width), r.getHeight() - viewport.getScrollBarThickness());
+    faderTop = 0;
+    for (auto* st : strips) faderTop = juce::jmax (faderTop, st->wantedFaderTop());
+    for (auto* st : strips) { st->alignTop = faderTop; st->resized(); }
     for (int i = 0; i < strips.size(); ++i)
         strips[i]->setBounds (i * ChannelStrip::width, 0, ChannelStrip::width, stripHolder.getHeight());
 

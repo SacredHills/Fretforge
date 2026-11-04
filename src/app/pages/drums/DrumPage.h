@@ -4,6 +4,7 @@
 #include "../../EngineHost.h"
 #include "../../SessionController.h"
 #include "../../Widgets.h"
+#include "DrumMixer.h"
 #include "core/DrumModel.h"
 
 namespace ff
@@ -107,7 +108,9 @@ private:
     juce::Slider complexitySlider, humanTimeSlider, humanVelSlider, volumeSlider;
     juce::Label complexityLabel, humanLabel, volumeLabel;
     juce::TextButton generateButton { "Generate" }, generateNewButton { "Generate as new" };
-    juce::TextButton kitButton { "Kit..." };
+    juce::TextButton kitButton { "Kit..." }, mixerButton { "Mixer" };
+    DrumMixer mixer { doc, host };
+    void pushMix();
     juce::TextButton importButton { "Import..." }, exportButton { "Export MIDI..." }, renderButton { "Render to Studio" };
     // song
     juce::TextButton addSectionButton { "+ Add pattern" }, removeSectionButton { "Remove" }, leftButton { "<" }, rightButton { ">" },

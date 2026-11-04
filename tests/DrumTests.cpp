@@ -395,6 +395,33 @@ struct DrumTests : juce::UnitTest
             e.collectGarbage();
         }
 
+        beginTest ("per-drum volume, pan, mute and solo");
+        {
+            juce::ValueTree d (drums::ids::DRUMS);
+            drums::setPieceMix (d, drums::snare, "gain", -6.0206, nullptr);
+            drums::setPieceMix (d, drums::kick, "pan", -1.0, nullptr);
+            float g[drums::numPieces], p[drums::numPieces];
+            drums::effectiveMix (d, g, p);
+            expectWithinAbsoluteError (g[drums::snare], 0.5f, 1.0e-3f);
+            expectWithinAbsoluteError (p[drums::kick], -1.0f, 1.0e-6f);
+            drums::setPieceMix (d, drums::kick, "solo", true, nullptr);
+            drums::effectiveMix (d, g, p);
+            expect (g[drums::kick] > 0.9f && g[drums::snare] == 0.0f, "solo silences the others");
+            drums::setPieceMix (d, drums::kick, "mute", true, nullptr);
+            drums::effectiveMix (d, g, p);
+            expectEquals (g[drums::kick], 0.0f);
+
+            DrumSynth::Mix mix;
+            for (int i = 0; i < DrumSynth::maxPieces; ++i) { mix.gain[(size_t) i] = 1.0f; mix.pan[(size_t) i] = 0.0f; }
+            mix.pan[drums::kick] = -1.0f;
+            juce::AudioBuffer<float> out;
+            DrumSynth::renderOffline ({ { 0.0, drums::kick, 1.0f } }, 48000.0, 0.5, 0.8f, out, nullptr, &mix);
+            expect (out.getMagnitude (0, 0, 24000) > 0.05f && out.getMagnitude (1, 0, 24000) < 1.0e-4f, "hard-left kick");
+            mix.gain[drums::kick] = 0.0f;
+            DrumSynth::renderOffline ({ { 0.0, drums::kick, 1.0f } }, 48000.0, 0.5, 0.8f, out, nullptr, &mix);
+            expect (out.getMagnitude (0, 24000) < 1.0e-6f, "zero volume is silent");
+        }
+
         beginTest ("engine plays drum sequences on time");
         {
             juce::ValueTree proj3 ("PROJECT");

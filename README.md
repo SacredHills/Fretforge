@@ -9,8 +9,11 @@ project format, plugin system, milestone plan, risks and licensing.
 **Studio:** "Follow" (scroll with the playhead, on by default) and "Slice" (click a clip to cut it at the mouse, snapped; Alt = no snap; Esc leaves) buttons in the Studio toolbar.
 
 **Built-in effects (new):** EQ (six bands, draggable response curve over a live spectrum), Compressor (transfer curve
-and gain-reduction meter), Delay (stereo / ping-pong), Chorus and Reverb come first in every plugin menu and work as
+and gain-reduction meter), Delay (stereo / ping-pong), Chorus, Reverb and a look-ahead brick-wall Limiter come first in every plugin menu and work as
 track inserts, master inserts and in amp rigs.
+
+**Drum mixer (new):** Drum Studio > Mixer: volume fader, pan, mute / solo and a meter for every drum (also used by the
+tab play-along and Render to Studio).
 
 **Mixer (new):** plugins on the master bus; an on/off lamp on every plugin and the NAM amp; drag a plugin onto another
 track to copy it with its settings (or within a track to reorder); Copy / Paste in every plugin window and "Paste

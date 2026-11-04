@@ -103,6 +103,8 @@ public:
         built-in sound. Message thread only. Returns false if the hand-over queue is full (try again later). */
     bool setDrumSample (int piece, std::unique_ptr<juce::AudioBuffer<float>> sample);
     /** Auditions a drum piece on the next audio block (score mode only). Lock-free. */
+    /** Per-piece drum mix (volume / pan) and meters; any thread. */
+    DrumSynth& drums() noexcept { return drumSynth; }
     void previewDrum (int piece, float velocity) noexcept { drumPreview.store ((piece & 0xff) | (juce::jlimit (1, 127, (int) (velocity * 127.0f)) << 8)); }
     void submitTabSequence (std::unique_ptr<TabSequence> seq);
     /** Starts playback after `countInSamples` of metronome count-in. */
