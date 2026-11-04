@@ -788,7 +788,9 @@ void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
     if (mode == Mode::move)   // clips on grouped tracks come along
         for (int i = 0, n = sel.size(); i < n; ++i)
             for (auto& p : owner.groupPartners (sel[i])) sel.addIfNotAlreadyThere (p);
-    for (auto& c : (mode == Mode::move ? sel : juce::Array<juce::ValueTree> { clip }))
+    juce::Array<juce::ValueTree> edited { clip };
+    edited.addArray (owner.groupPartners (clip));   // trims and fades also apply to the grouped twins
+    for (auto& c : (mode == Mode::move ? sel : edited))
         originals.push_back ({ c, prop (c, ids::start), prop (c, ids::length), prop (c, ids::offset), prop (c, ids::fadeIn),
                                prop (c, ids::fadeOut), owner.doc.tracks().indexOf (c.getParent()) });
     const char* names[] = { "", "Move clip", "Trim clip", "Trim clip", "Fade in", "Fade out", "" };
@@ -839,7 +841,6 @@ void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
     auto* ao = findOrig (anchor);
     if (ao == nullptr) return;
     auto audio = owner.session.audioFor (anchor);
-    const double srcLen = audio != nullptr ? audio->lengthSeconds() : 1.0e9;
 
     switch (mode)
     {
@@ -871,32 +872,43 @@ void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
         }
         case Mode::trimLeft:
         {
-            const double end = ao->start + ao->length;
-            double ns = geo.snap (ao->start + dt, snapOn);
-            ns = juce::jlimit (juce::jmax (0.0, ao->start - ao->offset), end - minLen, ns);
-            const double nl = end - ns;
-            doc.set (anchor, ids::start, ns);
-            doc.set (anchor, ids::offset, ao->offset + (ns - ao->start));
-            doc.set (anchor, ids::length, nl);
-            doc.set (anchor, ids::fadeIn, juce::jmin (ao->fadeIn, nl * 0.5));
-            doc.set (anchor, ids::fadeOut, juce::jmin (ao->fadeOut, nl * 0.5));
+            // the anchor follows the mouse (snapped); grouped clips move their edge by the same amount
+            const double shift = geo.snap (ao->start + dt, snapOn) - ao->start;
+            for (auto& o : originals)
+            {
+                const double end = o.start + o.length;
+                const double ns = juce::jlimit (juce::jmax (0.0, o.start - o.offset), end - minLen, o.start + shift);
+                const double nl = end - ns;
+                doc.set (o.clip, ids::start, ns);
+                doc.set (o.clip, ids::offset, o.offset + (ns - o.start));
+                doc.set (o.clip, ids::length, nl);
+                doc.set (o.clip, ids::fadeIn, juce::jmin (o.fadeIn, nl * 0.5));
+                doc.set (o.clip, ids::fadeOut, juce::jmin (o.fadeOut, nl * 0.5));
+            }
             break;
         }
         case Mode::trimRight:
         {
-            double ne = geo.snap (ao->start + ao->length + dt, snapOn);
-            ne = juce::jlimit (ao->start + minLen, ao->start + (srcLen - ao->offset), ne);
-            const double nl = ne - ao->start;
-            doc.set (anchor, ids::length, nl);
-            doc.set (anchor, ids::fadeIn, juce::jmin (ao->fadeIn, nl * 0.5));
-            doc.set (anchor, ids::fadeOut, juce::jmin (ao->fadeOut, nl * 0.5));
+            const double shift = geo.snap (ao->start + ao->length + dt, snapOn) - (ao->start + ao->length);
+            for (auto& o : originals)
+            {
+                const auto a = o.clip == anchor ? audio : owner.session.audioFor (o.clip);
+                const double len = a != nullptr ? a->lengthSeconds() : 1.0e9;
+                const double ne = juce::jlimit (o.start + minLen, o.start + (len - o.offset), o.start + o.length + shift);
+                const double nl = ne - o.start;
+                doc.set (o.clip, ids::length, nl);
+                doc.set (o.clip, ids::fadeIn, juce::jmin (o.fadeIn, nl * 0.5));
+                doc.set (o.clip, ids::fadeOut, juce::jmin (o.fadeOut, nl * 0.5));
+            }
             break;
         }
         case Mode::fadeIn:
-            doc.set (anchor, ids::fadeIn, juce::jlimit (0.0, ao->length - ao->fadeOut, ao->fadeIn + dt));
+            for (auto& o : originals)
+                doc.set (o.clip, ids::fadeIn, juce::jlimit (0.0, o.length - o.fadeOut, o.fadeIn + dt));
             break;
         case Mode::fadeOut:
-            doc.set (anchor, ids::fadeOut, juce::jlimit (0.0, ao->length - ao->fadeIn, ao->fadeOut - dt));
+            for (auto& o : originals)
+                doc.set (o.clip, ids::fadeOut, juce::jlimit (0.0, o.length - o.fadeIn, o.fadeOut - dt));
             break;
         case Mode::none:
         case Mode::marquee: break;
@@ -1251,7 +1263,8 @@ juce::Array<juce::ValueTree> ArrangeView::groupPartners (const juce::ValueTree& 
     for (auto t : doc.tracks())
         if (t != track && t[ids::group].toString() == grp)
             for (auto c : t)
-                if (c.hasType (ids::CLIP) && prop (c, ids::start) < e - 0.001 && clipEnd (c) > s + 0.001) out.add (c);
+                if (c.hasType (ids::CLIP) && std::abs (prop (c, ids::start) - s) < 0.002 && std::abs (clipEnd (c) - e) < 0.002)
+                    out.add (c);   // like Studio One: only the clips lined up with this one (same start and end)
     return out;
 }
 
@@ -1490,8 +1503,8 @@ void ArrangeView::splitClipsAt (const juce::Array<juce::ValueTree>& targets, dou
         doc.set (c, ids::fadeIn, juce::jmin (prop (c, ids::fadeIn), (t - s) * 0.5));
         auto parent = c.getParent();
         parent.addChild (right, parent.indexOf (c) + 1, &doc.undo());
-        selection.add (right);
     }
+    selection.clear();   // a click after a split picks just that piece (and its grouped twins)
     repaintAll();
 }
 
