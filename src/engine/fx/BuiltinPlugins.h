@@ -12,7 +12,7 @@ inline constexpr const char* formatName = "FretForge";
 struct Info
 {
     const char* id;          // e.g. "fretforge:eq"
-    const char* name;        // "FF EQ"
+    const char* name;        // "EQ"
     const char* category;    // "EQ", "Dynamics", "Delay", "Modulation", "Reverb"
     const char* description;
 };

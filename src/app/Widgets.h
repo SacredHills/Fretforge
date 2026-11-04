@@ -10,6 +10,22 @@ inline float gainToDb (float g) { return g > 1.0e-6f ? 20.0f * std::log10 (g) : 
 
 /** Vertical or horizontal meter fed from a real engine LevelMeter. Shows peak with
     decay, peak-hold line and a clip LED (click to reset). Call tick() at ~30-60 Hz. */
+/** Small round on / off button (lit green when on). */
+class PowerButton : public juce::Button
+{
+public:
+    PowerButton() : juce::Button ("power") { setClickingTogglesState (false); setWantsKeyboardFocus (false); }
+    void paintButton (juce::Graphics& g, bool over, bool) override
+    {
+        auto r = getLocalBounds().toFloat().withSizeKeepingCentre (12.0f, 12.0f);
+        const bool on = getToggleState();
+        g.setColour (on ? palette::good : palette::well);
+        g.fillEllipse (r);
+        g.setColour (on ? palette::good.brighter (0.3f) : (over ? palette::text : palette::textDim));
+        g.drawEllipse (r, 1.2f);
+    }
+};
+
 class MeterView : public juce::Component, public juce::SettableTooltipClient
 {
 public:

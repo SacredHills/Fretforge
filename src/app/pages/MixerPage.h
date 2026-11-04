@@ -8,17 +8,28 @@ namespace ff
 {
 /** A strip's insert plugins: one row per plugin (click: plugin window, right-click: bypass / move / replace / remove)
     and a "+ Plugin" row. */
-class InsertList : public juce::Component, public juce::SettableTooltipClient
+class InsertList : public juce::Component, public juce::SettableTooltipClient, public juce::DragAndDropTarget
 {
 public:
     InsertList (SessionController& s, juce::ValueTree t) : session (s), track (t) {}
     int rowsWanted() const;
     static constexpr int rowHeight = 20;
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    // drag a plugin onto another track (copies it with its settings) or up / down in this list (moves it)
+    bool isInterestedInDragSource (const SourceDetails&) override;
+    void itemDragMove (const SourceDetails& d) override { dropRow = juce::jlimit (0, rig::numInserts (track), (d.localPosition.y + rowHeight / 2) / rowHeight); repaint(); }
+    void itemDragExit (const SourceDetails&) override { dropRow = -1; repaint(); }
+    void itemDropped (const SourceDetails&) override;
+    juce::ValueTree getTrack() const { return track; }
 private:
     SessionController& session;
     juce::ValueTree track;
+    bool dragging = false;
+    int dropRow = -1;
+    bool onBypassButton (int x) const { return x > getWidth() - 18; }
 };
 
 /** A strip's sends (drag up / down for the level, click for options) and its output (click to route). */
@@ -43,9 +54,12 @@ private:
 };
 
 /** One mixer channel strip bound to a TRACK node; meter reads the engine's track meter. */
-class ChannelStrip : public juce::Component, private juce::ValueTree::Listener, private juce::ChangeListener
+class ChannelStrip : public juce::Component, private juce::ValueTree::Listener, private juce::ChangeListener,
+                     public juce::DragAndDropTarget
 {
 public:
+    bool isInterestedInDragSource (const SourceDetails& d) override { return insertList.isInterestedInDragSource (d); }
+    void itemDropped (const SourceDetails& d) override { insertList.itemDropped (d); }
     ChannelStrip (ProjectDocument&, EngineHost&, SessionController&, juce::ValueTree track, int slot);
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
@@ -64,6 +78,7 @@ private:
     int slot;
     juce::Slider fader, pan;
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" }, ampButton { "NAM AMP" };
+    PowerButton ampPower;
     juce::Label nameLabel;
     InsertList insertList { session, track };
     RouteList routeList { session, doc, track };
@@ -72,14 +87,14 @@ private:
     int holdTicks = 0;
     bool updating = false;
     void refresh();
-    void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { refresh(); }
+    void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { refresh(); resized(); }
     void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { refresh(); resized(); }
     void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { refresh(); resized(); }
     void changeListenerCallback (juce::ChangeBroadcaster*) override { insertList.repaint(); }
 };
 
 /** Mixer: a channel strip per track plus the main output. */
-class MixerPage : public juce::Component, private juce::Timer, private juce::ValueTree::Listener, private juce::ChangeListener
+class MixerPage : public juce::Component, public juce::DragAndDropContainer, private juce::Timer, private juce::ValueTree::Listener, private juce::ChangeListener
 {
 public:
     MixerPage (EngineHost&, ProjectDocument&, SessionController&, juce::PropertiesFile&);
@@ -103,6 +118,8 @@ private:
     juce::Rectangle<int> masterBox, scale;
     juce::Label emptyLabel;
     juce::TextButton addTrackButton { "+ Track" };
+    std::unique_ptr<InsertList> masterInserts;   // plugins on the master bus
+    int masterRows = 0;
 
     void rebuild();
     void timerCallback() override;

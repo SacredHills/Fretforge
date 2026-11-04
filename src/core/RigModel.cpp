@@ -237,7 +237,8 @@ int numInserts (const juce::ValueTree& track)
     return n;
 }
 
-int addInsert (juce::ValueTree track, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* um)
+int addInsert (juce::ValueTree track, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* um,
+              const juce::String& state, bool bypassed)
 {
     auto list = findInserts (track);
     if (! list.isValid())
@@ -251,8 +252,8 @@ int addInsert (juce::ValueTree track, const juce::String& descXml, const juce::S
     p.setProperty (ids::slot, slot, nullptr);
     p.setProperty (ids::desc, descXml, nullptr);
     p.setProperty (ids::name, displayName, nullptr);
-    p.setProperty (ids::state, juce::String(), nullptr);
-    p.setProperty (ids::bypass, false, nullptr);
+    p.setProperty (ids::state, state, nullptr);
+    p.setProperty (ids::bypass, bypassed, nullptr);
     list.appendChild (p, um);
     return slot;
 }

@@ -50,6 +50,13 @@ public:
     juce::String descriptionForMenuResult (int result, int firstId, juce::String& name) const;
 
     void showManager();
+
+    /** Copied plugin settings (the Copy / Paste buttons in every plugin window). */
+    struct Clipboard { juce::String identifier, descXml, name, state; bool empty() const { return state.isEmpty() && descXml.isEmpty(); } };
+    Clipboard clipboard;
+    void copySettings (juce::AudioPluginInstance&);
+    /** Pastes into the plugin if it is the same kind; returns false (and says why) otherwise. */
+    bool pasteSettings (juce::AudioPluginInstance&, juce::String& error);
     /** If the last run crashed or hung inside a plugin, tells the user and offers to disable that plugin. */
     void reportPreviousCrash (juce::Component* parent);
     /** Removes a plugin from the menus and refuses to load it until it is taken off the blacklist. */

@@ -7,6 +7,9 @@
 #include "engine/TrackWorkers.h"
 #include "engine/fx/AmpRig.h"
 #include "engine/fx/NamModel.h"
+#include "engine/fx/InsertChain.h"
+#include "engine/fx/BuiltinPlugins.h"
+#include "engine/fx/PluginHost.h"
 #include "engine/Exporter.h"
 #include <cmath>
 
@@ -95,6 +98,16 @@ public:
             expectWithinAbsoluteError (mixOnce (*g, m, src), 0.2f + 0.1f * 0.5f, 1.0e-4f);   // solo C: its send still reaches the FX return
             c.setProperty (tl::ids::solo, false, nullptr);
 
+            bus.setProperty (tl::ids::solo, true, nullptr);
+            g = buildPlaybackGraph (tracks, noBundle, cache, {});
+            expectWithinAbsoluteError (mixOnce (*g, m, src), (0.5f + 0.1f) * 0.5f, 1.0e-4f);   // solo bus: what plays into it, not C itself
+            bus.setProperty (tl::ids::solo, false, nullptr);
+
+            fx.setProperty (tl::ids::solo, true, nullptr);
+            g = buildPlaybackGraph (tracks, noBundle, cache, {});
+            expectWithinAbsoluteError (mixOnce (*g, m, src), 0.1f * 0.5f, 1.0e-4f);   // solo FX return: only the reverb of C
+            fx.setProperty (tl::ids::solo, false, nullptr);
+
             c.getChildWithName (tl::ids::SEND).setProperty (tl::ids::pre, true, nullptr);
             c.setProperty (tl::ids::gainDb, -96.0, nullptr);
             g = buildPlaybackGraph (tracks, noBundle, cache, {});
@@ -102,6 +115,31 @@ public:
 
             tl::removeRoutesTo (tracks, bus[tl::ids::id].toString(), nullptr);
             expect (tl::outputOf (a).isEmpty() && tl::outputOf (fx).isEmpty());
+        }
+
+        beginTest ("master plugins process the whole mix");
+        {
+            juce::ValueTree tracks ("TRACKS");
+            track (tracks, "A");
+            track (tracks, "B");
+            GraphBuildOptions o;
+            o.masterInserts = std::make_shared<fx::InsertChain>();
+            o.masterInserts->prepare (48000.0, 256);
+            std::shared_ptr<juce::AudioPluginInstance> eq (fx::builtin::create ("fretforge:eq").release());
+            for (auto* prm : eq->getParameters())
+                if (auto* r = dynamic_cast<juce::RangedAudioParameter*> (prm); r != nullptr && r->getParameterID() == "out")
+                    r->setValueNotifyingHost (r->convertTo0to1 (6.0206f));
+            fx::preparePlugin (*eq, 48000.0, 256);
+            o.masterInserts->setPlugin (0, eq);
+            std::array<int, fx::InsertChain::maxSlots> order {};
+            o.masterInserts->setOrder (order, 1);
+            auto g = buildPlaybackGraph (tracks, noBundle, cache, o);
+            GraphMixer m;
+            m.prepare (256, 48000.0);
+            ConstSource src;
+            src.levels = { 0.1f, 0.15f };
+            for (int i = 0; i < 20; ++i) mixOnce (*g, m, src, 256);   // let the output gain settle
+            expectWithinAbsoluteError (mixOnce (*g, m, src, 256), 0.5f, 1.0e-3f);
         }
 
         beginTest ("graph: a routing loop is cut, not followed");

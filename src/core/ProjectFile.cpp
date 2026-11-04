@@ -8,6 +8,20 @@
 
 namespace ff::project
 {
+juce::ValueTree masterNode (juce::ValueTree root)
+{
+    if (! root.isValid()) return {};
+    auto m = root.getChildWithName (ids::MASTER);
+    if (! m.isValid())
+    {
+        m = juce::ValueTree (ids::MASTER);
+        root.appendChild (m, nullptr);
+    }
+    if (m["id"].toString() != masterId) m.setProperty ("id", masterId, nullptr);
+    if (m["name"].toString().isEmpty()) m.setProperty ("name", "Master", nullptr);
+    return m;
+}
+
 juce::ValueTree createDefault (const juce::String& name)
 {
     using namespace ids;
@@ -46,6 +60,7 @@ juce::ValueTree createDefault (const juce::String& name)
     drums::getOrCreate (root);
     auto score = tab::getOrCreateScore (root);
     tab::addTrack (score, "Guitar", { 40, 45, 50, 55, 59, 64 }, "guitar", nullptr);
+    masterNode (root);
     return root;
 }
 
@@ -145,6 +160,7 @@ void validate (juce::ValueTree& root, juce::StringArray& warnings)
 
     for (auto id : { TRANSPORT, METRONOME, TRACKS, MARKERS })
         ensureChild (root, id, defaults, warnings);
+    masterNode (root);
 
     auto t = root.getChildWithName (TRANSPORT);
     auto clampProp = [&] (juce::ValueTree& node, const juce::Identifier& prop, double lo, double hi, double def)

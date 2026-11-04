@@ -26,7 +26,8 @@ public:
     TrackWorkers* workers = nullptr;   // optional
     bool allowIdle = true;             // skip rigs and plugins on tracks that have been silent for a while
 
-    /** Adds the mix of the graph into outL / outR (n <= maxBlock()). */
+    /** Mixes the graph into outL / outR, which must start out silent (the master plugins process the result).
+        n <= maxBlock(). */
     void mix (PlaybackGraph&, Source&, float* outL, float* outR, int n) noexcept;
 
     /** Updates every track's downstreamLatency (call before Source::fill reads the clips). */

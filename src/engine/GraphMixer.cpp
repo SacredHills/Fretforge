@@ -40,11 +40,11 @@ void GraphMixer::updateLatencies (PlaybackGraph& g) noexcept
     for (int k = (int) g.tracks.size(); --k >= 0;)
     {
         auto& t = g.tracks[(size_t) (hasOrder ? g.order[(size_t) k] : k)];
-        t.downstreamLatency = 0;
+        t.downstreamLatency = g.masterInserts != nullptr ? g.masterInserts->latency() : 0;
         if (juce::isPositiveAndBelow (t.output, (int) g.tracks.size()))
         {
             const auto& bus = g.tracks[(size_t) t.output];
-            t.downstreamLatency = trackLatency (bus) + bus.downstreamLatency;
+            t.downstreamLatency = trackLatency (bus) + bus.downstreamLatency;   // the bus's own includes the master
         }
     }
 }
@@ -141,6 +141,7 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
             juce::FloatVectorOperations::multiply (L, t.gainL, n);
             juce::FloatVectorOperations::multiply (R, t.gainR, n);
             source.post (ti, t, L, R, n);
+            if (t.outputMuted) continue;
             float* dL = outL;
             float* dR = outR;
             if (juce::isPositiveAndBelow (t.output, numTracks)) { dL = bufL[(size_t) t.output].data(); dR = bufR[(size_t) t.output].data(); }
@@ -149,5 +150,7 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
         }
         p = end;
     }
+    if (g.masterInserts != nullptr)   // outL / outR started out silent, so this is the whole mix
+        g.masterInserts->process (outL, outR, n);
 }
 } // namespace ff

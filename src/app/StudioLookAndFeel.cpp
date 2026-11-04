@@ -132,13 +132,33 @@ void StudioLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w
     const auto c = r.getCentre();
     const float angle = start + pos * (end - start);
 
+    // bipolar controls (pan, +/- gains) light up from the centre, so they don't read like a volume knob
+    const bool pan = (bool) s.getProperties()["pan"];
+    const bool bipolar = pan || (s.getMinimum() < 0.0 && s.getMaximum() > 0.0
+                                 && std::abs (s.getMinimum() + s.getMaximum()) < 1.0e-6 * (s.getMaximum() - s.getMinimum()));
+    const float mid = start + 0.5f * (end - start);
     juce::Path bgArc, valueArc;
     bgArc.addCentredArc (c.x, c.y, radius, radius, 0.0f, start, end, true);
-    valueArc.addCentredArc (c.x, c.y, radius, radius, 0.0f, start, angle, true);
+    if (bipolar) valueArc.addCentredArc (c.x, c.y, radius, radius, 0.0f, juce::jmin (mid, angle), juce::jmax (mid, angle), true);
+    else valueArc.addCentredArc (c.x, c.y, radius, radius, 0.0f, start, angle, true);
     g.setColour (palette::well);
     g.strokePath (bgArc, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour (s.isEnabled() ? palette::accent : palette::textDim);
+    g.setColour (! s.isEnabled() ? palette::textDim : pan ? palette::info : palette::accent);
     g.strokePath (valueArc, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    if (bipolar)   // centre tick
+    {
+        g.setColour (palette::textDim);
+        const auto a = c.getPointOnCircumference (radius + 3.0f, mid), b = c.getPointOnCircumference (radius - 3.0f, mid);
+        g.drawLine ({ a, b }, 1.5f);
+    }
+    if (pan && radius > 9.0f)
+    {
+        g.setColour (palette::textDim);
+        g.setFont (uiFont (9.0f, true));
+        const auto l = c.getPointOnCircumference (radius + 2.0f, start), rr = c.getPointOnCircumference (radius + 2.0f, end);
+        g.drawText ("L", juce::Rectangle<float> (10, 10).withCentre (l.translated (-3.0f, 4.0f)), juce::Justification::centred);
+        g.drawText ("R", juce::Rectangle<float> (10, 10).withCentre (rr.translated (3.0f, 4.0f)), juce::Justification::centred);
+    }
 
     g.setColour (palette::panelHi);
     g.fillEllipse (r.withSizeKeepingCentre (radius * 1.4f, radius * 1.4f));

@@ -1,5 +1,6 @@
 #include "MixerPage.h"
 #include "core/Timeline.h"
+#include "core/ProjectFile.h"
 
 namespace ff
 {
@@ -40,6 +41,8 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
     pan.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     pan.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     pan.setRange (-1.0, 1.0, 0.01);
+    pan.getProperties().set ("pan", true);
+    pan.textFromValueFunction = [] (double v) { return std::abs (v) < 0.005 ? juce::String ("C") : juce::String (juce::roundToInt (std::abs (v) * 100)) + (v < 0 ? " L" : " R"); };
     pan.setDoubleClickReturnValue (true, 0.0);
     pan.setPopupDisplayEnabled (true, true, nullptr);
     pan.onDragStart = [this] { doc.undo().beginNewTransaction ("Track pan"); };
@@ -68,6 +71,14 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
     ampButton.setTooltip ("Neural Amp Modeler amp on this track: click to add / open it");
     ampButton.onClick = [this] { session.addTrackRig (track); };
     addAndMakeVisible (ampButton);
+    ampPower.setTooltip ("Switch the NAM amp on / off");
+    ampPower.onClick = [this] {
+        auto r = rig::find (track);
+        if (! r.isValid()) return;
+        doc.undo().beginNewTransaction ("NAM amp on / off");
+        r.setProperty (rig::ids::bypass, ! (bool) r[rig::ids::bypass], &doc.undo());
+    };
+    addChildComponent (ampPower);
 
     nameLabel.setJustificationType (juce::Justification::centred);
     nameLabel.setFont (uiFont (12.5f, true));
@@ -116,6 +127,12 @@ void InsertList::paint (juce::Graphics& g)
             const bool bypassed = (bool) node[rig::ids::bypass];
             g.setColour (st.error.isNotEmpty() ? palette::bad.withAlpha (0.25f) : palette::info.withAlpha (bypassed ? 0.08f : 0.22f));
             g.fillRoundedRectangle (r, 3.0f);
+            // on / off button
+            auto lamp = r.removeFromRight (18.0f).withSizeKeepingCentre (10.0f, 10.0f);
+            g.setColour (bypassed ? palette::well : palette::good);
+            g.fillEllipse (lamp);
+            g.setColour (bypassed ? palette::textDim : palette::good.brighter (0.3f));
+            g.drawEllipse (lamp, 1.0f);
             g.setColour (bypassed ? palette::textDim : palette::text);
             g.setFont (uiFont (11.0f, ! bypassed));
             g.drawText ((st.loading ? "... " : juce::String()) + node[rig::ids::name].toString(), r.reduced (5.0f, 0.0f), juce::Justification::centredLeft, true);
@@ -129,18 +146,52 @@ void InsertList::paint (juce::Graphics& g)
             g.drawText ("+ Plugin", r, juce::Justification::centred);
         }
     }
+    if (dropRow >= 0)
+    {
+        g.setColour (palette::accent);
+        g.fillRect (0, juce::jmax (0, dropRow * rowHeight - 2), getWidth(), 2);
+    }
+}
+
+void InsertList::mouseDown (const juce::MouseEvent&) { dragging = false; }
+
+void InsertList::mouseDrag (const juce::MouseEvent& e)
+{
+    const int row = e.getMouseDownY() / rowHeight;
+    if (dragging || row >= rig::numInserts (track) || e.getDistanceFromDragStart() < 5) return;
+    if (auto* c = juce::DragAndDropContainer::findParentDragContainerFor (this))
+    {
+        dragging = true;
+        c->startDragging ("ffinsert|" + track[ids::id].toString() + "|" + juce::String (row), this);
+    }
 }
 
 void InsertList::mouseUp (const juce::MouseEvent& e)
 {
-    if (! e.mouseWasClicked()) return;
+    if (dragging || ! e.mouseWasClicked()) return;
     const int row = e.y / rowHeight, n = rig::numInserts (track);
     if (row < n)
     {
         if (e.mods.isPopupMenu()) session.showInsertMenu (track, row, this);
+        else if (onBypassButton (e.x)) session.toggleInsertBypass (track, row);
         else session.openInsert (track, row);
     }
     else if (row < rowsWanted()) session.showAddInsertMenu (track, this);
+}
+
+bool InsertList::isInterestedInDragSource (const SourceDetails& d)
+{
+    return d.description.toString().startsWith ("ffinsert|");
+}
+
+void InsertList::itemDropped (const SourceDetails& d)
+{
+    const auto parts = juce::StringArray::fromTokens (d.description.toString(), "|", "");
+    const int to = dropRow < 0 ? rig::numInserts (track) : dropRow;
+    dropRow = -1;
+    repaint();
+    if (parts.size() < 3) return;
+    session.dropInsert (parts[1], parts[2].getIntValue(), track, to);
 }
 
 // ------------------------------------------------------------------ sends and output
@@ -232,6 +283,9 @@ void ChannelStrip::refresh()
     arm.setToggleState ((bool) track[ids::armed], juce::dontSendNotification);
     ampButton.setToggleState (session.trackHasRig (track), juce::dontSendNotification);
     arm.setVisible (isAudioTrack (track));
+    ampButton.setVisible (isAudioTrack (track));
+    ampPower.setVisible (isAudioTrack (track) && session.trackHasRig (track));
+    ampPower.setToggleState (! (bool) rig::find (track)[rig::ids::bypass], juce::dontSendNotification);
     routeList.repaint();
     if (! nameLabel.isBeingEdited()) nameLabel.setText (track[ids::name].toString(), juce::dontSendNotification);
     repaint();
@@ -269,7 +323,8 @@ void ChannelStrip::showMenu()
     juce::PopupMenu m;
     m.addItem (1, "Rename...");
     m.addSeparator();
-    if (session.trackHasRig (track)) { m.addItem (10, "Open NAM amp..."); m.addItem (11, "Remove NAM amp"); }
+    if (! isAudioTrack (track)) {}
+    else if (session.trackHasRig (track)) { m.addItem (10, "Open NAM amp..."); m.addItem (11, "Remove NAM amp"); }
     else m.addItem (10, "Add NAM amp...");
     m.addItem (12, "Add plugin...", session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
     m.addItem (13, "Output and sends...");
@@ -339,7 +394,13 @@ void ChannelStrip::resized()
     if (isAudioTrack (track)) arm.setBounds (buttons.removeFromLeft (w).reduced (1));
     mute.setBounds (buttons.removeFromLeft (w).reduced (1));
     solo.setBounds (buttons.reduced (1));
-    ampButton.setBounds (r.removeFromTop (30).reduced (1, 4));
+    if (isAudioTrack (track))
+    {
+        auto row = r.removeFromTop (30).reduced (1, 4);
+        if (session.trackHasRig (track)) ampPower.setBounds (row.removeFromRight (18));
+        ampButton.setBounds (row);
+    }
+    else r.removeFromTop (6);
     insertList.setBounds (r.removeFromTop (insertList.rowsWanted() * InsertList::rowHeight).withTrimmedRight (0));
     r.removeFromTop (insertList.rowsWanted() > 0 ? 6 : 0);
     routeList.setBounds (r.removeFromTop (routeList.rowsWanted() * RouteList::rowHeight));
@@ -392,6 +453,10 @@ void MixerPage::rebind()
     tracksNode.removeListener (this);
     tracksNode = doc.tracks();
     tracksNode.addListener (this);
+    masterInserts = std::make_unique<InsertList> (session, project::masterNode (doc.tree()));
+    masterInserts->setTooltip ("Plugins on the master bus (they process the whole mix, and are in exports). "
+                               "Click a plugin to open it, right-click for more.");
+    addAndMakeVisible (*masterInserts);
     rebuild();
 }
 
@@ -413,6 +478,11 @@ void MixerPage::timerCallback()
 {
     meterL.tick();
     meterR.tick();
+    if (masterInserts != nullptr)
+    {
+        if (masterInserts->rowsWanted() != masterRows) resized();
+        masterInserts->repaint();
+    }
     for (auto* s : strips)
         s->tick();
 }
@@ -446,6 +516,12 @@ void MixerPage::resized()
         strips[i]->setBounds (i * ChannelStrip::width, 0, ChannelStrip::width, stripHolder.getHeight());
 
     auto s = masterBox.reduced (12).withTrimmedTop (24).withTrimmedBottom (8);
+    if (masterInserts != nullptr)
+    {
+        masterRows = masterInserts->rowsWanted();
+        masterInserts->setBounds (s.removeFromTop (masterRows * InsertList::rowHeight));
+        s.removeFromTop (8);
+    }
     auto meters = s.removeFromRight (34);
     meterL.setBounds (meters.removeFromLeft (15).withTrimmedBottom (28));
     meters.removeFromLeft (4);

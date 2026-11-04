@@ -709,21 +709,26 @@ void RigEditor::showAddPluginMenu (int slot)
         return;
     }
     juce::PopupMenu m;
+    if (! plugins->clipboard.empty() && plugins->clipboard.descXml.isNotEmpty())
+    {
+        m.addItem (-3, "Paste plugin: " + plugins->clipboard.name);
+        m.addSeparator();
+    }
     plugins->addToMenu (m, 1);
-    if (m.getNumItems() == 0)
-        m.addItem (-1, "No plugins found yet", false);
     m.addSeparator();
     m.addItem (-2, "Scan for plugins / manage...");
     juce::Component::SafePointer<RigEditor> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&chain).withMousePosition(), [safe, slot] (int r) {
         if (safe == nullptr || r == 0) return;
         if (r == -2) { safe->plugins->showManager(); return; }
-        juce::String name;
-        const auto desc = safe->plugins->descriptionForMenuResult (r, 1, name);
+        juce::String name, state;
+        auto desc = safe->plugins->descriptionForMenuResult (r, 1, name);
+        if (r == -3) { desc = safe->plugins->clipboard.descXml; name = safe->plugins->clipboard.name; state = safe->plugins->clipboard.state; }
         if (desc.isEmpty() || ! safe->target.isValid()) return;
         if (auto* u = safe->um()) u->beginNewTransaction ("Add plugin " + name);
         const bool fresh = ! pluginNode (safe->target, slot).isValid();
         setPlugin (safe->target, slot, desc, name, safe->um());
+        if (state.isNotEmpty()) pluginNode (safe->target, slot).setProperty (ids::state, state, safe->um());
         if (fresh)   // a new plugin goes at the end of the chain
         {
             auto o = getOrder (safe->target);

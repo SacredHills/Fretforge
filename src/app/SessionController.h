@@ -81,6 +81,12 @@ public:
     /** Open / bypass / move / replace / remove for one insert slot. */
     void showInsertMenu (juce::ValueTree track, int slot, juce::Component* target);
     void openInsert (juce::ValueTree track, int slot);
+    void toggleInsertBypass (juce::ValueTree track, int slot);
+    /** A plugin dragged from (track id, slot) onto `to` at position `toSlot`: moved within a track, copied (with its
+        current settings) onto another. */
+    void dropInsert (const juce::String& fromTrackId, int fromSlot, juce::ValueTree to, int toSlot);
+    /** A track by id, or the master bus node for project::masterId. */
+    juce::ValueTree trackOrMaster (const juce::String& id);
     void openInsertWhenLoaded (juce::ValueTree track, int slot, int triesLeft);
 
     // ---- media ----

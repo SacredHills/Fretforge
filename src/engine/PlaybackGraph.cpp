@@ -26,11 +26,12 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
 {
     auto g = std::make_unique<PlaybackGraph>();
     g->sampleRate = opt.sampleRate;
+    g->masterInserts = opt.masterInserts;
     const double sr = opt.sampleRate;
 
     bool anySolo = false;
     for (const auto& t : tracks)
-        anySolo = anySolo || (t.hasType (ids::TRACK) && isAudioTrack (t) && (bool) t[ids::solo]);
+        anySolo = anySolo || (t.hasType (ids::TRACK) && (bool) t[ids::solo]);
     std::vector<juce::ValueTree> trees;
 
     int slot = 0;
@@ -44,7 +45,7 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
         panGains ((float) (double) t[ids::pan], gain, pt.gainL, pt.gainR);
         pt.kind = kindOf (t);
         // buses and FX returns stay audible when other tracks are soloed (the soloed track plays through them)
-        pt.audible = ! (bool) t[ids::mute] && (! anySolo || (bool) t[ids::solo] || pt.kind != TrackKind::audio);
+        pt.audible = ! (bool) t[ids::mute];   // solo is applied below, once the routing is known
         pt.monitor = (bool) t[ids::monitor];
         pt.armed = (bool) t[ids::armed];
         pt.inputLeft = (int) t[ids::inputChannel];
@@ -53,7 +54,7 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
         if (opt.recorders != nullptr)
             if (auto it = opt.recorders->find (t[ids::id].toString()); it != opt.recorders->end())
                 pt.recorder = it->second;
-        if (opt.rigFor) pt.rig = opt.rigFor (t);
+        if (opt.rigFor && pt.kind == TrackKind::audio) pt.rig = opt.rigFor (t);   // NAM amps live on audio tracks
         if (opt.insertsFor) pt.inserts = opt.insertsFor (t);
 
         // gather clips in layer order with their audio
@@ -154,6 +155,46 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
         return lv;
     };
     for (int i = 0; i < n; ++i) levelOf (i);
+
+    // ---- solo: the soloed tracks, everything they play through (buses, FX returns) and everything feeding them run;
+    //      tracks that only feed a soloed bus / FX return are heard through it, not on their own ----
+    if (anySolo)
+    {
+        auto edges = [&] (int i) {
+            std::vector<int> e;
+            if (g->tracks[(size_t) i].output >= 0) e.push_back (g->tracks[(size_t) i].output);
+            for (auto& sd : g->tracks[(size_t) i].sends) e.push_back (sd.target);
+            return e;
+        };
+        std::vector<char> soloed ((size_t) n, 0), down ((size_t) n, 0), up ((size_t) n, 0);
+        std::vector<int> stack;
+        for (int i = 0; i < n; ++i)
+            if ((bool) trees[(size_t) i][ids::solo]) { soloed[(size_t) i] = down[(size_t) i] = up[(size_t) i] = 1; stack.push_back (i); }
+        for (auto work = stack; ! work.empty();)
+        {
+            const int i = work.back(); work.pop_back();
+            for (int d : edges (i)) if (! down[(size_t) d]) { down[(size_t) d] = 1; work.push_back (d); }
+        }
+        for (auto work = stack; ! work.empty();)
+        {
+            const int i = work.back(); work.pop_back();
+            for (int k = 0; k < n; ++k)
+                if (! up[(size_t) k])
+                    for (int d : edges (k)) if (d == i) { up[(size_t) k] = 1; work.push_back (k); break; }
+        }
+        for (int i = 0; i < n; ++i)
+        {
+            auto& pt = g->tracks[(size_t) i];
+            const bool inPath = down[(size_t) i] || up[(size_t) i];
+            if (! inPath) { pt.audible = false; continue; }
+            auto onPath = [&] (int d) { return down[(size_t) d] || up[(size_t) d]; };
+            pt.sends.erase (std::remove_if (pt.sends.begin(), pt.sends.end(), [&] (const PlayTrack::Send& x) { return ! onPath (x.target); }),
+                            pt.sends.end());
+            if (pt.output >= 0) pt.outputMuted = ! onPath (pt.output);
+            else pt.outputMuted = ! down[(size_t) i];   // only soloed tracks and what they play through reach the master
+        }
+    }
+
     g->order.resize ((size_t) n);
     for (int i = 0; i < n; ++i) g->order[(size_t) i] = i;
     std::stable_sort (g->order.begin(), g->order.end(), [&] (int a, int b) { return g->tracks[(size_t) a].level < g->tracks[(size_t) b].level; });

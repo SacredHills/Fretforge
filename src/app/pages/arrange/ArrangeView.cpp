@@ -80,6 +80,7 @@ TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t),
     pan.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     pan.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     pan.setRange (-1.0, 1.0, 0.01);
+    pan.getProperties().set ("pan", true);
     pan.setDoubleClickReturnValue (true, 0.0);
     pan.setPopupDisplayEnabled (true, true, nullptr);
     pan.setTooltip ("Pan (double-click: centre)");
@@ -250,7 +251,8 @@ void TrackHeader::showMenu()
         colours.addColouredItem (100 + i, "Colour " + juce::String (i + 1), juce::Colour::fromString (trackPalette()[i]));
     m.addSubMenu ("Colour", colours);
     m.addSeparator();
-    if (owner.session.trackHasRig (track))
+    if (! isAudioTrack (track)) {}
+    else if (owner.session.trackHasRig (track))
     {
         m.addItem (10, "Open NAM amp...");
         m.addItem (11, "Remove NAM amp");

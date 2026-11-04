@@ -270,6 +270,8 @@ void RigBank::syncAll()
     for (const auto& t : root.getChildWithName (project::ids::TRACKS))
         if (t.hasType (timeline::ids::TRACK) && rig::numInserts (t) > 0)
             wantedInserts[t[timeline::ids::id].toString()] = t;
+    if (const auto master = root.getChildWithName (project::ids::MASTER); master.isValid() && rig::numInserts (master) > 0)
+        wantedInserts[project::masterId] = master;
     for (auto it = inserts.begin(); it != inserts.end();)
     {
         if (auto w = wantedInserts.find (it->first); w == wantedInserts.end() || w->second != it->second.track)

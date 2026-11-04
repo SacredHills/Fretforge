@@ -805,11 +805,11 @@ private:
 const std::vector<Info>& all()
 {
     static const std::vector<Info> list {
-        { "fretforge:eq", "FF EQ", "EQ", "Six-band EQ: low / high cut, shelves and two bells. Drag the points, mouse wheel for Q." },
-        { "fretforge:comp", "FF Compressor", "Dynamics", "Smooth compressor with soft knee and parallel mix." },
-        { "fretforge:delay", "FF Delay", "Delay", "Stereo or ping-pong delay with filtered repeats." },
-        { "fretforge:chorus", "FF Chorus", "Modulation", "Stereo chorus." },
-        { "fretforge:reverb", "FF Reverb", "Reverb", "Room to hall reverb. On an FX track, set Mix to 100 %." },
+        { "fretforge:eq", "EQ", "EQ", "Six-band EQ: low / high cut, shelves and two bells. Drag the points, mouse wheel for Q." },
+        { "fretforge:comp", "Compressor", "Dynamics", "Smooth compressor with soft knee and parallel mix." },
+        { "fretforge:delay", "Delay", "Delay", "Stereo or ping-pong delay with filtered repeats." },
+        { "fretforge:chorus", "Chorus", "Modulation", "Stereo chorus." },
+        { "fretforge:reverb", "Reverb", "Reverb", "Room to hall reverb. On an FX track, set Mix to 100 %." },
     };
     return list;
 }

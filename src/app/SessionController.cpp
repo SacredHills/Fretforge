@@ -144,13 +144,13 @@ void SessionController::setOnTracks (const juce::ValueTree& clicked, const juce:
 
 void SessionController::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier&)
 {
-    if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP) || node.hasType (ids::SEND))
+    if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP) || node.hasType (ids::SEND) || node.hasType (rig::ids::RIG))
         triggerAsyncUpdate();
 }
 
 void SessionController::addTrackRig (juce::ValueTree track)
 {
-    if (! track.isValid()) return;
+    if (! track.isValid() || ! isAudioTrack (track)) return;   // NAM amps belong on audio tracks
     auto r = rig::find (track);
     if (! rig::isEnabled (r))
     {
@@ -183,14 +183,25 @@ void SessionController::showAddInsertMenu (juce::ValueTree track, juce::Componen
         return;
     }
     juce::PopupMenu m;
+    if (! plugins->clipboard.empty() && plugins->clipboard.descXml.isNotEmpty())
+    {
+        m.addItem (-3, "Paste plugin: " + plugins->clipboard.name);
+        m.addSeparator();
+    }
     plugins->addToMenu (m, 1);
-    if (m.getNumItems() == 0) m.addItem (-1, "No plugins found yet", false);
     m.addSeparator();
     m.addItem (-2, "Scan for plugins / manage...");
     juce::Component::SafePointer<juce::Component> safeTarget (target);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, safeTarget] (int r) {
         if (r == 0) return;
         if (r == -2) { plugins->showManager(); return; }
+        if (r == -3)
+        {
+            const auto c = plugins->clipboard;
+            doc.undo().beginNewTransaction ("Paste plugin " + c.name);
+            rig::addInsert (track, c.descXml, c.name, &doc.undo(), c.state);
+            return;
+        }
         juce::String name;
         const auto desc = plugins->descriptionForMenuResult (r, 1, name);
         if (desc.isEmpty()) return;
@@ -214,6 +225,46 @@ void SessionController::openInsert (juce::ValueTree track, int slot)
     if (plugins == nullptr) return;
     if (auto p = rigBank->insertPlugin (track, slot))
         plugins->showEditor (p, rig::insertNode (track, slot)[rig::ids::name].toString() + "  (" + track[ids::name].toString() + ")");
+}
+
+void SessionController::toggleInsertBypass (juce::ValueTree track, int slot)
+{
+    auto n = rig::insertNode (track, slot);
+    if (! n.isValid()) return;
+    doc.undo().beginNewTransaction ((bool) n[rig::ids::bypass] ? "Enable plugin" : "Bypass plugin");
+    n.setProperty (rig::ids::bypass, ! (bool) n[rig::ids::bypass], &doc.undo());
+}
+
+juce::ValueTree SessionController::trackOrMaster (const juce::String& id)
+{
+    if (id == project::masterId) return project::masterNode (doc.tree());
+    return findTrack (id);
+}
+
+void SessionController::dropInsert (const juce::String& fromTrackId, int fromSlot, juce::ValueTree to, int toSlot)
+{
+    auto from = trackOrMaster (fromTrackId);
+    const auto node = rig::insertNode (from, fromSlot);
+    if (! node.isValid() || ! to.isValid()) return;
+    if (from == to)
+    {
+        int at = fromSlot, target = juce::jlimit (0, rig::numInserts (to) - 1, toSlot > fromSlot ? toSlot - 1 : toSlot);
+        if (at == target) return;
+        doc.undo().beginNewTransaction ("Move plugin");
+        while (at != target) { rig::moveInsert (to, at, target > at ? 1 : -1, &doc.undo()); at += target > at ? 1 : -1; }
+        return;
+    }
+    if (rig::numInserts (to) >= rig::maxInserts)
+    {
+        if (onError) onError ("Plugins", "That track already has " + juce::String (rig::maxInserts) + " plugins.");
+        return;
+    }
+    juce::String state = node[rig::ids::state].toString();
+    if (auto p = rigBank->insertPlugin (from, fromSlot)) state = fx::capturePluginState (*p);   // its settings right now
+    doc.undo().beginNewTransaction ("Copy plugin " + node[rig::ids::name].toString());
+    int at = rig::addInsert (to, node[rig::ids::desc].toString(), node[rig::ids::name].toString(), &doc.undo(), state,
+                             (bool) node[rig::ids::bypass]);
+    while (at > toSlot && at > 0) { rig::moveInsert (to, at, -1, &doc.undo()); --at; }
 }
 
 void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::Component* target)
@@ -264,8 +315,12 @@ void SessionController::rebuildGraphNow()
     GraphBuildOptions opt;
     opt.sampleRate = host.engine.getSampleRate() > 0 ? host.engine.getSampleRate() : 48000.0;
     opt.recorders = &recorders;
-    opt.rigFor = [this] (const juce::ValueTree& t) { return rigBank->rigForTrack (t[ids::id].toString()); };
+    opt.rigFor = [this] (const juce::ValueTree& t) -> std::shared_ptr<fx::AmpRig> {
+        if ((bool) rig::find (t)[rig::ids::bypass]) return nullptr;   // amp switched off from the mixer
+        return rigBank->rigForTrack (t[ids::id].toString());
+    };
     opt.insertsFor = [this] (const juce::ValueTree& t) { return rigBank->insertsForTrack (t[ids::id].toString()); };
+    opt.masterInserts = rigBank->insertsForTrack (project::masterId);
     host.engine.submitGraph (buildPlaybackGraph (doc.tracks(), doc.mediaBundle(), cache, opt));
 }
 
@@ -304,12 +359,6 @@ juce::ValueTree SessionController::addTrack (const juce::String& nameIn, int ins
     doc.undo().beginNewTransaction (kind == TrackKind::bus ? "Add bus" : kind == TrackKind::fx ? "Add FX track" : "Add track");
     tracks.addChild (t, insertIndex, &doc.undo());
     setSelectedTracks ({ t });
-    if (kind == TrackKind::fx)   // an FX return starts with a fully wet reverb
-    {
-        const int slot = rig::addInsert (t, fx::builtin::descriptionXml ("fretforge:reverb"), "FF Reverb", &doc.undo());
-        if (slot >= 0)
-            rig::insertNode (t, slot).setProperty (rig::ids::state, fx::builtin::stateWith ("fretforge:reverb", { { "mix", 100.0f } }), &doc.undo());
-    }
     return t;
 }
 

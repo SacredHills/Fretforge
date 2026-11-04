@@ -37,6 +37,7 @@ struct PlayTrack
     struct Send { int target = -1; float gain = 0.0f; bool pre = false; };
     std::vector<Send> sends;                  // into FX / bus tracks
     int level = 0;                            // processing stage: a track's sources all have lower levels
+    bool outputMuted = false;                 // solo: the track feeds a soloed bus / FX return but is not heard directly
 
     // audio-thread state
     struct Idle { juce::int64 silentIn = 0, quietOut = 0; bool sleeping = false; } idle;   // skip effects that have nothing to do
@@ -49,7 +50,8 @@ struct PlayTrack
 struct PlaybackGraph
 {
     std::vector<PlayTrack> tracks;
-    std::vector<int> order;                  // track indices sorted by level (sources before the buses they feed)
+    std::vector<int> order;
+    std::shared_ptr<fx::InsertChain> masterInserts;   // plugins on the master bus (after every track)                  // track indices sorted by level (sources before the buses they feed)
     double sampleRate = 48000.0;
     int missingClips = 0; // clips whose audio is not loaded (yet)
 };
@@ -61,6 +63,7 @@ struct GraphBuildOptions
     const std::map<juce::String, std::shared_ptr<TrackRecorder>>* recorders = nullptr; // by track id
     std::function<std::shared_ptr<fx::AmpRig> (const juce::ValueTree& track)> rigFor;    // amp rig per track (optional)
     std::function<std::shared_ptr<fx::InsertChain> (const juce::ValueTree& track)> insertsFor;
+    std::shared_ptr<fx::InsertChain> masterInserts;
 };
 
 /** Builds the graph from the TRACKS node. Clip files are resolved relative to mediaBundle. */

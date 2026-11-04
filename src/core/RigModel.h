@@ -103,7 +103,8 @@ juce::ValueTree findInserts (const juce::ValueTree& track);
 juce::ValueTree insertNode (const juce::ValueTree& track, int slot);
 int numInserts (const juce::ValueTree& track);
 /** Adds a plugin after the last insert; returns its slot (-1 if the track is full). */
-int addInsert (juce::ValueTree track, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* = nullptr);
+int addInsert (juce::ValueTree track, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* = nullptr,
+              const juce::String& state = {}, bool bypassed = false);
 void replaceInsert (juce::ValueTree track, int slot, const juce::String& descXml, const juce::String& displayName, juce::UndoManager* = nullptr);
 /** Removes a slot; the ones after it move up. */
 void removeInsert (juce::ValueTree track, int slot, juce::UndoManager* = nullptr);

@@ -156,9 +156,76 @@ private:
 
 // ===================================================================== editor windows
 
+/** Copy / Paste bar above a plugin's own editor. */
 struct PluginManager::EditorWindow final : public juce::DocumentWindow
 {
-    EditorWindow (std::shared_ptr<juce::AudioPluginInstance> p, const juce::String& title, std::function<void()> closed)
+    struct Content final : public juce::Component, private juce::ComponentListener
+    {
+        Content (PluginManager& m, juce::AudioPluginInstance& p, juce::AudioProcessorEditor& e) : manager (m), plugin (p), editor (e)
+        {
+            for (auto* b : { &copy, &paste })
+            {
+                b->setWantsKeyboardFocus (false);
+                addAndMakeVisible (*b);
+            }
+            copy.setTooltip ("Copy this plugin's settings (paste them into the same plugin on another track, or use "
+                             "\"Paste plugin\" on a track's + Plugin menu)");
+            paste.setTooltip ("Paste copied settings of the same plugin");
+            copy.onClick = [this] {
+                manager.copySettings (plugin);
+                status.setText ("Settings copied", juce::dontSendNotification);
+                refresh();
+            };
+            paste.onClick = [this] {
+                juce::String err;
+                status.setText (manager.pasteSettings (plugin, err) ? juce::String ("Settings pasted") : err, juce::dontSendNotification);
+            };
+            status.setColour (juce::Label::textColourId, palette::textDim);
+            status.setFont (uiFont (12.0f));
+            addAndMakeVisible (status);
+            addAndMakeVisible (editor);
+            editor.addComponentListener (this);
+            refresh();
+            fit();
+        }
+        ~Content() override { editor.removeComponentListener (this); }
+        void refresh()
+        {
+            const auto& c = manager.clipboard;
+            paste.setEnabled (! c.empty() && c.identifier == plugin.getPluginDescription().createIdentifierString());
+        }
+        void fit() { setSize (juce::jmax (editor.getWidth(), 260), editor.getHeight() + bar); }
+        void componentMovedOrResized (juce::Component&, bool, bool wasResized) override { if (wasResized && ! resizing) fit(); }
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            auto top = r.removeFromTop (bar).reduced (6, 4);
+            copy.setBounds (top.removeFromLeft (64));
+            top.removeFromLeft (4);
+            paste.setBounds (top.removeFromLeft (64));
+            top.removeFromLeft (10);
+            status.setBounds (top);
+            const juce::ScopedValueSetter<bool> svs (resizing, true);
+            if (editor.isResizable()) editor.setBounds (r);
+            else editor.setTopLeftPosition (r.getPosition());
+        }
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (palette::bg);
+            g.setColour (palette::panel);
+            g.fillRect (getLocalBounds().removeFromTop (bar));
+        }
+        void visibilityChanged() override { refresh(); }
+        static constexpr int bar = 30;
+        PluginManager& manager;
+        juce::AudioPluginInstance& plugin;
+        juce::AudioProcessorEditor& editor;
+        juce::TextButton copy { "Copy" }, paste { "Paste" };
+        juce::Label status;
+        bool resizing = false;
+    };
+
+    EditorWindow (PluginManager& m, std::shared_ptr<juce::AudioPluginInstance> p, const juce::String& title, std::function<void()> closed)
         : juce::DocumentWindow (title, palette::bg, juce::DocumentWindow::closeButton | juce::DocumentWindow::minimiseButton),
           plugin (std::move (p)), onClosed (std::move (closed))
     {
@@ -170,7 +237,8 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         }
         if (ed == nullptr) ed = new juce::GenericAudioProcessorEditor (*plugin);
         editor.reset (ed);
-        setContentNonOwned (ed, true);
+        content = std::make_unique<Content> (m, *plugin, *ed);
+        setContentNonOwned (content.get(), true);
         setResizable (ed->isResizable(), false);
         setAlwaysOnTop (true);
         centreWithSize (getWidth(), getHeight());
@@ -179,15 +247,39 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
     ~EditorWindow() override
     {
         clearContentComponent();
+        content.reset();
         if (editor != nullptr) plugin->editorBeingDeleted (editor.get());
         editor.reset();
     }
     void closeButtonPressed() override { if (onClosed) juce::MessageManager::callAsync (onClosed); }
+    void activeWindowStatusChanged() override { if (content != nullptr) content->refresh(); }
 
     std::shared_ptr<juce::AudioPluginInstance> plugin;   // keeps the plugin alive while its editor is open
     std::unique_ptr<juce::AudioProcessorEditor> editor;
+    std::unique_ptr<Content> content;
     std::function<void()> onClosed;
 };
+
+void PluginManager::copySettings (juce::AudioPluginInstance& p)
+{
+    const auto d = p.getPluginDescription();
+    clipboard.identifier = d.createIdentifierString();
+    clipboard.descXml = d.createXml()->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());
+    clipboard.name = d.name;
+    clipboard.state = fx::capturePluginState (p);
+}
+
+bool PluginManager::pasteSettings (juce::AudioPluginInstance& p, juce::String& error)
+{
+    if (clipboard.empty()) { error = "Nothing copied yet"; return false; }
+    if (clipboard.identifier != p.getPluginDescription().createIdentifierString())
+    {
+        error = "Copied settings are for " + clipboard.name;
+        return false;
+    }
+    fx::restorePluginState (p, clipboard.state);
+    return true;
+}
 
 // ===================================================================== manager
 
@@ -274,7 +366,7 @@ void PluginManager::addToMenu (juce::PopupMenu& menu, int) const
     menu.addSectionHeader ("FretForge");
     int i = 0;
     for (auto& b : fx::builtin::all())
-        menu.addItem (builtinMenuBase + i++, juce::String (b.name) + "   (" + b.category + ")");
+        menu.addItem (builtinMenuBase + i++, b.name);
     juce::Array<juce::PluginDescription> effects;
     for (auto& d : known.getTypes())
         if (! d.isInstrument) effects.add (d);
@@ -491,7 +583,7 @@ void PluginManager::showEditor (std::shared_ptr<juce::AudioPluginInstance> p, co
     auto* key = p.get();
     if (auto it = editors.find (key); it != editors.end()) { it->second->setVisible (true); it->second->toFront (true); return; }
     std::weak_ptr<bool> token = alive;
-    editors[key] = std::make_unique<EditorWindow> (p, title, [this, token, key] { if (! token.expired()) closeEditor (key); });
+    editors[key] = std::make_unique<EditorWindow> (*this, p, title, [this, token, key] { if (! token.expired()) closeEditor (key); });
 }
 
 void PluginManager::closeEditor (juce::AudioPluginInstance* p)
