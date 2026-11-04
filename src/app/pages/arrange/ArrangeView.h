@@ -166,6 +166,8 @@ public:
     int numTracks() { return doc.tracks().getNumChildren(); }
     juce::Colour trackColour (const juce::ValueTree& t) const;
     void select (const juce::ValueTree& clip, bool add);
+    /** Clips on the other tracks of a clip's track group that overlap it (they are edited with it; Alt: none). */
+    juce::Array<juce::ValueTree> groupPartners (const juce::ValueTree& clip) const;
     void clearSelection() { selection.clear(); }
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void locate (double seconds) { host.engine.locateSeconds (seconds); }

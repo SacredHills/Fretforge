@@ -244,7 +244,7 @@ void TrackHeader::mouseUp (const juce::MouseEvent&)
     const int idx = owner.trackDropIndex();
     owner.setTrackDropIndex (-1);
     if (idx >= 0)
-        owner.moveTracks (owner.session.tracksForEdit (track), idx);
+        owner.moveTracks (owner.session.linkedTracks (track), idx);   // a group moves as one block
 }
 
 void TrackHeader::showMenu()
@@ -751,6 +751,10 @@ void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
             if (owner.selection.contains (clip))
                 for (auto& c : owner.selection)
                     if (c != clip && t > prop (c, ids::start) + 0.001 && t < clipEnd (c) - 0.001) targets.add (c);
+            if (! e.mods.isAltDown())   // grouped tracks are cut at the same time
+                for (auto tr : owner.session.linkedTracks (clip.getParent()))
+                    for (auto c : tr)
+                        if (c.hasType (ids::CLIP) && t > prop (c, ids::start) + 0.001 && t < clipEnd (c) - 0.001) targets.addIfNotAlreadyThere (c);
             if (t > prop (clip, ids::start) + 0.001 && t < clipEnd (clip) - 0.001) owner.splitClipsAt (targets, t);
         }
         mode = Mode::none;
@@ -781,6 +785,9 @@ void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
     trackDelta = 0;
     originals.clear();
     auto& sel = owner.selection;
+    if (mode == Mode::move)   // clips on grouped tracks come along
+        for (int i = 0, n = sel.size(); i < n; ++i)
+            for (auto& p : owner.groupPartners (sel[i])) sel.addIfNotAlreadyThere (p);
     for (auto& c : (mode == Mode::move ? sel : juce::Array<juce::ValueTree> { clip }))
         originals.push_back ({ c, prop (c, ids::start), prop (c, ids::length), prop (c, ids::offset), prop (c, ids::fadeIn),
                                prop (c, ids::fadeOut), owner.doc.tracks().indexOf (c.getParent()) });
@@ -1221,8 +1228,31 @@ int ArrangeView::trackIndexAtY (int y) const
 void ArrangeView::select (const juce::ValueTree& clip, bool add)
 {
     if (! add) selection.clear();
-    if (add && selection.contains (clip)) selection.removeFirstMatchingValue (clip);
-    else selection.addIfNotAlreadyThere (clip);
+    const auto partners = groupPartners (clip);
+    if (add && selection.contains (clip))
+    {
+        selection.removeFirstMatchingValue (clip);
+        for (auto& p : partners) selection.removeFirstMatchingValue (p);
+    }
+    else
+    {
+        selection.addIfNotAlreadyThere (clip);
+        for (auto& p : partners) selection.addIfNotAlreadyThere (p);   // grouped tracks edit together
+    }
+}
+
+juce::Array<juce::ValueTree> ArrangeView::groupPartners (const juce::ValueTree& clip) const
+{
+    juce::Array<juce::ValueTree> out;
+    const auto track = clip.getParent();
+    const auto grp = track[ids::group].toString();
+    if (grp.isEmpty() || juce::ModifierKeys::currentModifiers.isAltDown()) return out;   // Alt: just this clip
+    const double s = prop (clip, ids::start), e = clipEnd (clip);
+    for (auto t : doc.tracks())
+        if (t != track && t[ids::group].toString() == grp)
+            for (auto c : t)
+                if (c.hasType (ids::CLIP) && prop (c, ids::start) < e - 0.001 && clipEnd (c) > s + 0.001) out.add (c);
+    return out;
 }
 
 void ArrangeView::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -1430,9 +1460,13 @@ void ArrangeView::splitAtPlayhead()
     for (auto& c : selection)
         if (t > prop (c, ids::start) + 0.001 && t < clipEnd (c) - 0.001) targets.add (c);
     if (targets.isEmpty())
-        for (auto tr : session.selectedTracks)
-            for (auto c : tr)
-                if (c.hasType (ids::CLIP) && t > prop (c, ids::start) + 0.001 && t < clipEnd (c) - 0.001) targets.add (c);
+        for (auto sel : session.selectedTracks)
+            for (auto tr : session.linkedTracks (sel))
+                for (auto c : tr)
+                    if (c.hasType (ids::CLIP) && t > prop (c, ids::start) + 0.001 && t < clipEnd (c) - 0.001) targets.addIfNotAlreadyThere (c);
+    for (int i = 0; i < targets.size(); ++i)   // grouped tracks are cut too
+        for (auto& p : groupPartners (targets[i]))
+            if (t > prop (p, ids::start) + 0.001 && t < clipEnd (p) - 0.001) targets.addIfNotAlreadyThere (p);
     splitClipsAt (targets, t);
 }
 

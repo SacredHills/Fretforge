@@ -17,7 +17,7 @@ tab play-along and Render to Studio).
 
 **Mixer (new):** plugins on the master bus; an on/off lamp on every plugin and the NAM amp; drag a plugin onto another
 track to copy it with its settings (or within a track to reorder); Copy / Paste in every plugin window and "Paste
-plugin" in the + Plugin menus; track groups (track menu > Group) link volume, pan, mute, solo and record (hold Alt to
+plugin" in the + Plugin menus; track groups (track menu > Group) link volume, pan, mute, solo, record, clip moves, slices and track reordering (hold Alt to
 change one track on its own).
 
 **Bus and FX tracks (new):** + Track offers audio, bus and FX tracks. Route tracks into a bus (Mixer: click the
