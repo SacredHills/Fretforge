@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <complex>
 #include <juce_core/juce_core.h>
 
 namespace ff::fx
@@ -45,6 +46,16 @@ struct Biquad
         }
         b0 = (float) (B0 / A0); b1 = (float) (B1 / A0); b2 = (float) (B2 / A0);
         a1 = (float) (A1 / A0); a2 = (float) (A2 / A0);
+    }
+
+    /** |H| at `freq` (for drawing responses). */
+    double magnitude (double freq, double sr) const noexcept
+    {
+        const double w = 2.0 * juce::MathConstants<double>::pi * freq / sr;
+        const std::complex<double> z1c = std::polar (1.0, -w), z2c = std::polar (1.0, -2.0 * w);
+        const auto num = (double) b0 + (double) b1 * z1c + (double) b2 * z2c;
+        const auto den = 1.0 + (double) a1 * z1c + (double) a2 * z2c;
+        return std::abs (num / den);
     }
 
     inline float process (float x) noexcept

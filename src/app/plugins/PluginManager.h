@@ -43,7 +43,8 @@ public:
     juce::AudioPluginFormatManager formats;
     juce::KnownPluginList known;
 
-    /** Menu of the known plugins (effects first, by manufacturer); item ids start at `firstId`. */
+    static constexpr int builtinMenuBase = 9000;
+    /** Menu of FretForge's own effects, then the known plugins (by manufacturer). */
     void addToMenu (juce::PopupMenu& menu, int firstId) const;
     /** The plugin chosen from that menu, as description XML (empty if none). */
     juce::String descriptionForMenuResult (int result, int firstId, juce::String& name) const;

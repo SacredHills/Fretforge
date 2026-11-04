@@ -44,8 +44,7 @@ public:
     void showSendMenu (juce::ValueTree track, juce::ValueTree send, juce::Component* target);
     /** "Master" or the bus name. */
     juce::String outputName (const juce::ValueTree& track) const;
-    /** Called when an FX track is made, so the app can give it a reverb (optional). */
-    std::function<void (juce::ValueTree fxTrack)> onFxTrackCreated;
+
     void deleteTrack (juce::ValueTree track);
     juce::ValueTree duplicateTrack (juce::ValueTree track);
     juce::ValueTree findTrack (const juce::String& id);

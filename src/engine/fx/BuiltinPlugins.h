@@ -1,0 +1,48 @@
+#pragma once
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <map>
+
+/** FretForge's own effects (EQ, compressor, delay, chorus, reverb), hosted like any other plugin: they show up
+    first in every plugin menu, work as track inserts and in amp rigs, save their settings in the project and
+    open in a plugin window. */
+namespace ff::fx::builtin
+{
+inline constexpr const char* formatName = "FretForge";
+
+struct Info
+{
+    const char* id;          // e.g. "fretforge:eq"
+    const char* name;        // "FF EQ"
+    const char* category;    // "EQ", "Dynamics", "Delay", "Modulation", "Reverb"
+    const char* description;
+};
+const std::vector<Info>& all();
+const Info* find (const juce::String& id);
+
+juce::PluginDescription describe (const Info&);
+/** Single-line description XML, as stored in a project's PLUGIN node. */
+juce::String descriptionXml (const juce::String& id);
+std::unique_ptr<juce::AudioPluginInstance> create (const juce::String& id);
+/** Plugin state (base64, like a PLUGIN node's state) with some parameters set, e.g. {"mix", 100} for a reverb on an FX
+    track. Values are in the parameter's own units. */
+juce::String stateWith (const juce::String& id, const std::map<juce::String, float>& values);
+
+/** Plugin format for the AudioPluginFormatManager, so the built-ins are created like any other plugin. */
+class Format final : public juce::AudioPluginFormat
+{
+public:
+    juce::String getName() const override { return formatName; }
+    void findAllTypesForFile (juce::OwnedArray<juce::PluginDescription>&, const juce::String& fileOrIdentifier) override;
+    bool fileMightContainThisPluginType (const juce::String& f) override { return f.startsWith ("fretforge:"); }
+    juce::String getNameOfPluginFromIdentifier (const juce::String& id) override;
+    bool pluginNeedsRescanning (const juce::PluginDescription&) override { return false; }
+    bool doesPluginStillExist (const juce::PluginDescription& d) override { return find (d.fileOrIdentifier) != nullptr; }
+    bool canScanForPlugins() const override { return false; }
+    bool isTrivialToScan() const override { return true; }
+    juce::StringArray searchPathsForPlugins (const juce::FileSearchPath&, bool, bool) override;
+    juce::FileSearchPath getDefaultLocationsToSearch() override { return {}; }
+    bool requiresUnblockedMessageThreadDuringCreation (const juce::PluginDescription&) const override { return false; }
+protected:
+    void createPluginInstance (const juce::PluginDescription&, double sampleRate, int blockSize, PluginCreationCallback) override;
+};
+} // namespace ff::fx::builtin

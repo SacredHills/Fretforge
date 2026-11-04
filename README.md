@@ -8,7 +8,19 @@ project format, plugin system, milestone plan, risks and licensing.
 
 **Studio:** "Follow" (scroll with the playhead, on by default) and "Slice" (click a clip to cut it at the mouse, snapped; Alt = no snap; Esc leaves) buttons in the Studio toolbar.
 
-**Track plugins (new):** every track can have up to 8 insert plugins after its NAM amp and before the fader: the
+**Built-in effects (new):** FF EQ (six bands with a draggable response curve), FF Compressor (with transfer curve and
+gain-reduction meter), FF Delay (stereo / ping-pong), FF Chorus and FF Reverb come first in every plugin menu and work as
+track inserts and in amp rigs.
+
+**Bus and FX tracks (new):** + Track offers audio, bus and FX tracks. Route tracks into a bus (Mixer: click the
+"> Master" row of a strip), or give them pre/post-fader sends to an FX track (it starts with a 100 % wet FF Reverb).
+Routing loops are refused. Playback and exports follow the routing, and delay compensation includes the buses.
+
+**Performance and safety (new):** rigs and plugins of different tracks run in parallel on real-time worker threads,
+and a track whose input has been silent (and whose effect tails have died away) stops running its effects until sound
+arrives. If FretForge crashes or freezes inside a plugin, the next start names the plugin and offers to disable it.
+
+**Track plugins:** every track can have up to 8 insert plugins after its NAM amp and before the fader: the
 Mixer strips have a "+ Plugin" row (click a plugin to open it, right-click to bypass / move / replace / remove), and the
 Studio track menu has "Add plugin..." and the track's plugins. Exports include them.
 

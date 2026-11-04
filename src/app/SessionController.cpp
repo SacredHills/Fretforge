@@ -1,5 +1,6 @@
 #include "SessionController.h"
 #include "plugins/PluginManager.h"
+#include "engine/fx/BuiltinPlugins.h"
 
 namespace ff
 {
@@ -303,7 +304,12 @@ juce::ValueTree SessionController::addTrack (const juce::String& nameIn, int ins
     doc.undo().beginNewTransaction (kind == TrackKind::bus ? "Add bus" : kind == TrackKind::fx ? "Add FX track" : "Add track");
     tracks.addChild (t, insertIndex, &doc.undo());
     setSelectedTracks ({ t });
-    if (kind == TrackKind::fx && onFxTrackCreated) onFxTrackCreated (t);
+    if (kind == TrackKind::fx)   // an FX return starts with a fully wet reverb
+    {
+        const int slot = rig::addInsert (t, fx::builtin::descriptionXml ("fretforge:reverb"), "FF Reverb", &doc.undo());
+        if (slot >= 0)
+            rig::insertNode (t, slot).setProperty (rig::ids::state, fx::builtin::stateWith ("fretforge:reverb", { { "mix", 100.0f } }), &doc.undo());
+    }
     return t;
 }
 

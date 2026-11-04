@@ -1,5 +1,6 @@
 #include "PluginManager.h"
 #include "../StudioLookAndFeel.h"
+#include "engine/fx/BuiltinPlugins.h"
 #include <condition_variable>
 #include <queue>
 
@@ -193,6 +194,7 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
 PluginManager::PluginManager (juce::PropertiesFile& s) : settings (s)
 {
     juce::addDefaultFormatsToManager (formats);
+    formats.addFormat (std::make_unique<fx::builtin::Format>());
     if (auto xml = settings.getXmlValue ("knownPlugins")) known.recreateFromXml (*xml);
     known.setCustomScanner (std::make_unique<OutOfProcessScanner>());
     known.addChangeListener (this);
@@ -269,14 +271,25 @@ void PluginManager::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void PluginManager::addToMenu (juce::PopupMenu& menu, int) const
 {
+    menu.addSectionHeader ("FretForge");
+    int i = 0;
+    for (auto& b : fx::builtin::all())
+        menu.addItem (builtinMenuBase + i++, juce::String (b.name) + "   (" + b.category + ")");
     juce::Array<juce::PluginDescription> effects;
     for (auto& d : known.getTypes())
         if (! d.isInstrument) effects.add (d);
+    if (effects.isEmpty()) return;
+    menu.addSectionHeader ("Your plugins");
     juce::KnownPluginList::addToMenu (menu, effects, juce::KnownPluginList::sortByManufacturer);
 }
 
 juce::String PluginManager::descriptionForMenuResult (int result, int, juce::String& name) const
 {
+    if (const auto& b = fx::builtin::all(); result >= builtinMenuBase && result < builtinMenuBase + (int) b.size())
+    {
+        name = b[(size_t) (result - builtinMenuBase)].name;
+        return fx::builtin::descriptionXml (b[(size_t) (result - builtinMenuBase)].id);
+    }
     juce::Array<juce::PluginDescription> effects;
     for (auto& d : known.getTypes())
         if (! d.isInstrument) effects.add (d);

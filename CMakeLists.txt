@@ -103,6 +103,7 @@ target_sources(ff_core PRIVATE
     src/engine/fx/RigBank.cpp
     src/engine/fx/PluginHost.cpp
     src/engine/fx/InsertChain.cpp
+    src/engine/fx/BuiltinPlugins.cpp
     src/engine/TabSynth.cpp
     src/engine/DrumSynth.cpp
     src/engine/AudioCache.cpp
@@ -208,6 +209,7 @@ if(FF_BUILD_TESTS)
         tests/DrumTests.cpp
         tests/AmpRigTests.cpp
         tests/RoutingTests.cpp
+        tests/BuiltinPluginTests.cpp
         tests/PerfProbe.cpp)
     target_link_libraries(ff_tests PRIVATE ff_core juce::juce_recommended_config_flags)
     target_compile_definitions(ff_tests PRIVATE FF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
