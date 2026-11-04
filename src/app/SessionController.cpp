@@ -143,7 +143,7 @@ void SessionController::setOnTracks (const juce::ValueTree& clicked, const juce:
 
 void SessionController::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier&)
 {
-    if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP))
+    if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP) || node.hasType (ids::SEND))
         triggerAsyncUpdate();
 }
 
@@ -281,7 +281,7 @@ std::shared_ptr<const CachedAudio> SessionController::audioFor (const juce::Valu
 
 // ------------------------------------------------------------------ tracks
 
-juce::ValueTree SessionController::addTrack (const juce::String& nameIn, int insertIndex)
+juce::ValueTree SessionController::addTrack (const juce::String& nameIn, int insertIndex, TrackKind kind)
 {
     auto tracks = doc.tracks();
     if (tracks.getNumChildren() >= maxTracks)
@@ -289,14 +289,150 @@ juce::ValueTree SessionController::addTrack (const juce::String& nameIn, int ins
         if (onError) onError ("Track limit", "This version supports up to " + juce::String (maxTracks) + " tracks.");
         return {};
     }
-    const auto name = nameIn.isNotEmpty() ? nameIn : "Track " + juce::String (tracks.getNumChildren() + 1);
-    auto t = createTrack (name, tracks.getNumChildren());
-    const auto inputs = host.activeInputChannelNames();
-    t.setProperty (ids::inputChannel, inputs.isEmpty() ? -1 : 0, nullptr);
-    doc.undo().beginNewTransaction ("Add track");
+    int sameKind = 1;
+    for (auto x : tracks) sameKind += kindOf (x) == kind ? 1 : 0;
+    const auto name = nameIn.isNotEmpty() ? nameIn
+                    : (kind == TrackKind::bus ? "Bus " : kind == TrackKind::fx ? "FX " : "Track ") + juce::String (sameKind);
+    auto t = kind == TrackKind::audio ? createTrack (name, tracks.getNumChildren()) : createBusTrack (name, tracks.getNumChildren(), kind);
+    if (kind == TrackKind::audio)
+    {
+        const auto inputs = host.activeInputChannelNames();
+        t.setProperty (ids::inputChannel, inputs.isEmpty() ? -1 : 0, nullptr);
+    }
+    else t.setProperty (ids::inputChannel, -1, nullptr);
+    doc.undo().beginNewTransaction (kind == TrackKind::bus ? "Add bus" : kind == TrackKind::fx ? "Add FX track" : "Add track");
     tracks.addChild (t, insertIndex, &doc.undo());
     setSelectedTracks ({ t });
+    if (kind == TrackKind::fx && onFxTrackCreated) onFxTrackCreated (t);
     return t;
+}
+
+void SessionController::showAddTrackMenu (juce::Component* target, int insertIndex)
+{
+    juce::PopupMenu m;
+    m.addItem (1, "Audio track");
+    m.addItem (2, "Bus track (group tracks: route them to it)");
+    m.addItem (3, "FX track (shared effect: send tracks to it)");
+    juce::Component::SafePointer<juce::Component> safe (target);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, insertIndex] (int r) {
+        if (r == 1) addTrack ({}, insertIndex);
+        else if (r == 2) addTrack ({}, insertIndex, TrackKind::bus);
+        else if (r == 3) addTrack ({}, insertIndex, TrackKind::fx);
+    });
+}
+
+juce::String SessionController::outputName (const juce::ValueTree& track) const
+{
+    const auto bus = timeline::findTrack (doc.tracks(), outputOf (track));
+    return bus.isValid() ? bus[ids::name].toString() : juce::String ("Master");
+}
+
+void SessionController::setOutput (juce::ValueTree track, const juce::String& busId)
+{
+    const auto bus = timeline::findTrack (doc.tracks(), busId);
+    if (busId.isNotEmpty() && ! canRouteTo (doc.tracks(), track, bus))
+    {
+        if (onError) onError ("Routing", "\"" + track[ids::name].toString() + "\" cannot play into \"" + bus[ids::name].toString()
+                                         + "\": that would feed the sound back into itself.");
+        return;
+    }
+    doc.undo().beginNewTransaction ("Track output");
+    track.setProperty (ids::output, busId, &doc.undo());
+}
+
+void SessionController::showRoutingMenu (juce::ValueTree track, juce::Component* target)
+{
+    auto tracks = doc.tracks();
+    juce::PopupMenu out, sends;
+    out.addItem (1, "Master", true, outputOf (track).isEmpty() || ! timeline::findTrack (tracks, outputOf (track)).isValid());
+    int i = 0;
+    juce::Array<juce::ValueTree> targets;
+    for (auto t : tracks)
+    {
+        if (t.hasType (ids::TRACK) && ! isAudioTrack (t) && t != track)
+        {
+            targets.add (t);
+            const bool ok = canRouteTo (tracks, track, t);
+            out.addItem (100 + i, t[ids::name].toString() + (kindOf (t) == TrackKind::fx ? "  (FX)" : ""), ok, outputOf (track) == t[ids::id].toString());
+            bool hasSend = false;
+            for (auto c : track) hasSend = hasSend || (c.hasType (ids::SEND) && c[ids::target].toString() == t[ids::id].toString());
+            sends.addItem (300 + i, "Send to " + t[ids::name].toString(), ok && ! hasSend);
+            ++i;
+        }
+    }
+    out.addSeparator();
+    out.addItem (2, "New bus for this track");
+    sends.addSeparator();
+    sends.addItem (3, "New FX track with a send from this track");
+    juce::PopupMenu m;
+    m.addSectionHeader (track[ids::name].toString() + "  ->  " + outputName (track));
+    m.addSubMenu ("Output", out);
+    m.addSubMenu ("Add send", sends);
+    int sendCount = 0;
+    for (auto c : track) sendCount += c.hasType (ids::SEND) ? 1 : 0;
+    if (sendCount > 0)
+    {
+        m.addSeparator();
+        int k = 0;
+        for (auto c : track)
+            if (c.hasType (ids::SEND))
+            {
+                const auto dest = timeline::findTrack (tracks, c[ids::target].toString());
+                m.addItem (500 + k++, "Send to " + (dest.isValid() ? dest[ids::name].toString() : juce::String ("(missing)"))
+                                          + ":  " + juce::String ((double) c[ids::level], 1) + " dB" + ((bool) c[ids::pre] ? " pre" : "") + "...");
+            }
+    }
+    juce::Component::SafePointer<juce::Component> safe (target);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, targets, safe] (int r) {
+        if (r == 0) return;
+        auto tracks2 = doc.tracks();
+        if (r == 1) setOutput (track, {});
+        else if (r >= 100 && r < 300) setOutput (track, targets[r - 100][ids::id].toString());
+        else if (r >= 300 && r < 500)
+        {
+            doc.undo().beginNewTransaction ("Add send");
+            addSend (juce::ValueTree (track), targets[r - 300][ids::id].toString(), -6.0, false, &doc.undo());
+        }
+        else if (r == 2 || r == 3)
+        {
+            const auto kind = r == 2 ? TrackKind::bus : TrackKind::fx;
+            auto bus = addTrack ({}, -1, kind);
+            if (! bus.isValid()) return;
+            auto t = track;
+            if (kind == TrackKind::bus) t.setProperty (ids::output, bus[ids::id], &doc.undo());
+            else addSend (t, bus[ids::id].toString(), -6.0, false, &doc.undo());
+            setSelectedTracks ({ track });
+        }
+        else if (r >= 500)
+        {
+            int k = 0;
+            for (auto c : track)
+                if (c.hasType (ids::SEND) && k++ == r - 500) { showSendMenu (track, c, safe.getComponent()); break; }
+        }
+    });
+}
+
+void SessionController::showSendMenu (juce::ValueTree track, juce::ValueTree send, juce::Component* target)
+{
+    if (! send.isValid()) return;
+    const auto dest = timeline::findTrack (doc.tracks(), send[ids::target].toString());
+    juce::PopupMenu m;
+    m.addSectionHeader ("Send to " + (dest.isValid() ? dest[ids::name].toString() : juce::String ("(missing track)")));
+    static constexpr double levels[] = { 6.0, 3.0, 0.0, -3.0, -6.0, -9.0, -12.0, -18.0, -24.0, -36.0 };
+    juce::PopupMenu lv;
+    for (int i = 0; i < (int) std::size (levels); ++i)
+        lv.addItem (10 + i, juce::String (levels[i], 1) + " dB", true, std::abs ((double) send[ids::level] - levels[i]) < 0.05);
+    m.addSubMenu ("Level (" + juce::String ((double) send[ids::level], 1) + " dB; drag the send to fine-tune)", lv);
+    m.addItem (2, "Pre-fader (ignores the track's fader)", true, (bool) send[ids::pre]);
+    m.addSeparator();
+    m.addItem (3, "Remove send");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, send] (int r) {
+        auto s = send;
+        if (! s.getParent().isValid()) return;
+        if (r >= 10 && r < 30) { doc.undo().beginNewTransaction ("Send level"); s.setProperty (ids::level, levels[r - 10], &doc.undo()); }
+        else if (r == 2) { doc.undo().beginNewTransaction ("Send pre/post"); s.setProperty (ids::pre, ! (bool) s[ids::pre], &doc.undo()); }
+        else if (r == 3) { doc.undo().beginNewTransaction ("Remove send"); auto t = track; t.removeChild (s, &doc.undo()); }
+    });
 }
 
 void SessionController::deleteTrack (juce::ValueTree track)
@@ -307,6 +443,7 @@ void SessionController::deleteTrack (juce::ValueTree track)
         return;
     }
     doc.undo().beginNewTransaction ("Delete track");
+    removeRoutesTo (doc.tracks(), track[ids::id].toString(), &doc.undo());   // tracks that played into it go to the master
     doc.tracks().removeChild (track, &doc.undo());
 }
 
@@ -401,6 +538,7 @@ juce::Result SessionController::importFiles (const juce::Array<juce::File>& file
             dst = f;
 
         juce::ValueTree target;
+        if (useGivenTrack && ! isAudioTrack (track)) useGivenTrack = false;   // bus / FX tracks hold no clips
         if (useGivenTrack)
         {
             target = track;
@@ -459,7 +597,7 @@ void SessionController::toggleRecord()
 
     juce::Array<juce::ValueTree> armed;
     for (auto t : doc.tracks())
-        if ((bool) t[ids::armed])
+        if ((bool) t[ids::armed] && isAudioTrack (t))
             armed.add (t);
     if (armed.isEmpty())
     {

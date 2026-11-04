@@ -56,6 +56,9 @@ TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t),
         owner.doc.set (track, ids::inputStereo, inputValues[i2].second);
     };
     addAndMakeVisible (input);
+    route.setTooltip ("Where this bus / FX track plays into, and its sends");
+    route.onClick = [this] { owner.session.showRoutingMenu (track, &route); };
+    addChildComponent (route);
 
     gain.setSliderStyle (juce::Slider::LinearHorizontal);
     gain.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -111,6 +114,12 @@ void TrackHeader::refresh()
     const juce::ScopedValueSetter<bool> svs (updating, true);
     name.setText (track[ids::name].toString(), juce::dontSendNotification);
     arm.setToggleState ((bool) track[ids::armed], juce::dontSendNotification);
+    const bool audio = isAudioTrack (track);
+    arm.setVisible (audio);
+    mon.setVisible (audio);
+    input.setVisible (audio);
+    route.setVisible (! audio);
+    route.setButtonText ((kindOf (track) == TrackKind::fx ? "FX  > " : "BUS  > ") + owner.session.outputName (track));
     mon.setToggleState ((bool) track[ids::monitor], juce::dontSendNotification);
     mute.setToggleState ((bool) track[ids::mute], juce::dontSendNotification);
     solo.setToggleState ((bool) track[ids::solo], juce::dontSendNotification);
@@ -191,6 +200,7 @@ void TrackHeader::resized()
     pan.setBounds (row.removeFromRight (26));
     row.removeFromRight (4);
     input.setBounds (row.removeFromLeft (row.getWidth() / 2 + 10));
+    route.setBounds (input.getBounds());
     row.removeFromLeft (4);
     gain.setBounds (row);
 }
@@ -247,6 +257,7 @@ void TrackHeader::showMenu()
     }
     else m.addItem (10, "Add NAM amp...");
     m.addItem (12, "Add plugin...", owner.session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
+    m.addItem (13, "Output and sends  (now: " + owner.session.outputName (track) + ")...");
     for (int i = 0; i < rig::numInserts (track); ++i)
         m.addItem (200 + i, "Plugin: " + rig::insertNode (track, i)[rig::ids::name].toString()
                                 + ((bool) rig::insertNode (track, i)[rig::ids::bypass] ? "  (bypassed)" : "") + "...");
@@ -269,6 +280,7 @@ void TrackHeader::showMenu()
         else if (r == 10) o.session.addTrackRig (t);
         else if (r == 11) o.session.removeTrackRig (t);
         else if (r == 12) o.session.showAddInsertMenu (t, safe.getComponent());
+        else if (r == 13) o.session.showRoutingMenu (t, safe.getComponent());
         else if (r >= 200 && r < 200 + rig::maxInserts) o.session.showInsertMenu (t, r - 200, safe.getComponent());
         else if (r >= 100) { o.doc.undo().beginNewTransaction ("Track colour"); o.doc.set (t, ids::colour, trackPalette()[r - 100]); }
         else if (r == 2) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx - 1, &o.doc.undo()); }
@@ -822,7 +834,8 @@ void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
             const int dTrack = owner.trackIndexAtY (e.y) - owner.trackIndexAtY (e.getMouseDownY());
             bool tracksOk = true;
             for (auto& o : originals)
-                tracksOk = tracksOk && juce::isPositiveAndBelow (o.track + dTrack, owner.numTracks());
+                tracksOk = tracksOk && juce::isPositiveAndBelow (o.track + dTrack, owner.numTracks())
+                           && isAudioTrack (owner.trackAtIndex (o.track + dTrack));   // bus / FX tracks hold no clips
             for (auto& o : originals)
             {
                 doc.set (o.clip, ids::start, juce::jmax (0.0, o.start + delta));
@@ -1057,6 +1070,8 @@ void TimelineCanvas::showLaneMenu (int trackIndex, double time)
     m.addItem (3, "Add marker here");
     m.addSeparator();
     m.addItem (4, "Add track");
+    m.addItem (5, "Add bus track");
+    m.addItem (6, "Add FX track");
     juce::Component::SafePointer<TimelineCanvas> safe (this);
     m.showMenuAsync ({}, [safe, trackIndex, time] (int r) {
         if (safe == nullptr) return;
@@ -1070,6 +1085,8 @@ void TimelineCanvas::showLaneMenu (int trackIndex, double time)
                                          &o.doc.undo());
         }
         else if (r == 4) o.addTrack();
+        else if (r == 5) o.session.addTrack ({}, -1, TrackKind::bus);
+        else if (r == 6) o.session.addTrack ({}, -1, TrackKind::fx);
         juce::ignoreUnused (trackIndex);
     });
 }
@@ -1081,12 +1098,15 @@ void TimelineCanvas::showLaneMenu (int trackIndex, double time)
 ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& s, juce::PropertiesFile& p)
     : doc (d), host (h), session (s), settings (p)
 {
-    addTrackButton.setTooltip ("Add an audio track (Ctrl+T)");
+    addTrackButton.setTooltip ("Add an audio track (Ctrl+T); right-click for a bus or FX track");
     importButton.setTooltip ("Import WAV/AIFF/FLAC/OGG/MP3 onto the selected track at the playhead (Ctrl+I)");
     zoomInButton.setTooltip ("Zoom in (Ctrl + mouse wheel)");
     zoomOutButton.setTooltip ("Zoom out");
     fitButton.setTooltip ("Zoom to fit the song");
-    addTrackButton.onClick = [this] { addTrack(); };
+    addTrackButton.onClick = [this] {
+        if (juce::ModifierKeys::currentModifiers.isPopupMenu()) session.showAddTrackMenu (&addTrackButton);
+        else session.showAddTrackMenu (&addTrackButton, session.primaryTrack().isValid() ? doc.tracks().indexOf (session.primaryTrack()) + 1 : -1);
+    };
     importButton.onClick = [this] { importAudioDialog(); };
     zoomInButton.onClick = [this] { zoom (1.5); };
     zoomOutButton.onClick = [this] { zoom (1.0 / 1.5); };
@@ -1487,6 +1507,7 @@ void ArrangeView::paste()
     for (auto& item : clipboard)
     {
         auto t = trackAtIndex (juce::jlimit (0, numTracks() - 1, base + item.trackOffset));
+        if (! isAudioTrack (t)) continue;   // bus / FX tracks hold no clips
         auto c = item.clip.createCopy();
         c.setProperty (ids::id, newId(), nullptr);
         c.setProperty (ids::start, at + item.timeOffset, nullptr);

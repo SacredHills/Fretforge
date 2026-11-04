@@ -54,6 +54,7 @@ private:
     juce::Label name;
     juce::TextButton arm { "R" }, mon { "I" }, mute { "M" }, solo { "S" };
     juce::ComboBox input;
+    juce::TextButton route;
     juce::Slider gain, pan;
     juce::Array<std::pair<int, bool>> inputValues;
     std::vector<std::pair<juce::ValueTree, double>> groupStart; // other selected tracks' values at drag start

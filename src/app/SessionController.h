@@ -31,7 +31,21 @@ public:
     std::shared_ptr<const CachedAudio> audioFor (const juce::ValueTree& clip);
 
     // ---- tracks ----
-    juce::ValueTree addTrack (const juce::String& name = {}, int insertIndex = -1);
+    juce::ValueTree addTrack (const juce::String& name = {}, int insertIndex = -1,
+                              timeline::TrackKind kind = timeline::TrackKind::audio);
+    /** Menu: audio / bus / FX track (added after `after`, or at the end). */
+    void showAddTrackMenu (juce::Component* target, int insertIndex = -1);
+
+    // ---- routing (outputs and sends) ----
+    void setOutput (juce::ValueTree track, const juce::String& busId);
+    /** Output and sends menu for a track: pick its bus, add sends, or make a new bus / FX track for it. */
+    void showRoutingMenu (juce::ValueTree track, juce::Component* target);
+    /** Level / pre-post / remove for one send. */
+    void showSendMenu (juce::ValueTree track, juce::ValueTree send, juce::Component* target);
+    /** "Master" or the bus name. */
+    juce::String outputName (const juce::ValueTree& track) const;
+    /** Called when an FX track is made, so the app can give it a reverb (optional). */
+    std::function<void (juce::ValueTree fxTrack)> onFxTrackCreated;
     void deleteTrack (juce::ValueTree track);
     juce::ValueTree duplicateTrack (juce::ValueTree track);
     juce::ValueTree findTrack (const juce::String& id);

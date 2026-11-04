@@ -81,6 +81,9 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
         doc.set (track, ids::name, n);
     };
     addAndMakeVisible (nameLabel);
+    routeList.setTooltip ("Sends (drag a send up / down for its level, click for options) and where this track plays into "
+                          "(click to route it to a bus, or add sends)");
+    addAndMakeVisible (routeList);
     insertList.setTooltip ("Plugins on this track (after its NAM amp, before the fader). Click a plugin to open it, right-click for more.");
     addAndMakeVisible (insertList);
     session.rigs().statusChanged.addChangeListener (this);
@@ -140,6 +143,85 @@ void InsertList::mouseUp (const juce::MouseEvent& e)
     else if (row < rowsWanted()) session.showAddInsertMenu (track, this);
 }
 
+// ------------------------------------------------------------------ sends and output
+
+juce::ValueTree RouteList::sendAt (int row) const
+{
+    int k = 0;
+    for (auto c : track)
+        if (c.hasType (ids::SEND) && k++ == row) return c;
+    return {};
+}
+
+int RouteList::rowsWanted() const
+{
+    int n = 1;
+    for (auto c : track) n += c.hasType (ids::SEND) ? 1 : 0;
+    return n;
+}
+
+void RouteList::paint (juce::Graphics& g)
+{
+    const int n = rowsWanted();
+    for (int i = 0; i < n; ++i)
+    {
+        auto r = juce::Rectangle<int> (0, i * rowHeight, getWidth(), rowHeight - 2).toFloat();
+        if (i < n - 1)
+        {
+            const auto s = sendAt (i);
+            const auto dest = findTrack (doc.tracks(), s[ids::target].toString());
+            g.setColour (palette::good.withAlpha (0.16f));
+            g.fillRoundedRectangle (r, 3.0f);
+            // level bar: -36..+6 dB
+            const float x = juce::jlimit (0.0f, 1.0f, (float) (((double) s[ids::level] + 36.0) / 42.0));
+            g.setColour (palette::good.withAlpha (0.35f));
+            g.fillRoundedRectangle (r.withWidth (r.getWidth() * x), 3.0f);
+            g.setColour (palette::text);
+            g.setFont (uiFont (10.5f, true));
+            g.drawText ((dest.isValid() ? dest[ids::name].toString() : juce::String ("?")), r.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
+            g.setFont (uiFont (10.0f));
+            g.drawText (juce::String ((double) s[ids::level], 1) + ((bool) s[ids::pre] ? "p" : ""), r.reduced (4.0f, 0.0f), juce::Justification::centredRight, false);
+        }
+        else
+        {
+            g.setColour (palette::outline);
+            g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+            g.setColour (outputOf (track).isEmpty() ? palette::textDim : palette::warn);
+            g.setFont (uiFont (10.5f));
+            g.drawText ("> " + session.outputName (track), r.reduced (4.0f, 0.0f), juce::Justification::centred, true);
+        }
+    }
+}
+
+void RouteList::mouseDown (const juce::MouseEvent& e)
+{
+    dragged = false;
+    dragSend = {};
+    const int row = e.y / rowHeight;
+    if (row < rowsWanted() - 1 && ! e.mods.isPopupMenu())
+    {
+        dragSend = sendAt (row);
+        dragStartLevel = (double) dragSend[ids::level];
+    }
+}
+
+void RouteList::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! dragSend.isValid() || e.getDistanceFromDragStart() < 3) return;
+    if (! dragged) { doc.undo().beginNewTransaction ("Send level"); dragged = true; }
+    const double v = juce::jlimit (-60.0, 6.0, dragStartLevel - e.getDistanceFromDragStartY() * 0.25 + e.getDistanceFromDragStartX() * 0.25);
+    dragSend.setProperty (ids::level, std::round (v * 10.0) / 10.0, &doc.undo());
+    repaint();
+}
+
+void RouteList::mouseUp (const juce::MouseEvent& e)
+{
+    if (dragged || ! e.mouseWasClicked()) return;
+    const int row = e.y / rowHeight;
+    if (row < rowsWanted() - 1) session.showSendMenu (track, sendAt (row), this);
+    else if (row < rowsWanted()) session.showRoutingMenu (track, this);
+}
+
 void ChannelStrip::refresh()
 {
     const juce::ScopedValueSetter<bool> svs (updating, true);
@@ -149,6 +231,8 @@ void ChannelStrip::refresh()
     solo.setToggleState ((bool) track[ids::solo], juce::dontSendNotification);
     arm.setToggleState ((bool) track[ids::armed], juce::dontSendNotification);
     ampButton.setToggleState (session.trackHasRig (track), juce::dontSendNotification);
+    arm.setVisible (isAudioTrack (track));
+    routeList.repaint();
     if (! nameLabel.isBeingEdited()) nameLabel.setText (track[ids::name].toString(), juce::dontSendNotification);
     repaint();
 }
@@ -188,6 +272,7 @@ void ChannelStrip::showMenu()
     if (session.trackHasRig (track)) { m.addItem (10, "Open NAM amp..."); m.addItem (11, "Remove NAM amp"); }
     else m.addItem (10, "Add NAM amp...");
     m.addItem (12, "Add plugin...", session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
+    m.addItem (13, "Output and sends...");
     m.addSeparator();
     m.addItem (4, "Duplicate track");
     m.addItem (5, "Delete track");
@@ -199,6 +284,7 @@ void ChannelStrip::showMenu()
         if (r == 1) safe->nameLabel.showEditor();
         else if (r == 10) sc.addTrackRig (t);
         else if (r == 12) sc.showAddInsertMenu (t, safe.getComponent());
+        else if (r == 13) sc.showRoutingMenu (t, safe.getComponent());
         else if (r == 11) sc.removeTrackRig (t);
         else if (r == 4) sc.duplicateTrack (t);
         else if (r == 5) sc.deleteTrack (t);   // destroys this strip
@@ -234,6 +320,13 @@ void ChannelStrip::paint (juce::Graphics& g)
     g.setColour (palette::textDim);
     g.setFont (uiFont (10.0f));
     g.drawText ("PAN", getLocalBounds().withTrimmedTop (30).withHeight (14), juce::Justification::centred);
+    if (! isAudioTrack (track))
+    {
+        g.setColour (kindOf (track) == TrackKind::fx ? palette::good : palette::info);
+        g.setFont (uiFont (9.5f, true));
+        g.drawText (kindOf (track) == TrackKind::fx ? "FX" : "BUS", getLocalBounds().reduced (8, 0).withTrimmedTop (30).withHeight (14),
+                    juce::Justification::centredLeft);
+    }
 }
 
 void ChannelStrip::resized()
@@ -242,13 +335,15 @@ void ChannelStrip::resized()
     pan.setBounds (r.removeFromTop (40).withSizeKeepingCentre (40, 40));
     r.removeFromTop (6);
     auto buttons = r.removeFromTop (24);
-    const int w = buttons.getWidth() / 3;
-    arm.setBounds (buttons.removeFromLeft (w).reduced (1));
+    const int w = buttons.getWidth() / (isAudioTrack (track) ? 3 : 2);
+    if (isAudioTrack (track)) arm.setBounds (buttons.removeFromLeft (w).reduced (1));
     mute.setBounds (buttons.removeFromLeft (w).reduced (1));
     solo.setBounds (buttons.reduced (1));
     ampButton.setBounds (r.removeFromTop (30).reduced (1, 4));
     insertList.setBounds (r.removeFromTop (insertList.rowsWanted() * InsertList::rowHeight).withTrimmedRight (0));
     r.removeFromTop (insertList.rowsWanted() > 0 ? 6 : 0);
+    routeList.setBounds (r.removeFromTop (routeList.rowsWanted() * RouteList::rowHeight));
+    r.removeFromTop (6);
     nameLabel.setBounds (getLocalBounds().reduced (5, 0).withTrimmedTop (6).withHeight (24));
     r.removeFromBottom (6);
     fader.setBounds (r.withTrimmedRight (16));
@@ -276,8 +371,8 @@ MixerPage::MixerPage (EngineHost& h, ProjectDocument& d, SessionController& sc, 
     addAndMakeVisible (viewport);
 
     emptyLabel.setText ("No tracks yet. Click \"+ Track\" (or add tracks in Studio) and they appear here as channel strips.", juce::dontSendNotification);
-    addTrackButton.setTooltip ("Add an audio track (Ctrl+T)");
-    addTrackButton.onClick = [this] { session.addTrack(); };
+    addTrackButton.setTooltip ("Add an audio, bus or FX track");
+    addTrackButton.onClick = [this] { session.showAddTrackMenu (&addTrackButton); };
     addAndMakeVisible (addTrackButton);
     styleLabel (emptyLabel, 14.0f);
     emptyLabel.setJustificationType (juce::Justification::centred);

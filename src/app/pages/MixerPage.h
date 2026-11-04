@@ -21,6 +21,27 @@ private:
     juce::ValueTree track;
 };
 
+/** A strip's sends (drag up / down for the level, click for options) and its output (click to route). */
+class RouteList : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    RouteList (SessionController& s, ProjectDocument& d, juce::ValueTree t) : session (s), doc (d), track (t) {}
+    int rowsWanted() const;
+    static constexpr int rowHeight = 20;
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+private:
+    SessionController& session;
+    ProjectDocument& doc;
+    juce::ValueTree track;
+    juce::ValueTree dragSend;
+    double dragStartLevel = 0.0;
+    bool dragged = false;
+    juce::ValueTree sendAt (int row) const;
+};
+
 /** One mixer channel strip bound to a TRACK node; meter reads the engine's track meter. */
 class ChannelStrip : public juce::Component, private juce::ValueTree::Listener, private juce::ChangeListener
 {
@@ -45,6 +66,7 @@ private:
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" }, ampButton { "NAM AMP" };
     juce::Label nameLabel;
     InsertList insertList { session, track };
+    RouteList routeList { session, doc, track };
     void showMenu();
     float level = -100.0f, hold = -100.0f;
     int holdTicks = 0;
