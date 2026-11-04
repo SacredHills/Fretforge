@@ -8,13 +8,18 @@ project format, plugin system, milestone plan, risks and licensing.
 
 **Studio:** "Follow" (scroll with the playhead, on by default) and "Slice" (click a clip to cut it at the mouse, snapped; Alt = no snap; Esc leaves) buttons in the Studio toolbar.
 
-**Built-in effects (new):** FF EQ (six bands with a draggable response curve), FF Compressor (with transfer curve and
-gain-reduction meter), FF Delay (stereo / ping-pong), FF Chorus and FF Reverb come first in every plugin menu and work as
-track inserts and in amp rigs.
+**Built-in effects (new):** EQ (six bands, draggable response curve over a live spectrum), Compressor (transfer curve
+and gain-reduction meter), Delay (stereo / ping-pong), Chorus and Reverb come first in every plugin menu and work as
+track inserts, master inserts and in amp rigs.
+
+**Mixer (new):** plugins on the master bus; an on/off lamp on every plugin and the NAM amp; drag a plugin onto another
+track to copy it with its settings (or within a track to reorder); Copy / Paste in every plugin window and "Paste
+plugin" in the + Plugin menus; track groups (track menu > Group) link volume, pan, mute, solo and record (hold Alt to
+change one track on its own).
 
 **Bus and FX tracks (new):** + Track offers audio, bus and FX tracks. Route tracks into a bus (Mixer: click the
-"> Master" row of a strip), or give them pre/post-fader sends to an FX track (it starts with a 100 % wet FF Reverb).
-Routing loops are refused. Playback and exports follow the routing, and delay compensation includes the buses.
+"> Master" row of a strip), or give them pre/post-fader sends to an FX track (add a reverb to it and set Mix to 100 %).
+Routing loops are refused. Soloing a bus or FX track plays what feeds it. Playback and exports follow the routing, and delay compensation includes the buses.
 
 **Performance and safety (new):** rigs and plugins of different tracks run in parallel on real-time worker threads,
 and a track whose input has been silent (and whose effect tails have died away) stops running its effects until sound

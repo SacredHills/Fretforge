@@ -143,7 +143,7 @@ void TrackHeader::applyGroupDelta (const juce::Identifier& id, double delta, dou
 {
     // Relative moves keep the balance between selected tracks (like dragging a grouped fader).
     if (std::abs (delta) < 1.0e-9) return;
-    for (auto t : owner.session.tracksForEdit (track))
+    for (auto t : owner.session.linkedTracks (track))
         if (t != track)
             owner.doc.set (t, id, juce::jlimit (lo, hi, (double) t[id] + delta));
 }
@@ -167,6 +167,11 @@ void TrackHeader::paint (juce::Graphics& g)
     g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
     g.setColour (owner.trackColour (track));
     g.fillRect (r.removeFromLeft (5));
+    if (const auto grp = track[ids::group].toString(); grp.isNotEmpty())   // track group stripe
+    {
+        g.setColour (SessionController::groupColour (grp));
+        g.fillRect (r.removeFromLeft (3));
+    }
     if (selected)
     {
         g.setColour (palette::accent.withAlpha (0.8f));
@@ -250,6 +255,7 @@ void TrackHeader::showMenu()
     for (int i = 0; i < trackPalette().size(); ++i)
         colours.addColouredItem (100 + i, "Colour " + juce::String (i + 1), juce::Colour::fromString (trackPalette()[i]));
     m.addSubMenu ("Colour", colours);
+    owner.session.addGroupMenu (m, track, 700);
     m.addSeparator();
     if (! isAudioTrack (track)) {}
     else if (owner.session.trackHasRig (track))
@@ -278,6 +284,7 @@ void TrackHeader::showMenu()
         auto t = safe->track;
         auto tracks = o.doc.tracks();
         const int idx = tracks.indexOf (t);
+        if (o.session.handleGroupMenu (r, t, 700)) return;
         if (r == 1) safe->name.showEditor();
         else if (r == 10) o.session.addTrackRig (t);
         else if (r == 11) o.session.removeTrackRig (t);

@@ -10,6 +10,38 @@ inline float gainToDb (float g) { return g > 1.0e-6f ? 20.0f * std::log10 (g) : 
 
 /** Vertical or horizontal meter fed from a real engine LevelMeter. Shows peak with
     decay, peak-hold line and a clip LED (click to reset). Call tick() at ~30-60 Hz. */
+/** A play / stop button in a page's own colour (Drum Studio, Tabs), so it is not mistaken for the main transport.
+    Shows a play triangle, or a stop square while its toggle state is on. */
+class PagePlayButton : public juce::TextButton
+{
+public:
+    PagePlayButton (const juce::String& text, juce::Colour c) : juce::TextButton (text), colour (c) { setWantsKeyboardFocus (false); }
+    juce::Colour colour;
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        const bool on = getToggleState();
+        auto c = on ? colour : colour.withMultipliedBrightness (0.55f);
+        if (over) c = c.brighter (0.15f);
+        if (down) c = c.darker (0.2f);
+        g.setColour (c);
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (colour.brighter (0.3f));
+        g.drawRoundedRectangle (r, 4.0f, 1.0f);
+        auto icon = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.3f);
+        g.setColour (juce::Colours::white);
+        if (on) g.fillRect (icon.reduced (1.0f));
+        else
+        {
+            juce::Path p;
+            p.addTriangle (icon.getX(), icon.getY(), icon.getX(), icon.getBottom(), icon.getRight(), icon.getCentreY());
+            g.fillPath (p);
+        }
+        g.setFont (uiFont (13.0f, true));
+        g.drawText (getButtonText(), r.withTrimmedRight (4.0f), juce::Justification::centred, true);
+    }
+};
+
 /** Small round on / off button (lit green when on). */
 class PowerButton : public juce::Button
 {

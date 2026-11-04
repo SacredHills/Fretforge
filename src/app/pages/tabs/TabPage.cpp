@@ -360,7 +360,7 @@ void TabPage::timerCallback()
     if (! active) return;
     auto& e = host.engine;
     const bool playing = e.isPlaying();
-    playButton.setButtonText (playing ? "Stop" : "Play");
+    playButton.setButtonText (playing ? "Stop" : "Play tab");
     playButton.setToggleState (playing, juce::dontSendNotification);
     if (playing && ! e.isCountingIn())
     {
@@ -789,7 +789,7 @@ void TabPage::resized()
     take (tempoSlider, 84, 6);
     if (roomy) take (speedLabel, 44, 0);
     take (speedCombo, 70, 8);
-    take (playButton, 52, 3);
+    take (playButton, 92, 3);
     take (loopButton, 46, 3);
     take (loopSongButton, 72, 3);
     take (clickButton, 46, 3);

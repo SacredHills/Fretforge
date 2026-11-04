@@ -291,7 +291,20 @@ public:
             L[i] *= g;
             if (R != nullptr) R[i] *= g;
         }
+        if (analyserWanted.load (std::memory_order_relaxed))   // feed the spectrum display (only while it is open)
+        {
+            int s1, n1, s2, n2;
+            scope.prepareToWrite (n, s1, n1, s2, n2);
+            for (int i = 0; i < n1; ++i) scopeBuf[(size_t) (s1 + i)] = R != nullptr ? 0.5f * (L[i] + R[i]) : L[i];
+            for (int i = 0; i < n2; ++i) scopeBuf[(size_t) (s2 + i)] = R != nullptr ? 0.5f * (L[n1 + i] + R[n1 + i]) : L[n1 + i];
+            scope.finishedWrite (n1 + n2);
+        }
     }
+    // spectrum feed (audio thread writes, display reads)
+    static constexpr int scopeSize = 16384;
+    juce::AbstractFifo scope { scopeSize };
+    std::vector<float> scopeBuf = std::vector<float> ((size_t) scopeSize, 0.0f);
+    std::atomic<bool> analyserWanted { false };
     std::unique_ptr<juce::Component> createDisplay() override;
     int displayHeight() const override { return 240; }
 private:
@@ -305,7 +318,12 @@ private:
 class EqDisplay final : public juce::Component, private juce::Timer
 {
 public:
-    explicit EqDisplay (Eq& e) : eq (e) { startTimerHz (30); }
+    explicit EqDisplay (Eq& e) : eq (e)
+    {
+        eq.analyserWanted = true;
+        startTimerHz (30);
+    }
+    ~EqDisplay() override { eq.analyserWanted = false; }
 
     void paint (juce::Graphics& g) override
     {
@@ -329,6 +347,29 @@ public:
             g.drawHorizontalLine (juce::roundToInt (y), r.getX(), r.getRight());
             g.setColour (col::dim);
             g.drawText ((db > 0 ? "+" : "") + juce::String ((int) db), juce::Rectangle<float> (r.getX() + 3, y - 12, 30, 12), juce::Justification::centredLeft);
+        }
+        // spectrum of what comes out (behind the curve)
+        if (hasSpectrum)
+        {
+            juce::Path spec;
+            const double sr0 = juce::jmax (8000.0, eq.getSampleRate());
+            spec.startNewSubPath (0.0f, (float) getHeight());
+            for (int px = 0; px <= getWidth(); px += 2)
+            {
+                const double f = freqFor ((float) px);
+                const float bin = (float) (f / sr0 * fftSize);
+                const int b0 = juce::jlimit (1, fftSize / 2 - 2, (int) bin);
+                const float fr = juce::jlimit (0.0f, 1.0f, bin - (float) b0);
+                const float db = spectrum[(size_t) b0] + fr * (spectrum[(size_t) b0 + 1] - spectrum[(size_t) b0]);
+                const float y = (float) getHeight() * (1.0f - juce::jlimit (0.0f, 1.0f, (db + 90.0f) / 90.0f));
+                spec.lineTo ((float) px, y);
+            }
+            spec.lineTo ((float) getWidth(), (float) getHeight());
+            spec.closeSubPath();
+            g.setColour (col::info.withAlpha (0.22f));
+            g.fillPath (spec);
+            g.setColour (col::info.withAlpha (0.5f));
+            g.strokePath (spec, juce::PathStrokeType (1.0f));
         }
         // curve
         const auto s = eq.settings();
@@ -408,7 +449,51 @@ private:
     int dragging = -1, hover = -1;
     EqSettings shown {};
 
-    void timerCallback() override { const auto s = eq.settings(); if (! (s == shown)) { shown = s; repaint(); } }
+    // ---- spectrum analyser ----
+    static constexpr int fftOrder = 12, fftSize = 1 << fftOrder;
+    juce::dsp::FFT fft { fftOrder };
+    juce::dsp::WindowingFunction<float> window { (size_t) fftSize, juce::dsp::WindowingFunction<float>::hann };
+    std::vector<float> history = std::vector<float> ((size_t) fftSize, 0.0f), work = std::vector<float> ((size_t) fftSize * 2, 0.0f);
+    std::vector<float> spectrum = std::vector<float> ((size_t) fftSize / 2, -120.0f);
+    bool hasSpectrum = false;
+    int quietTicks = 0;
+
+    void pullSamples()
+    {
+        int s1, n1, s2, n2;
+        const int ready = eq.scope.getNumReady();
+        if (ready == 0) { if (++quietTicks > 15) hasSpectrum = false; return; }
+        quietTicks = 0;
+        eq.scope.prepareToRead (ready, s1, n1, s2, n2);
+        auto push = [this] (const float* d, int n) {
+            if (n >= fftSize) { std::copy (d + n - fftSize, d + n, history.begin()); return; }
+            std::move (history.begin() + n, history.end(), history.begin());
+            std::copy (d, d + n, history.end() - n);
+        };
+        push (eq.scopeBuf.data() + s1, n1);
+        if (n2 > 0) push (eq.scopeBuf.data() + s2, n2);
+        eq.scope.finishedRead (n1 + n2);
+
+        std::copy (history.begin(), history.end(), work.begin());
+        std::fill (work.begin() + fftSize, work.end(), 0.0f);
+        window.multiplyWithWindowingTable (work.data(), (size_t) fftSize);
+        fft.performFrequencyOnlyForwardTransform (work.data());
+        const float norm = 4.0f / (float) fftSize;   // a full-scale sine reads about 0 dB
+        for (int b = 0; b < fftSize / 2; ++b)
+        {
+            const float db = juce::Decibels::gainToDecibels (work[(size_t) b] * norm, -120.0f);
+            auto& v = spectrum[(size_t) b];
+            v = db > v ? 0.6f * db + 0.4f * v : juce::jmax (db, v - 1.5f);   // quick rise, slow fall
+        }
+        hasSpectrum = true;
+    }
+
+    void timerCallback() override
+    {
+        pullSamples();
+        shown = eq.settings();
+        repaint();
+    }
 
     static constexpr float fLo = 20.0f, fHi = 20000.0f, dbRange = 20.0f;
     float xFor (float f) const { return (float) getWidth() * std::log (f / fLo) / std::log (fHi / fLo); }
@@ -641,6 +726,7 @@ private:
 
 // =====================================================================================================  chorus
 
+/** Classic stereo chorus: one modulated delay per side, LFOs 90 degrees apart, smooth (Hermite) interpolation. */
 class Chorus final : public Base
 {
 public:
@@ -648,40 +734,71 @@ public:
     static Layout layout()
     {
         Layout l;
-        l.add (param ("rate", "Rate", 0.05f, 5.0f, 0.8f, "Hz", 1.0f));
-        l.add (param ("depth", "Depth", 0.0f, 100.0f, 35.0f, "%"));
-        l.add (param ("delay", "Delay", 2.0f, 20.0f, 7.0f, "ms"));
-        l.add (param ("feedback", "Feedback", -90.0f, 90.0f, 0.0f, "%"));
+        l.add (param ("rate", "Rate", 0.05f, 5.0f, 0.6f, "Hz", 1.0f));
+        l.add (param ("depth", "Depth", 0.0f, 100.0f, 40.0f, "%"));
+        l.add (param ("delay", "Delay", 3.0f, 25.0f, 8.0f, "ms", 10.0f));
+        l.add (param ("feedback", "Feedback", 0.0f, 70.0f, 0.0f, "%"));
+        l.add (param ("width", "Width", 0.0f, 100.0f, 100.0f, "%"));
         l.add (param ("mix", "Mix", 0.0f, 100.0f, 50.0f, "%"));
         return l;
     }
-    void prepareToPlay (double, int block) override
+    void prepareToPlay (double, int) override
     {
-        chorus.prepare ({ sampleRate(), (juce::uint32) juce::jmax (1, block), 2 });
-        chorus.reset();
-        scratch.setSize (2, juce::jmax (1, block));
+        const int len = (int) (sampleRate() * 0.06) + 8;
+        for (auto& b : buf) b.assign ((size_t) len, 0.0f);
+        write = 0;
+        phase = 0.0;
+        fbL = fbR = 0.0f;
+        for (auto* v : { &delayMs, &depthMs }) v->reset (sampleRate(), 0.1);
+        delayMs.setCurrentAndTargetValue (p ("delay"));
+        depthMs.setCurrentAndTargetValue (depthFor (p ("delay"), p ("depth")));
     }
     void process (float* L, float* R, int n) noexcept override
     {
-        chorus.setRate (p ("rate"));
-        chorus.setDepth (p ("depth") * 0.01f);
-        chorus.setCentreDelay (p ("delay"));
-        chorus.setFeedback (p ("feedback") * 0.01f);
-        chorus.setMix (p ("mix") * 0.01f);
-        for (int done = 0; done < n;)
+        if (buf[0].empty()) return;
+        const double sr = sampleRate();
+        const int len = (int) buf[0].size();
+        const float fb = p ("feedback") * 0.01f, mix = p ("mix") * 0.01f, width = p ("width") * 0.01f;
+        const double inc = juce::MathConstants<double>::twoPi * p ("rate") / sr;
+        delayMs.setTargetValue (p ("delay"));
+        depthMs.setTargetValue (depthFor (p ("delay"), p ("depth")));
+        for (int i = 0; i < n; ++i)
         {
-            const int len = juce::jmin (n - done, scratch.getNumSamples());
-            float* ch[2] = { L + done, R != nullptr ? R + done : scratch.getWritePointer (1) };
-            if (R == nullptr) std::copy (L + done, L + done + len, ch[1]);
-            juce::dsp::AudioBlock<float> blk (ch, 2, (size_t) len);
-            chorus.process (juce::dsp::ProcessContextReplacing<float> (blk));
-            if (R == nullptr) for (int i = 0; i < len; ++i) ch[0][i] = 0.5f * (ch[0][i] + ch[1][i]);
-            done += len;
+            const float inL = L[i], inR = R != nullptr ? R[i] : L[i];
+            const float base = delayMs.getNextValue(), depth = depthMs.getNextValue();
+            const float modL = (float) std::sin (phase), modR = (float) std::sin (phase + juce::MathConstants<double>::halfPi * width * 2.0);
+            phase += inc;
+            if (phase > juce::MathConstants<double>::twoPi) phase -= juce::MathConstants<double>::twoPi;
+            buf[0][(size_t) write] = inL + fbL * fb;
+            buf[1][(size_t) write] = inR + fbR * fb;
+            const float wl = read (buf[0], len, (base + depth * modL) * 0.001 * sr);
+            const float wr = read (buf[1], len, (base + depth * modR) * 0.001 * sr);
+            fbL = wl; fbR = wr;
+            write = (write + 1) % len;
+            L[i] = inL * (1.0f - 0.5f * mix) + wl * mix * 0.7f;
+            if (R != nullptr) R[i] = inR * (1.0f - 0.5f * mix) + wr * mix * 0.7f;
+            else L[i] = inL * (1.0f - 0.5f * mix) + 0.35f * (wl + wr) * mix;
         }
     }
 private:
-    juce::dsp::Chorus<float> chorus;
-    juce::AudioBuffer<float> scratch;
+    std::array<std::vector<float>, 2> buf;
+    int write = 0;
+    double phase = 0.0;
+    float fbL = 0.0f, fbR = 0.0f;
+    juce::SmoothedValue<float> delayMs, depthMs;
+
+    static float depthFor (float delay, float depthPercent) { return juce::jmin (delay - 1.0f, 6.0f) * depthPercent * 0.01f; }
+    float read (const std::vector<float>& b, int len, double delaySamples) const noexcept
+    {
+        double rp = (double) write - delaySamples;
+        while (rp < 0) rp += len;
+        const int i1 = (int) rp;
+        const float f = (float) (rp - i1);
+        auto at = [&] (int k) { return b[(size_t) ((k % len + len) % len)]; };
+        const float xm1 = at (i1 - 1), x0 = at (i1), x1 = at (i1 + 1), x2 = at (i1 + 2);
+        const float c1 = 0.5f * (x1 - xm1), c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2, c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+        return ((c3 * f + c2) * f + c1) * f + x0;
+    }
 };
 
 // =====================================================================================================  reverb

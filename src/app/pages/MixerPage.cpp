@@ -29,7 +29,7 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
         const double before = juce::jmax (-60.0, (double) track[ids::gainDb]);
         const double now = fader.getValue();
         doc.set (track, ids::gainDb, now <= -59.95 ? -96.0 : now);
-        for (auto other : session.tracksForEdit (track)) // grouped move for a multi-selection
+        for (auto other : session.linkedTracks (track)) // grouped move for a multi-selection / track group
             if (other != track)
             {
                 const double v = juce::jlimit (-60.0, 6.0, juce::jmax (-60.0, (double) other[ids::gainDb]) + (now - before));
@@ -50,7 +50,7 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
         if (updating) return;
         const double delta = pan.getValue() - (double) track[ids::pan];
         doc.set (track, ids::pan, pan.getValue());
-        for (auto other : session.tracksForEdit (track))
+        for (auto other : session.linkedTracks (track))
             if (other != track)
                 doc.set (other, ids::pan, juce::jlimit (-1.0, 1.0, (double) other[ids::pan] + delta));
     };
@@ -322,6 +322,7 @@ void ChannelStrip::showMenu()
 {
     juce::PopupMenu m;
     m.addItem (1, "Rename...");
+    session.addGroupMenu (m, track, 700);
     m.addSeparator();
     if (! isAudioTrack (track)) {}
     else if (session.trackHasRig (track)) { m.addItem (10, "Open NAM amp..."); m.addItem (11, "Remove NAM amp"); }
@@ -336,6 +337,7 @@ void ChannelStrip::showMenu()
         if (safe == nullptr || r == 0) return;
         auto t = safe->track;
         auto& sc = safe->session;
+        if (sc.handleGroupMenu (r, t, 700)) return;
         if (r == 1) safe->nameLabel.showEditor();
         else if (r == 10) sc.addTrackRig (t);
         else if (r == 12) sc.showAddInsertMenu (t, safe.getComponent());
@@ -375,6 +377,15 @@ void ChannelStrip::paint (juce::Graphics& g)
     g.setColour (palette::textDim);
     g.setFont (uiFont (10.0f));
     g.drawText ("PAN", getLocalBounds().withTrimmedTop (30).withHeight (14), juce::Justification::centred);
+    if (const auto grp = track[ids::group].toString(); grp.isNotEmpty())
+    {
+        const auto gc = SessionController::groupColour (grp);
+        g.setColour (gc);
+        g.fillRect (getLocalBounds().reduced (3, 0).withTrimmedTop (8).removeFromLeft (3));
+        g.setFont (uiFont (9.5f, true));
+        g.drawText (grp, getLocalBounds().reduced (6, 0).withTrimmedTop (30).withHeight (14).removeFromRight (34),
+                    juce::Justification::centredRight, true);
+    }
     if (! isAudioTrack (track))
     {
         g.setColour (kindOf (track) == TrackKind::fx ? palette::good : palette::info);

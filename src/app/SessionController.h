@@ -63,7 +63,14 @@ public:
     /** First selected track in track order (target for import/paste/add). */
     juce::ValueTree primaryTrack();
     juce::ValueTree selectionAnchor;
-    /** Sets a property on every track in tracksForEdit(clicked). */
+    /** tracksForEdit plus every track in the same group(s) (hold Alt to edit one track of a group on its own). */
+    juce::Array<juce::ValueTree> linkedTracks (const juce::ValueTree& clicked) const;
+    juce::StringArray groupNames() const;
+    static juce::Colour groupColour (const juce::String& group);
+    /** "Group" submenu for a track's menu (ids from baseId) and its handler (returns true if it handled `result`). */
+    void addGroupMenu (juce::PopupMenu& menu, const juce::ValueTree& track, int baseId) const;
+    bool handleGroupMenu (int result, const juce::ValueTree& track, int baseId);
+    /** Sets a property on every track in linkedTracks(clicked). */
     void setOnTracks (const juce::ValueTree& clicked, const juce::Identifier& id, const juce::var& value, bool undoable,
                       const juce::String& undoName = {});
 

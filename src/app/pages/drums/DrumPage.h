@@ -99,7 +99,8 @@ private:
     juce::TextButton newButton { "New" }, dupButton { "Duplicate" }, renameButton { "Rename" }, deleteButton { "Delete" };
     juce::Slider swingSlider, tempoSlider;
     juce::Label swingLabel, tempoLabel;
-    juce::TextButton playButton { "Play pattern" }, playSongButton { "Play song" }, loopButton { "Loop" }, clickButton { "Click" };
+    PagePlayButton playButton { "Pattern", juce::Colour (0xff2fa36b) }, playSongButton { "Song", juce::Colour (0xff8a5cd6) };
+    juce::TextButton loopButton { "Loop" }, clickButton { "Click" };
     // row 2: generator & output
     juce::ComboBox genreCombo;
     juce::TextButton halfButton { "Half-time" }, fillButton { "Fill" }, crashButton { "Crash on 1" };

@@ -15,7 +15,7 @@ namespace ids
     FF_TL_ID (armed) FF_TL_ID (monitor) FF_TL_ID (inputChannel) FF_TL_ID (inputStereo)
     FF_TL_ID (file) FF_TL_ID (start) FF_TL_ID (length) FF_TL_ID (offset) FF_TL_ID (fadeIn) FF_TL_ID (fadeOut)
     FF_TL_ID (muted) FF_TL_ID (takeGroup) FF_TL_ID (time)
-    FF_TL_ID (kind) FF_TL_ID (output) FF_TL_ID (SEND) FF_TL_ID (target) FF_TL_ID (level) FF_TL_ID (pre)
+    FF_TL_ID (kind) FF_TL_ID (group) FF_TL_ID (output) FF_TL_ID (SEND) FF_TL_ID (target) FF_TL_ID (level) FF_TL_ID (pre)
     #undef FF_TL_ID
 }
 

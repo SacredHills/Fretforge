@@ -866,8 +866,8 @@ void DrumPage::timerCallback()
     if (! active) return;
     auto& e = host.engine;
     const bool playing = e.isPlaying();
-    playButton.setButtonText (playing && ! songMode ? "Stop" : "Play pattern");
-    playSongButton.setButtonText (playing && songMode ? "Stop" : "Play song");
+    playButton.setButtonText (playing && ! songMode ? "Stop" : "Pattern");
+    playSongButton.setButtonText (playing && songMode ? "Stop" : "Song");
     playButton.setToggleState (playing && ! songMode, juce::dontSendNotification);
     playSongButton.setToggleState (playing && songMode, juce::dontSendNotification);
     if (! playing)

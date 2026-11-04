@@ -134,11 +134,85 @@ juce::ValueTree SessionController::primaryTrack()
     return {};
 }
 
+juce::Array<juce::ValueTree> SessionController::linkedTracks (const juce::ValueTree& clicked) const
+{
+    auto list = tracksForEdit (clicked);
+    if (juce::ModifierKeys::currentModifiers.isAltDown()) return list;   // Alt: just this one
+    juce::StringArray groups;
+    for (auto& t : list)
+        if (t[ids::group].toString().isNotEmpty()) groups.addIfNotAlreadyThere (t[ids::group].toString());
+    if (groups.isEmpty()) return list;
+    for (auto t : doc.tracks())
+        if (groups.contains (t[ids::group].toString()) && ! list.contains (t)) list.add (t);
+    return list;
+}
+
+juce::StringArray SessionController::groupNames() const
+{
+    juce::StringArray g;
+    for (auto t : doc.tracks())
+        if (t[ids::group].toString().isNotEmpty()) g.addIfNotAlreadyThere (t[ids::group].toString());
+    return g;
+}
+
+juce::Colour SessionController::groupColour (const juce::String& group)
+{
+    const auto& p = trackPalette();
+    return juce::Colour::fromString (p[(int) ((juce::uint32) group.hashCode() % (juce::uint32) p.size())]);
+}
+
+void SessionController::addGroupMenu (juce::PopupMenu& menu, const juce::ValueTree& track, int baseId) const
+{
+    juce::PopupMenu g;
+    const auto current = track[ids::group].toString();
+    const int n = tracksForEdit (track).size();
+    g.addItem (baseId, n > 1 ? "New group from the " + juce::String (n) + " selected tracks..." : juce::String ("New group..."));
+    const auto names = groupNames();
+    if (! names.isEmpty()) g.addSeparator();
+    for (int i = 0; i < names.size() && i < 50; ++i)
+        g.addColouredItem (baseId + 10 + i, (n > 1 ? "Add selected to " : "Add to ") + names[i], groupColour (names[i]), true, current == names[i]);
+    g.addSeparator();
+    g.addItem (baseId + 1, "Remove from group", current.isNotEmpty());
+    g.addItem (baseId + 2, "Select the group's tracks", current.isNotEmpty());
+    menu.addSubMenu ("Group" + (current.isNotEmpty() ? "  (" + current + ")" : juce::String()), g);
+}
+
+bool SessionController::handleGroupMenu (int r, const juce::ValueTree& track, int baseId)
+{
+    if (r < baseId || r >= baseId + 60) return false;
+    const auto targets = tracksForEdit (track);
+    auto setGroup = [this, targets] (const juce::String& name) {
+        doc.undo().beginNewTransaction (name.isEmpty() ? "Ungroup tracks" : "Group tracks");
+        for (auto t : targets) t.setProperty (ids::group, name, &doc.undo());
+    };
+    if (r == baseId)
+    {
+        auto* w = new juce::AlertWindow ("New group", "Tracks in a group move together: volume, pan, mute, solo, record. "
+                                                      "Hold Alt to change one of them on its own.", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("name", "Group " + juce::String (groupNames().size() + 1));
+        w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([w, setGroup] (int res) {
+            const auto name = w->getTextEditorContents ("name").trim();
+            if (res == 1 && name.isNotEmpty()) setGroup (name);
+        }), true);
+    }
+    else if (r == baseId + 1) setGroup ({});
+    else if (r == baseId + 2)
+    {
+        juce::Array<juce::ValueTree> members;
+        for (auto t : doc.tracks()) if (t[ids::group] == track[ids::group]) members.add (t);
+        setSelectedTracks (members);
+    }
+    else if (const auto names = groupNames(); r - baseId - 10 < names.size()) setGroup (names[r - baseId - 10]);
+    return true;
+}
+
 void SessionController::setOnTracks (const juce::ValueTree& clicked, const juce::Identifier& id, const juce::var& value,
                                      bool undoable, const juce::String& undoName)
 {
     if (undoable) doc.undo().beginNewTransaction (undoName);
-    for (auto t : tracksForEdit (clicked))
+    for (auto t : linkedTracks (clicked))
         doc.set (t, id, value, undoable);
 }
 
