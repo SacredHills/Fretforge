@@ -13,7 +13,7 @@ public:
     ~Tone3000Panel() override;
 
     /** cab = IRs (format "ir"), otherwise NAM captures. `load` receives each downloaded file. */
-    void setMode (bool cab, const juce::String& targetName, std::function<void (const juce::File&)> load);
+    void setMode (bool cab, const juce::String& targetName, std::function<void (const juce::File&, bool isIr)> load);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -21,7 +21,7 @@ public:
 private:
     t3k::Client& client;
     bool cabMode = false;
-    std::function<void (const juce::File&)> onLoad;
+    std::function<void (const juce::File&, bool isIr)> onLoad;   // IR tones go to the cabinet, NAM tones to the amp
 
     juce::Label title, account, keyLabel, targetLabel, status, toneTitle, toneInfo, attribution;
     juce::TextEditor keyEditor, searchBox;
@@ -60,5 +60,6 @@ private:
     void downloadRow (int row);
     void setStatus (const juce::String& s, bool error = false);
     juce::String format() const { return cabMode ? "ir" : "nam"; }
+    static bool loadable (const t3k::Tone& t) { return t.format.isEmpty() || t.format == "nam" || t.format == "ir"; }
 };
 } // namespace ff

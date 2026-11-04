@@ -424,7 +424,7 @@ void Client::fetchUser()
 
 // ---- API
 
-void Client::listTones (Feed feed, const juce::String& query, int page, std::function<void (TonePage, juce::String)> done)
+void Client::listTones (Feed feed, const juce::String& query, int page, const juce::String& gear, std::function<void (TonePage, juce::String)> done)
 {
     juce::String path;
     switch (feed)
@@ -439,6 +439,7 @@ void Client::listTones (Feed feed, const juce::String& query, int page, std::fun
     auto url = juce::URL (juce::String (origin) + path);
     const bool paged = feed != Feed::trending && feed != Feed::latest;
     if (paged) url = url.withParameter ("page", juce::String (juce::jmax (1, page))).withParameter ("page_size", feed == Feed::search ? "25" : "50");
+    if (gear.isNotEmpty() && feed == Feed::trending) url = url.withParameter ("gear", gear);
     if (query.isNotEmpty() && feed != Feed::trending && feed != Feed::latest) url = url.withParameter ("query", query);
     run<TonePage> ([this, url, feed] (juce::String& err) {
                        TonePage p;

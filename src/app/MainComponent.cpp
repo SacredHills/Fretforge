@@ -465,8 +465,8 @@ void MainComponent::openTone3000 (RigEditor& editor, bool cab)
     }
     juce::Component::SafePointer<RigEditor> ed (&editor);
     const auto name = editor.windowTitle().fromFirstOccurrenceOf ("NAM amp - ", false, false);
-    t3kPanel->setMode (cab, name.isEmpty() ? juce::String ("the live rig") : name, [ed, cab] (const juce::File& f) {
-        if (ed != nullptr) ed->loadDownloaded (f, cab);
+    t3kPanel->setMode (cab, name.isEmpty() ? juce::String ("the live rig") : name, [ed] (const juce::File& f, bool isIr) {
+        if (ed != nullptr) ed->loadDownloaded (f, isIr);
     });
     t3kWindow->showFront();
 }

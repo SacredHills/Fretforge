@@ -108,7 +108,7 @@ Tone3000Panel::~Tone3000Panel()
     client.removeChangeListener (this);
 }
 
-void Tone3000Panel::setMode (bool cab, const juce::String& targetName, std::function<void (const juce::File&)> load)
+void Tone3000Panel::setMode (bool cab, const juce::String& targetName, std::function<void (const juce::File&, bool isIr)> load)
 {
     const bool changed = cab != cabMode;
     cabMode = cab;
@@ -142,7 +142,9 @@ void Tone3000Panel::reload()
     if (feed == Client::Feed::search && searchBox.getText().trim().isEmpty()) { setStatus ("Type something to search for."); return; }
     const int req = ++requestId;
     setStatus ("Loading...");
-    client.listTones (feed, searchBox.getText().trim(), page, [safe = juce::Component::SafePointer<Tone3000Panel> (this), req] (t3k::TonePage p, juce::String err) {
+    // trending has only 10 tones of every kind: ask for cabinets when browsing IRs
+    const juce::String gear = (feed == Client::Feed::trending && cabMode) ? "cab" : "";
+    client.listTones (feed, searchBox.getText().trim(), page, gear, [safe = juce::Component::SafePointer<Tone3000Panel> (this), req] (t3k::TonePage p, juce::String err) {
         if (safe == nullptr || req != safe->requestId) return;
         if (err.isNotEmpty()) { safe->setStatus (err, true); return; }
         safe->tones = p.tones;
@@ -150,13 +152,13 @@ void Tone3000Panel::reload()
         safe->totalPages = p.totalPages;
         safe->shownTones.clear();
         for (auto& t : safe->tones)
-            if (t.format.isEmpty() || t.format == safe->format()) safe->shownTones.add (t);   // NAM tones for the amp, IR tones for the cab
+            if (loadable (t)) safe->shownTones.add (t);   // NAM and IR tones (each loads into its own block)
         safe->toneList.updateContent();
         safe->toneList.repaint();
         const int hidden = safe->tones.size() - safe->shownTones.size();
-        safe->setStatus (juce::String (safe->shownTones.size()) + (safe->cabMode ? " IR tones" : " NAM tones")
+        safe->setStatus (juce::String (safe->shownTones.size()) + " tones"
                          + (p.totalPages > 1 ? "  -  page " + juce::String (p.page) + " of " + juce::String (p.totalPages) : juce::String())
-                         + (hidden > 0 ? "  (" + juce::String (hidden) + " of another kind hidden)" : juce::String()));
+                         + (hidden > 0 ? "  (" + juce::String (hidden) + " in formats FretForge can't load hidden)" : juce::String()));
         safe->prevButton.setEnabled (p.page > 1);
         safe->nextButton.setEnabled (p.page < p.totalPages);
     });
@@ -188,9 +190,6 @@ void Tone3000Panel::showTone (const t3k::Tone& t)
     if (! t.makes.isEmpty()) parts.add (t.makes.joinIntoString (", "));
     if (t.license.isNotEmpty()) parts.add ("licence: " + t.license);
     toneInfo.setText (parts.joinIntoString ("  -  "), juce::dontSendNotification);
-    if (t.format.isNotEmpty() && t.format != format())
-        setStatus ("This tone holds " + juce::String (t.format == "ir" ? "cabinet IRs" : "NAM captures") + "; open it from the "
-                   + (t.format == "ir" ? "Cabinet" : "Amp") + " block to load it there.", true);
     const int req = ++requestId;
     client.listModels (t.id, [safe = juce::Component::SafePointer<Tone3000Panel> (this), req] (juce::Array<t3k::Model> m, juce::String err) {
         if (safe == nullptr || req != safe->requestId) return;
@@ -199,7 +198,9 @@ void Tone3000Panel::showTone (const t3k::Tone& t)
         safe->modelList.updateContent();
         safe->modelList.repaint();
         if (! m.isEmpty()) safe->modelList.selectRow (0);
-        safe->setStatus (juce::String (m.size()) + (safe->cabMode ? " files" : " models") + ". Double-click one (or select it and click Download & load).");
+        const bool ir = safe->currentTone.format == "ir";
+        safe->setStatus (juce::String (m.size()) + (ir ? " IRs (they load into the Cabinet block)" : " captures (they load into the Amp block)")
+                         + ". Double-click one (or select it and click Download & load).");
     });
 }
 
@@ -208,11 +209,12 @@ void Tone3000Panel::downloadRow (int row)
     if (! juce::isPositiveAndBelow (row, models.size()) || currentTone.id <= 0) return;
     const auto m = models[row];
     setStatus ("Downloading " + m.name + "...");
-    client.download (currentTone, m, [safe = juce::Component::SafePointer<Tone3000Panel> (this), name = m.name] (juce::File f, juce::String err) {
+    const bool ir = currentTone.format == "ir" || (currentTone.format.isEmpty() && cabMode);
+    client.download (currentTone, m, [safe = juce::Component::SafePointer<Tone3000Panel> (this), name = m.name, ir] (juce::File f, juce::String err) {
         if (safe == nullptr) return;
         if (err.isNotEmpty()) { safe->setStatus (err, true); return; }
-        safe->setStatus ("Loaded " + name + "  (" + f.getFullPathName() + ")");
-        if (safe->onLoad) safe->onLoad (f);
+        safe->setStatus ("Loaded " + name + (ir ? " into the Cabinet" : " into the Amp") + "  (" + f.getFullPathName() + ")");
+        if (safe->onLoad) safe->onLoad (f, ir);
     });
 }
 
@@ -226,7 +228,8 @@ void Tone3000Panel::ToneListModel::paintListBoxItem (int row, juce::Graphics& g,
     g.drawText (t.title, 10, 3, w - 20, 18, juce::Justification::centredLeft, true);
     g.setColour (palette::textDim);
     g.setFont (uiFont (11.5f));
-    juce::String sub = t.creator;
+    juce::String sub = t.format == "ir" ? "IR" : "NAM";
+    if (t.creator.isNotEmpty()) sub << "  -  " << t.creator;
     if (t.gear.isNotEmpty()) sub << "  -  " << t.gear;
     sub << "  -  " << t.countLabel();
     if (t.downloadsCount > 0) sub << "  -  " << t.downloadsCount << " downloads";

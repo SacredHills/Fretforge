@@ -106,6 +106,7 @@ private:
     juce::Slider complexitySlider, humanTimeSlider, humanVelSlider, volumeSlider;
     juce::Label complexityLabel, humanLabel, volumeLabel;
     juce::TextButton generateButton { "Generate" }, generateNewButton { "Generate as new" };
+    juce::TextButton kitButton { "Kit..." };
     juce::TextButton importButton { "Import..." }, exportButton { "Export MIDI..." }, renderButton { "Render to Studio" };
     // song
     juce::TextButton addSectionButton { "+ Add pattern" }, removeSectionButton { "Remove" }, leftButton { "<" }, rightButton { ">" },
@@ -118,6 +119,12 @@ private:
     bool kitDirty = true;
     void reloadKit (bool force);
     void showLaneMenu (int lane);
+    void showKitMenu();
+    void handleKitMenu (int result, int lane);
+    void addKitItems (juce::PopupMenu&, int lane) const;
+    /** The sample a piece plays: the project's own, else the default kit's (from the settings), else none. */
+    juce::File effectiveSample (int piece) const;
+    juce::String defaultKitKey (int piece) const { return "defaultDrumKit" + juce::String (piece); }
     void assignSample (int piece, const juce::File& file);
     void loadKitFolder();
     juce::File kitFolder() const { return doc.mediaBundle().getChildFile ("Audio").getChildFile ("DrumKit"); }

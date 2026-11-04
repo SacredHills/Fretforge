@@ -367,7 +367,7 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
 {
     grid.onLaneMenu = [this] (int lane) { showLaneMenu (lane); };
     grid.onSeek = [this] (double q) { seekTo (q); };
-    grid.laneHasSample = [this] (int lane) { return drums::samplePath (drums, lane).isNotEmpty(); };
+    grid.laneHasSample = [this] (int lane) { return effectiveSample (lane) != juce::File(); };
     viewport.setViewedComponent (&grid, false);
     viewport.setScrollBarsShown (true, true);
     addAndMakeVisible (viewport);
@@ -412,6 +412,9 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
             safe->doc.set (cur, dids::name, n);
         }), true);
     };
+    kitButton.setTooltip ("Drum sounds: load your own samples (one per drum or a whole folder) and set a default kit");
+    kitButton.onClick = [this] { showKitMenu(); };
+    addAndMakeVisible (kitButton);
     deleteButton.setTooltip ("Delete this pattern, unused patterns, all patterns, or clear the song");
     deleteButton.onClick = [this] {
         juce::PopupMenu m;
@@ -960,8 +963,8 @@ void DrumPage::renderToStudio()
     std::vector<std::unique_ptr<juce::AudioBuffer<float>>> owned;
     DrumSynth::SampleSet set {};
     for (int p = 0; p < drums::numPieces; ++p)
-        if (auto rel = drums::samplePath (drums, p); rel.isNotEmpty())
-            if (auto b = loadSampleFile (project::Bundle::fromPortablePath (doc.mediaBundle(), rel), sr))
+        if (auto f = effectiveSample (p); f != juce::File())
+            if (auto b = loadSampleFile (f, sr))
             {
                 set[(size_t) p] = b.get();
                 owned.push_back (std::move (b));
@@ -1023,13 +1026,14 @@ void DrumPage::reloadKit (bool force)
     juce::StringArray missing;
     for (int p = 0; p < drums::numPieces; ++p)
     {
-        const auto rel = drums::samplePath (drums, p);
+        const auto file = effectiveSample (p);
+        const auto rel = file == juce::File() ? juce::String() : file.getFullPathName();
         if (rel == loadedPaths[(size_t) p]) continue;
         std::unique_ptr<juce::AudioBuffer<float>> buf;
         if (rel.isNotEmpty())
         {
-            buf = loadSampleFile (project::Bundle::fromPortablePath (doc.mediaBundle(), rel), sr);
-            if (buf == nullptr) missing.add (juce::String (drums::pieceInfo (p).name) + ": " + rel);
+            buf = loadSampleFile (file, sr);
+            if (buf == nullptr) missing.add (juce::String (drums::pieceInfo (p).name) + ": " + file.getFileName());
         }
         if (! host.engine.setDrumSample (p, std::move (buf))) { kitDirty = true; continue; }  // queue full: retry
         loadedPaths[(size_t) p] = rel;
@@ -1039,43 +1043,117 @@ void DrumPage::reloadKit (bool force)
         status.setText ("Missing drum samples (built-in sound used): " + missing.joinIntoString ("; "), juce::dontSendNotification);
 }
 
+juce::File DrumPage::effectiveSample (int piece) const
+{
+    const auto rel = drums::samplePath (drums, piece);
+    if (rel.isNotEmpty()) return project::Bundle::fromPortablePath (doc.mediaBundle(), rel);
+    const auto def = settings.getValue (defaultKitKey (piece));
+    return def.isNotEmpty() && juce::File::isAbsolutePath (def) ? juce::File (def) : juce::File();
+}
+
+void DrumPage::addKitItems (juce::PopupMenu& m, int lane) const
+{
+    if (lane >= 0)
+    {
+        const auto name = juce::String (drums::pieceInfo (lane).name);
+        const auto f = effectiveSample (lane);
+        const bool own = drums::samplePath (drums, lane).isNotEmpty();
+        m.addSectionHeader (name + (f == juce::File() ? juce::String (" - built-in sound")
+                                                      : " - sample: " + f.getFileName() + (own ? juce::String() : juce::String (" (default kit)"))));
+        m.addItem (1, "Load sample for " + name + "...");
+        m.addItem (2, "Use the default sound for " + name, own);
+        m.addSeparator();
+    }
+    else
+    {
+        juce::PopupMenu pieces;
+        for (int p = 0; p < drums::numPieces; ++p)
+        {
+            const auto f = effectiveSample (p);
+            pieces.addItem (100 + p, juce::String (drums::pieceInfo (p).name) + (f == juce::File() ? juce::String ("   (built-in)") : "   = " + f.getFileName()));
+        }
+        m.addSectionHeader ("Drum kit");
+        m.addSubMenu ("Load a sample for one drum", pieces);
+    }
+    m.addItem (3, "Load kit from folder (matches file names)...");
+    m.addItem (4, "Reset this project's kit");
+    m.addSeparator();
+    m.addItem (5, "Use this kit as the default for all projects");
+    bool hasDefault = false;
+    for (int p = 0; p < drums::numPieces; ++p) hasDefault = hasDefault || settings.getValue (defaultKitKey (p)).isNotEmpty();
+    m.addItem (6, "Clear the default kit (back to built-in sounds)", hasDefault);
+}
+
 void DrumPage::showLaneMenu (int lane)
 {
-    const auto name = juce::String (drums::pieceInfo (lane).name);
-    const bool has = drums::samplePath (drums, lane).isNotEmpty();
     juce::PopupMenu m;
-    m.addSectionHeader (name + (has ? " - sample: " + juce::File::createFileWithoutCheckingPath (drums::samplePath (drums, lane)).getFileName()
-                                    : juce::String (" - built-in sound")));
-    m.addItem (1, "Load sample for " + name + "...");
-    m.addItem (2, "Use the built-in sound", has);
-    m.addSeparator();
-    m.addItem (3, "Load kit from folder (matches file names)...");
-    m.addItem (4, "Reset the whole kit to built-in sounds");
+    addKitItems (m, lane);
     juce::Component::SafePointer<DrumPage> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options(), [safe, lane] (int r) {
-        if (safe == nullptr || r == 0) return;
-        if (r == 1)
+    m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, lane] (int r) { if (safe != nullptr) safe->handleKitMenu (r, lane); });
+}
+
+void DrumPage::showKitMenu()
+{
+    juce::PopupMenu m;
+    addKitItems (m, -1);
+    juce::Component::SafePointer<DrumPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&kitButton), [safe] (int r) { if (safe != nullptr) safe->handleKitMenu (r, -1); });
+}
+
+void DrumPage::handleKitMenu (int r, int lane)
+{
+    if (r == 0) return;
+    if (r >= 100) { lane = r - 100; r = 1; }
+    juce::Component::SafePointer<DrumPage> safe (this);
+    if (r == 1 && lane >= 0)
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Sample for " + juce::String (drums::pieceInfo (lane).name),
+                                                       juce::File::getSpecialLocation (juce::File::userMusicDirectory), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe, lane] (const juce::FileChooser& fc) {
+            if (safe == nullptr || fc.getResult() == juce::File()) return;
+            safe->doc.undo().beginNewTransaction ("Drum sample");
+            safe->assignSample (lane, fc.getResult());
+        });
+    }
+    else if (r == 2 && lane >= 0)
+    {
+        doc.undo().beginNewTransaction ("Default drum sound");
+        drums::setSamplePath (drums, lane, {}, &doc.undo());
+    }
+    else if (r == 3) loadKitFolder();
+    else if (r == 4)
+    {
+        doc.undo().beginNewTransaction ("Reset drum kit");
+        for (int p = 0; p < drums::numPieces; ++p) drums::setSamplePath (drums, p, {}, &doc.undo());
+    }
+    else if (r == 5)
+    {
+        // copy the samples somewhere that outlives the project
+        auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                       .getChildFile ("FretForge Studio").getChildFile ("Default drum kit");
+        dir.createDirectory();
+        int n = 0;
+        for (int p = 0; p < drums::numPieces; ++p)
         {
-            safe->chooser = std::make_unique<juce::FileChooser> ("Sample for " + juce::String (drums::pieceInfo (lane).name),
-                                                                 juce::File::getSpecialLocation (juce::File::userMusicDirectory), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
-            safe->chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe, lane] (const juce::FileChooser& fc) {
-                if (safe == nullptr || fc.getResult() == juce::File()) return;
-                safe->doc.undo().beginNewTransaction ("Drum sample");
-                safe->assignSample (lane, fc.getResult());
-            });
+            const auto f = effectiveSample (p);
+            if (f == juce::File() || ! f.existsAsFile()) { settings.removeValue (defaultKitKey (p)); continue; }
+            auto dst = dir.getChildFile (f.getFileName());
+            if (! f.isAChildOf (dir)) { dst.deleteFile(); f.copyFileTo (dst); }
+            settings.setValue (defaultKitKey (p), dst.getFullPathName());
+            ++n;
         }
-        else if (r == 2)
-        {
-            safe->doc.undo().beginNewTransaction ("Built-in drum sound");
-            drums::setSamplePath (safe->drums, lane, {}, &safe->doc.undo());
-        }
-        else if (r == 3) safe->loadKitFolder();
-        else if (r == 4)
-        {
-            safe->doc.undo().beginNewTransaction ("Built-in drum kit");
-            for (int p = 0; p < drums::numPieces; ++p) drums::setSamplePath (safe->drums, p, {}, &safe->doc.undo());
-        }
-    });
+        settings.saveIfNeeded();
+        kitDirty = true;
+        message ("Drum kit", n == 0 ? juce::String ("This kit only uses built-in sounds, so the default kit is now the built-in one.")
+                                    : "New projects (and drums without their own sample) now use these " + juce::String (n) + " samples.");
+    }
+    else if (r == 6)
+    {
+        for (int p = 0; p < drums::numPieces; ++p) settings.removeValue (defaultKitKey (p));
+        settings.saveIfNeeded();
+        kitDirty = true;
+    }
+    grid.repaint();
 }
 
 void DrumPage::assignSample (int piece, const juce::File& file)
@@ -1168,7 +1246,8 @@ void DrumPage::resized()
     generateNewButton.setBounds (row2.removeFromLeft (112)); row2.removeFromLeft (12);
     renderButton.setBounds (row2.removeFromRight (116)); row2.removeFromRight (4);
     exportButton.setBounds (row2.removeFromRight (100)); row2.removeFromRight (2);
-    importButton.setBounds (row2.removeFromRight (98)); row2.removeFromRight (10);
+    importButton.setBounds (row2.removeFromRight (98)); row2.removeFromRight (4);
+    kitButton.setBounds (row2.removeFromRight (56)); row2.removeFromRight (10);
     humanLabel.setBounds (row2.removeFromLeft (64));
     humanTimeSlider.setBounds (row2.removeFromLeft (juce::jmax (60, juce::jmin (84, row2.getWidth() / 3)))); row2.removeFromLeft (2);
     humanVelSlider.setBounds (row2.removeFromLeft (juce::jmax (60, juce::jmin (84, row2.getWidth() / 2)))); row2.removeFromLeft (6);

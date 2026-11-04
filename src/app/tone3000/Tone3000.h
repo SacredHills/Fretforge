@@ -82,7 +82,7 @@ public:
 
     // ---- API ----
     enum class Feed { favorited, downloaded, created, trending, latest, search };
-    void listTones (Feed, const juce::String& query, int page, std::function<void (TonePage, juce::String error)> done);
+    void listTones (Feed, const juce::String& query, int page, const juce::String& gear, std::function<void (TonePage, juce::String error)> done);
     void getTone (int id, std::function<void (Tone, juce::String error)> done);
     void listModels (int toneId, std::function<void (juce::Array<Model>, juce::String error)> done);
     /** Downloads into libraryFolder()/<tone>/; returns the file (an existing download is reused). */
