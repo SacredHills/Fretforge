@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/_deps
-          key: juce-8.0.15-${{ matrix.os }}
+          key: juce-8.0.15-${{ matrix.os }}-ninja   # the generator is part of the cached configure state
 
       - name: Compiler cache
         uses: hendrikmuhs/ccache-action@v1.2
