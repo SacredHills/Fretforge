@@ -49,6 +49,12 @@ public:
     juce::String descriptionForMenuResult (int result, int firstId, juce::String& name) const;
 
     void showManager();
+    /** If the last run crashed or hung inside a plugin, tells the user and offers to disable that plugin. */
+    void reportPreviousCrash (juce::Component* parent);
+    /** Removes a plugin from the menus and refuses to load it until it is taken off the blacklist. */
+    void disablePlugin (const juce::String& fileOrIdentifier);
+    /** Called when plugins may load again (a held-back plugin was kept, or the blacklist changed). */
+    std::function<void()> onPluginsReenabled;
     void showEditor (std::shared_ptr<juce::AudioPluginInstance>, const juce::String& title);
     void closeEditor (juce::AudioPluginInstance*);
     void closeAllEditors();
@@ -61,7 +67,10 @@ public:
 
 private:
     juce::PropertiesFile& settings;
-    juce::File deadMansPedal;
+    juce::File deadMansPedal, crashReportFile;
+    fx::PluginCrashReport previousCrash;
+    int lastBlacklistSize = 0;
+    juce::String heldBack;   // the plugin from the last crash, refused until the user decides
     std::unique_ptr<juce::DocumentWindow> managerWindow;
     struct EditorWindow;
     std::map<juce::AudioPluginInstance*, std::unique_ptr<EditorWindow>> editors;

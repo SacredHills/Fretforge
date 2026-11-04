@@ -126,6 +126,10 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     session->rigs().onPluginRemoved = [this] (juce::AudioPluginInstance* p) { if (pluginManager != nullptr) pluginManager->closeEditor (p); };
     effectsPage->setPluginManager (pluginManager.get());
     session->plugins = pluginManager.get();
+    pluginManager->onPluginsReenabled = [this] { if (session != nullptr) session->rigs().retryFailedPlugins(); };
+    juce::Timer::callAfterDelay (800, [safe = juce::Component::SafePointer<MainComponent> (this)] {
+        if (safe != nullptr && safe->pluginManager != nullptr) safe->pluginManager->reportPreviousCrash (safe.getComponent());
+    });
     transport->onOpenMetronome = [this] { openMetronome(); };
     session->onError = [this] (const juce::String& t, const juce::String& m) { showError (t, m); };
     host.onDeviceChanged = [this] {

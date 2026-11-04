@@ -548,6 +548,20 @@ std::shared_ptr<juce::AudioPluginInstance> RigBank::pluginFor (const juce::Value
     return e != nullptr ? e->rig->getPlugin (slot) : nullptr;
 }
 
+void RigBank::retryFailedPlugins()
+{
+    auto retryRig = [this] (Entry& e) {
+        for (int sl = 0; sl < rig::numPluginSlots; ++sl)
+            if (e.status.plugins[(size_t) sl].error.isNotEmpty()) requestPlugin (e, sl);
+    };
+    retryRig (liveEntry);
+    for (auto& [k, e] : tracks) retryRig (e);
+    for (auto& [k, e] : inserts)
+        for (int i = 0; i < InsertChain::maxSlots; ++i)
+            if (e.nodes[(size_t) i].isValid() && e.status[(size_t) i].error.isNotEmpty()) loadInsert (e, i);
+    notifyStatus();
+}
+
 void RigBank::captureAllPluginStates()
 {
     auto capture = [] (Entry& e) {

@@ -715,7 +715,7 @@ void RigEditor::showAddPluginMenu (int slot)
     m.addSeparator();
     m.addItem (-2, "Scan for plugins / manage...");
     juce::Component::SafePointer<RigEditor> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&chain), [safe, slot] (int r) {
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&chain).withMousePosition(), [safe, slot] (int r) {
         if (safe == nullptr || r == 0) return;
         if (r == -2) { safe->plugins->showManager(); return; }
         juce::String name;

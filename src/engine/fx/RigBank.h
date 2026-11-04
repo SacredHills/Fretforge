@@ -69,6 +69,8 @@ public:
 
     /** Copies every plugin's current state into its PLUGIN node (also done every two seconds). */
     void captureAllPluginStates();
+    /** Tries again to load every plugin that failed to load (e.g. after it was re-enabled). */
+    void retryFailedPlugins();
 
     std::function<void (juce::AudioPluginInstance*)> onPluginRemoved;   // close its editor window before it is deleted
     std::function<void()> onRigsChanged;    // a track rig was created or removed (rebuild the playback graph)

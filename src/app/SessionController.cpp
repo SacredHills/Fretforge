@@ -187,7 +187,7 @@ void SessionController::showAddInsertMenu (juce::ValueTree track, juce::Componen
     m.addSeparator();
     m.addItem (-2, "Scan for plugins / manage...");
     juce::Component::SafePointer<juce::Component> safeTarget (target);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, track, safeTarget] (int r) {
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, safeTarget] (int r) {
         if (r == 0) return;
         if (r == -2) { plugins->showManager(); return; }
         juce::String name;
@@ -229,7 +229,8 @@ void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::C
     m.addItem (5, "Replace...");
     m.addItem (6, "Remove");
     if (st.error.isNotEmpty()) { m.addSeparator(); m.addItem (-1, st.error, false); }
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, track, slot, target] (int r) {
+    juce::Component::SafePointer<juce::Component> safeTarget (target);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, slot, safeTarget] (int r) {
         auto n = rig::insertNode (track, slot);
         if (! n.isValid()) return;
         if (r == 1) openInsert (track, slot);
@@ -240,7 +241,7 @@ void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::C
         {
             juce::PopupMenu pm;
             plugins->addToMenu (pm, 1);
-            pm.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, track, slot] (int rr) {
+            pm.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (safeTarget.getComponent()).withMousePosition(), [this, track, slot] (int rr) {
                 juce::String name;
                 const auto desc = plugins->descriptionForMenuResult (rr, 1, name);
                 if (desc.isEmpty()) return;
