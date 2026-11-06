@@ -313,9 +313,13 @@ struct AudioEngine::Segment final : GraphMixer::Source
         }
         if (t.kind == timeline::TrackKind::instrument)
         {
-            if (t.instrument != nullptr && (t.armed || t.monitor) && offset == 0)   // MIDI keyboard
+            if (t.instrument != nullptr && offset == 0)   // MIDI keyboard (armed tracks) and the MIDI editor's preview
                 for (int i = 0; i < e.liveMidiCount; ++i)
-                    t.midiBuffer.addEvent (e.liveMidiBlock[(size_t) i].b, e.liveMidiBlock[(size_t) i].size, 0);
+                {
+                    const auto& lm = e.liveMidiBlock[(size_t) i];
+                    if (lm.target == t.meterSlot || (lm.target < 0 && (t.armed || t.monitor)))
+                        t.midiBuffer.addEvent (lm.b, lm.size, 0);
+                }
             if (! t.audible) meter.rms.store (0.0f, std::memory_order_relaxed);
             return t.audible;
         }

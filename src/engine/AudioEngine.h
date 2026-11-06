@@ -163,17 +163,19 @@ private:
     TabSequence* tabSeq = nullptr;
     SpscFifo<TabSequence*> retiredTabs;
     // live MIDI (keyboard) for armed instrument tracks
-    struct LiveMidi { juce::uint8 b[3] {}; juce::uint8 size = 0; };
+    struct LiveMidi { juce::uint8 b[3] {}; juce::uint8 size = 0; int target = -1; };
     SpscFifo<LiveMidi> liveMidiIn;
     std::array<LiveMidi, 256> liveMidiBlock;
     int liveMidiCount = 0;
 public:
-    /** A message from a MIDI keyboard: played by every armed / monitored instrument track. Any single thread. */
-    void pushLiveMidi (const juce::MidiMessage& m) noexcept
+    /** A message from a MIDI keyboard: played by every armed / monitored instrument track, or only by the track
+        whose meter slot (= index) is `targetTrack` (the MIDI editor auditioning notes). */
+    void pushLiveMidi (const juce::MidiMessage& m, int targetTrack = -1) noexcept
     {
         if (m.getRawDataSize() > 3 || m.getRawDataSize() <= 0 || m.isSysEx()) return;
         LiveMidi lm;
         lm.size = (juce::uint8) m.getRawDataSize();
+        lm.target = targetTrack;
         std::memcpy (lm.b, m.getRawData(), (size_t) lm.size);
         liveMidiIn.push (&lm, 1);
     }

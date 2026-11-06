@@ -7,6 +7,8 @@
 #include "core/Timeline.h"
 #include "core/MidiClip.h"
 #include "core/Automation.h"
+#include "PianoRoll.h"
+#include "../../ToolWindow.h"
 #include <map>
 
 namespace ff
@@ -209,6 +211,11 @@ public:
     juce::String laneParamFor (const juce::ValueTree& track) const;
     juce::String laneLabel (const juce::ValueTree& track, const juce::String& param) const;
     void showLaneChooser (juce::ValueTree track, juce::Component* target);
+    /** Opens (or brings forward) the MIDI editor of a MIDI clip. */
+    void openMidiEditor (juce::ValueTree clip);
+    juce::AudioProcessorParameter* laneParameter (const juce::ValueTree& track, const juce::String& param) const;
+    juce::String laneValueText (const juce::ValueTree& track, const juce::String& param, float value) const;
+    bool laneValueFromText (const juce::ValueTree& track, const juce::String& param, const juce::String& text, float& value) const;
     bool sliceMode() const { return sliceButton.getToggleState(); }
     void setSliceMode (bool on) { sliceButton.setToggleState (on, juce::sendNotificationSync); }
     /** Splits the clips at time t (seconds). */
@@ -218,6 +225,8 @@ private:
     juce::Label snapLabel;
     juce::ValueTree root;
     std::unique_ptr<juce::FileChooser> chooser;
+    struct MidiEditor { std::unique_ptr<PianoRoll> editor; std::unique_ptr<ToolWindow> window; };
+    std::map<juce::String, MidiEditor> midiEditors;   // by clip id
     struct ClipboardItem { juce::ValueTree clip; int trackOffset; double timeOffset; };
     std::vector<ClipboardItem> clipboard;
     bool rebuildPending = false;

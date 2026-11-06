@@ -166,6 +166,7 @@ target_sources(FretForgeStudio PRIVATE
     src/app/SessionController.cpp
     src/app/ExportDialog.cpp
     src/app/pages/arrange/ArrangeView.cpp
+    src/app/pages/arrange/PianoRoll.cpp
     src/app/pages/tabs/TabEditor.cpp
     src/app/pages/tabs/NotationGlyphs.cpp
     src/app/pages/tabs/ScorePdf.cpp

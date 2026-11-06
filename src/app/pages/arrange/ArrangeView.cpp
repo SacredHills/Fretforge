@@ -1119,7 +1119,7 @@ void TimelineCanvas::drawAutomation (juce::Graphics& g)
             if (hot)
             {
                 g.setFont (uiFont (11.0f, true));
-                g.drawText (automation::valueText (prm, pts[(size_t) k].value), juce::Rectangle<float> (c.x + 8.0f, c.y - 16.0f, 90.0f, 14.0f),
+                g.drawText (owner.laneValueText (t, prm, pts[(size_t) k].value), juce::Rectangle<float> (c.x + 8.0f, c.y - 16.0f, 120.0f, 14.0f),
                             juce::Justification::centredLeft, false);
             }
         }
@@ -1199,6 +1199,8 @@ void TimelineCanvas::autoMouseDrag (const juce::MouseEvent& e)
 
 void TimelineCanvas::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    if (! owner.automationMode() && ! owner.sliceMode())
+        if (auto c = clipAt (owner, e.position); midiclip::isMidiClip (c)) { owner.openMidiEditor (c); return; }
     if (owner.automationMode())
     {
         const int ti = owner.trackIndexAtY (e.y);
@@ -1209,11 +1211,41 @@ void TimelineCanvas::mouseDoubleClick (const juce::MouseEvent& e)
         auto pts = automation::pointsOf (l);
         const int hit = pointAt (e.position, pts, prm, laneRect (ti));
         if (hit < 0) return;
-        owner.doc.undo().beginNewTransaction ("Delete automation point");
-        pts.erase (pts.begin() + hit);
-        automation::setPoints (l, pts, &owner.doc.undo());
-        autoPoint = -1;
-        repaint();
+        // type in the point's value
+        auto* w = new juce::AlertWindow ("Automation point", owner.laneLabel (t, prm) + " at " + juce::String (pts[(size_t) hit].time, 2)
+                                             + " s.  Type the value (" + (prm == automation::volumeParam ? juce::String ("dB, e.g. -6")
+                                                                          : prm == automation::panParam ? juce::String ("e.g. C, 30 L, 100 R")
+                                                                          : juce::String ("as the plugin shows it")) + ").",
+                                         juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("v", owner.laneValueText (t, prm, pts[(size_t) hit].value));
+        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Delete point", 2);
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<TimelineCanvas> safe (this);
+        const double when = pts[(size_t) hit].time;
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, t, prm, when] (int r) {
+            if (safe == nullptr || r == 0) return;
+            auto lane = automation::lane (t, prm, false, nullptr);
+            auto p2 = automation::pointsOf (lane);
+            int k = -1;
+            for (int i = 0; i < (int) p2.size(); ++i) if (std::abs (p2[(size_t) i].time - when) < 1.0e-6) k = i;
+            if (k < 0) return;
+            auto& o = safe->owner;
+            if (r == 2)
+            {
+                o.doc.undo().beginNewTransaction ("Delete automation point");
+                p2.erase (p2.begin() + k);
+            }
+            else
+            {
+                float v = 0.0f;
+                if (! o.laneValueFromText (t, prm, w->getTextEditorContents ("v"), v)) return;
+                o.doc.undo().beginNewTransaction ("Automation value");
+                p2[(size_t) k].value = v;
+            }
+            automation::setPoints (lane, p2, &o.doc.undo());
+            safe->repaint();
+        }), true);
         return;
     }
     if (owner.trackIndexAtY (e.y) >= owner.numTracks())
@@ -1271,6 +1303,7 @@ void TimelineCanvas::showClipMenu (juce::ValueTree clip)
     m.addItem (5, "Normalize clip gain");
     m.addItem (6, "Reset clip gain", ! juce::exactlyEqual (prop (clip, ids::gainDb), 0.0));
     m.addItem (7, "Rename...");
+    if (midiclip::isMidiClip (clip)) m.addItem (8, "Edit MIDI...  (double-click)");
 
     // takes: other clips on this track overlapping this one
     juce::PopupMenu takes;
@@ -1293,6 +1326,7 @@ void TimelineCanvas::showClipMenu (juce::ValueTree clip)
         else if (r == 2) o.duplicateSelection();
         else if (r == 3) o.deleteSelection();
         else if (r == 4) { um.beginNewTransaction ("Mute clip"); o.doc.set (clip, ids::muted, ! (bool) clip[ids::muted]); }
+        else if (r == 8) o.openMidiEditor (clip);
         else if (r == 5)
         {
             if (auto a = o.session.audioFor (clip))
@@ -1392,7 +1426,7 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
     sliceButton.onClick = [this] { canvas.setMouseCursor (sliceMode() ? juce::MouseCursor::IBeamCursor : juce::MouseCursor::NormalCursor); repaintAll(); };
     autoButton.setClickingTogglesState (true);
     autoButton.setTooltip ("Automation: draw volume, pan and plugin changes over time. Click a track's lane to add a point, "
-                           "drag points, double-click or right-click one to remove it. Pick the lane at the left of each track.");
+                           "drag points, double-click one to type its value, right-click one to remove it. Pick the lane at the left of each track.");
     autoButton.onClick = [this] {
         if (automationMode() && sliceMode()) setSliceMode (false);
         for (auto* h : headers) h->refreshAutomation();
@@ -1706,6 +1740,79 @@ juce::String ArrangeView::laneLabel (const juce::ValueTree& track, const juce::S
         return node[rig::ids::name].toString() + ": " + pname;
     }
     return "Removed plugin";
+}
+
+void ArrangeView::openMidiEditor (juce::ValueTree clip)
+{
+    if (! midiclip::isMidiClip (clip)) return;
+    const auto id = clip[ids::id].toString();
+    auto& me = midiEditors[id];
+    if (me.window == nullptr)
+    {
+        me.editor = std::make_unique<PianoRoll> (doc, host, clip);
+        me.window = std::make_unique<ToolWindow> ("MIDI editor - " + clip.getParent()[ids::name].toString() + " / " + clip[ids::name].toString(),
+                                                  *me.editor, 1000, 560, settings, "midiEditorWindow");
+        me.window->setResizeLimits (520, 320, 4000, 3000);
+        juce::Component::SafePointer<ArrangeView> safe (this);
+        auto close = [safe, id] {
+            juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->midiEditors.erase (id); });
+        };
+        me.window->onClosed = close;
+        me.editor->onClipGone = close;
+    }
+    me.window->showFront();
+    me.editor->grabKeyboardFocus();
+}
+
+juce::AudioProcessorParameter* ArrangeView::laneParameter (const juce::ValueTree& track, const juce::String& prm) const
+{
+    int slot = -1, index = -1;
+    if (! automation::parsePluginParam (prm, slot, index)) return nullptr;
+    for (int i = 0; i < rig::numInserts (track); ++i)
+        if ((int) rig::insertNode (track, i)[rig::ids::slot] == slot)
+            if (auto p = session.rigs().insertPlugin (track, i))
+                return juce::isPositiveAndBelow (index, p->getParameters().size()) ? p->getParameters()[index] : nullptr;
+    return nullptr;
+}
+
+juce::String ArrangeView::laneValueText (const juce::ValueTree& track, const juce::String& prm, float v) const
+{
+    if (auto* p = laneParameter (track, prm))
+    {
+        const auto text = p->getText (v, 32).trim();
+        const auto label = p->getLabel().trim();
+        return label.isNotEmpty() && ! text.endsWith (label) ? text + " " + label : text;
+    }
+    return automation::valueText (prm, v);
+}
+
+bool ArrangeView::laneValueFromText (const juce::ValueTree& track, const juce::String& prm, const juce::String& textIn, float& out) const
+{
+    const auto text = textIn.trim().toLowerCase();
+    if (text.isEmpty()) return false;
+    if (prm == automation::volumeParam)
+    {
+        if (text.contains ("inf")) { out = -60.0f; return true; }
+        out = juce::jlimit (-60.0f, 6.0f, text.retainCharacters ("-+.0123456789").getFloatValue());
+        return true;
+    }
+    if (prm == automation::panParam)
+    {
+        if (text == "c" || text == "center" || text == "centre") { out = 0.0f; return true; }
+        float amount = text.retainCharacters ("-+.0123456789").getFloatValue();
+        if (text.containsChar ('l')) amount = -std::abs (amount);
+        else if (text.containsChar ('r')) amount = std::abs (amount);
+        if (text.retainCharacters ("0123456789").isEmpty()) amount = text.containsChar ('l') ? -100.0f : 100.0f;   // just "L" / "R"
+        out = juce::jlimit (-1.0f, 1.0f, std::abs (amount) > 1.0f ? amount / 100.0f : amount);
+        return true;
+    }
+    if (auto* p = laneParameter (track, prm))
+    {
+        out = juce::jlimit (0.0f, 1.0f, p->getValueForText (textIn.trim()));
+        return true;
+    }
+    out = juce::jlimit (0.0f, 1.0f, text.retainCharacters ("-+.0123456789").getFloatValue() / 100.0f);   // percent
+    return true;
 }
 
 void ArrangeView::showLaneChooser (juce::ValueTree track, juce::Component* target)
