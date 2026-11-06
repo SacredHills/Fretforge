@@ -34,6 +34,55 @@ namespace
     }
 }
 
+namespace
+{
+    /** Noise burst through a one-pole high-pass (hp Hz) and band emphasis (a resonant two-pole at `ring` Hz, 0 = none). */
+    std::vector<float> makeNoise (double sr, double ms, double hp, double ring, double decayMs, double gain, unsigned seed = 7)
+    {
+        const int n = juce::jmax (1, (int) (sr * ms / 1000.0));
+        std::vector<float> buf ((size_t) n);
+        juce::Random rnd ((juce::int64) seed);
+        const double a = std::exp (-juce::MathConstants<double>::twoPi * hp / sr);
+        double prevIn = 0.0, prevOut = 0.0, y1 = 0.0, y2 = 0.0, peak = 0.0;
+        const double r = 0.97, w = juce::MathConstants<double>::twoPi * ring / sr, c = 2.0 * r * std::cos (w);
+        for (int i = 0; i < n; ++i)
+        {
+            const double x = rnd.nextDouble() * 2.0 - 1.0;
+            const double h = a * (prevOut + x - prevIn);   // high-pass
+            prevIn = x; prevOut = h;
+            double v = h;
+            if (ring > 0.0) { const double y = h * (1.0 - r) * 4.0 + c * y1 - r * r * y2; y2 = y1; y1 = y; v = 0.5 * h + y; }
+            const double env = std::exp (-(i / sr) * 1000.0 / decayMs) * juce::jmin (1.0, i / (sr * 0.0005));
+            buf[(size_t) i] = (float) (v * env);
+            peak = juce::jmax (peak, std::abs (v * env));
+        }
+        if (peak > 0.0) for (auto& s : buf) s = (float) (s / peak * gain);
+        return buf;
+    }
+
+    /** Short kick: a sine sweeping down from `from` to `to` Hz. */
+    std::vector<float> makeKick (double sr, double from, double to, double decayMs, double gain)
+    {
+        const int n = (int) (sr * 0.25);
+        std::vector<float> buf ((size_t) n);
+        double ph = 0.0;
+        for (int i = 0; i < n; ++i)
+        {
+            const double t = i / sr;
+            const double f = to + (from - to) * std::exp (-t * 30.0);
+            ph += juce::MathConstants<double>::twoPi * f / sr;
+            buf[(size_t) i] = (float) (gain * std::sin (ph) * std::exp (-t * 1000.0 / decayMs) * juce::jmin (1.0, i / (sr * 0.0005)));
+        }
+        return buf;
+    }
+}
+
+const char* MetronomeDsp::soundName (int s)
+{
+    static const char* names[] = { "Electronic", "Woodblock", "Cowbell", "Claves", "Sticks", "Hi-hat", "Rimshot", "Beep", "Kick & hat" };
+    return names[juce::jlimit (0, (int) numSounds - 1, s)];
+}
+
 MetronomeDsp::MetronomeDsp()
 {
     for (int i = 0; i < maxBeats; ++i)
@@ -58,6 +107,24 @@ void MetronomeDsp::prepare (double sampleRate)
     clicks[cowbell] = { makeTone (sr, 120, { { 587.0, 1.0 }, { 845.0, 0.8 } }, 40, 0.0, 1.0, true),
                         makeTone (sr, 110, { { 540.0, 1.0 }, { 800.0, 0.8 } }, 35, 0.0, 0.8, true),
                         makeTone (sr, 80, { { 540.0, 1.0 }, { 800.0, 0.8 } }, 20, 0.0, 0.4, true) };
+    clicks[claves] = { makeTone (sr, 60, { { 2500.0, 1.0 }, { 5100.0, 0.15 } }, 14, 0.02, 1.0),
+                       makeTone (sr, 60, { { 2100.0, 1.0 }, { 4300.0, 0.15 } }, 14, 0.02, 0.8),
+                       makeTone (sr, 40, { { 2100.0, 1.0 } }, 9, 0.02, 0.4) };
+    clicks[sticks] = { makeNoise (sr, 50, 1800.0, 3200.0, 9, 1.0, 11),
+                       makeNoise (sr, 45, 1800.0, 2700.0, 8, 0.8, 12),
+                       makeNoise (sr, 35, 2500.0, 2700.0, 6, 0.4, 13) };
+    clicks[hihat] = { makeNoise (sr, 90, 7000.0, 0.0, 30, 1.0, 21),
+                      makeNoise (sr, 50, 7000.0, 0.0, 14, 0.75, 22),
+                      makeNoise (sr, 35, 8000.0, 0.0, 9, 0.4, 23) };
+    clicks[rimshot] = { makeTone (sr, 70, { { 1650.0, 0.6 }, { 470.0, 0.5 } }, 12, 0.6, 1.0),
+                        makeTone (sr, 60, { { 1500.0, 0.6 }, { 420.0, 0.5 } }, 10, 0.6, 0.8),
+                        makeTone (sr, 40, { { 1500.0, 0.6 } }, 7, 0.5, 0.4) };
+    clicks[beep] = { makeTone (sr, 90, { { 1760.0, 1.0 } }, 60, 0.0, 0.9),
+                     makeTone (sr, 90, { { 880.0, 1.0 } }, 60, 0.0, 0.75),
+                     makeTone (sr, 60, { { 880.0, 1.0 } }, 30, 0.0, 0.35) };
+    clicks[kickHat] = { makeKick (sr, 160.0, 50.0, 90.0, 1.0),
+                        makeNoise (sr, 60, 7000.0, 0.0, 18, 0.8, 31),
+                        makeNoise (sr, 35, 8000.0, 0.0, 9, 0.4, 32) };
     voice = nullptr;
     reset();
 }

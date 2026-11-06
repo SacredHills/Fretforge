@@ -31,6 +31,7 @@ juce::String EngineHost::initialise (const juce::XmlElement* savedState)
     if (error.isEmpty() && deviceManager.getCurrentAudioDevice() == nullptr)
         error = "No audio device is available. Connect an interface or choose a device in Settings.";
 
+    enableAllInputsIfNewDevice();
     lastError = error;
     juce::Logger::writeToLog (error.isEmpty() ? "Audio device opened: " + deviceSummary() : "Audio init: " + error);
     tuner.start();
@@ -82,8 +83,32 @@ int EngineHost::xruns() const
     return -1;
 }
 
+void EngineHost::enableAllInputsIfNewDevice()
+{
+    // JUCE opens only the first two inputs. A guitar app wants every input of the interface (all its analog inputs,
+    // ADAT / S/PDIF...), so each newly chosen device starts with all of them on (they can still be switched off in
+    // Settings afterwards: that choice is kept until another device is picked).
+    auto* d = deviceManager.getCurrentAudioDevice();
+    if (d == nullptr) return;
+    const auto key = d->getTypeName() + "/" + d->getName();
+    if (key == inputsEnabledFor) return;
+    inputsEnabledFor = key;
+    const int n = d->getInputChannelNames().size();
+    auto setup = deviceManager.getAudioDeviceSetup();
+    if (n <= 0 || (! setup.useDefaultInputChannels && setup.inputChannels.countNumberOfSetBits() >= n)) return;
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.inputChannels.setRange (0, n, true);
+    const juce::ScopedValueSetter<bool> svs (changingInputs, true);
+    const auto err = deviceManager.setAudioDeviceSetup (setup, true);
+    juce::Logger::writeToLog (err.isEmpty() ? "Enabled all " + juce::String (n) + " inputs of " + d->getName()
+                                            : "Could not enable all inputs: " + err);
+}
+
 void EngineHost::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    if (changingInputs) return;
+    enableAllInputsIfNewDevice();
     lastError.clear();
     juce::Logger::writeToLog ("Audio device changed: " + deviceSummary());
     if (onDeviceChanged)

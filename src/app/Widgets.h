@@ -42,6 +42,51 @@ public:
     }
 };
 
+/** Note value button: draws the note (whole ... 64th) and its fraction; lit when it is the current value. */
+class NoteValueButton : public juce::Button
+{
+public:
+    NoteValueButton (int denominator, const juce::String& label) : juce::Button (label), den (denominator) { setWantsKeyboardFocus (false); }
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        const bool on = getToggleState();
+        g.setColour (on ? palette::accent : (over ? palette::panel.brighter (0.15f) : palette::panel));
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (on ? palette::accent.brighter (0.3f) : palette::outline);
+        g.drawRoundedRectangle (r, 4.0f, on ? 1.5f : 1.0f);
+        if (down) { g.setColour (juce::Colours::black.withAlpha (0.15f)); g.fillRoundedRectangle (r, 4.0f); }
+        const auto ink = on ? juce::Colour (0xff15171a) : palette::text;
+        g.setColour (ink);
+        // the note: head, stem, flags
+        auto glyph = r.removeFromLeft (r.getHeight() * 0.8f).reduced (2.0f, 3.0f);
+        const float hw = 8.0f, hh = 5.6f;
+        const juce::Rectangle<float> head (glyph.getX() + 1.0f, glyph.getBottom() - hh - 1.0f, hw, hh);
+        juce::Path h;
+        h.addEllipse (head);
+        h.applyTransform (juce::AffineTransform::rotation (-0.35f, head.getCentreX(), head.getCentreY()));
+        if (den <= 2) g.strokePath (h, juce::PathStrokeType (1.4f)); else g.fillPath (h);
+        if (den >= 2)
+        {
+            const float sx = head.getRight() - 0.6f, top = glyph.getY() + 1.0f;
+            g.drawLine (sx, head.getCentreY() - 1.0f, sx, top, 1.3f);
+            int flags = den >= 64 ? 4 : den >= 32 ? 3 : den >= 16 ? 2 : den >= 8 ? 1 : 0;
+            for (int f = 0; f < flags; ++f)
+            {
+                juce::Path fl;
+                const float y = top + f * 3.6f;
+                fl.startNewSubPath (sx, y);
+                fl.quadraticTo (sx + 5.5f, y + 2.5f, sx + 4.5f, y + 7.0f);
+                g.strokePath (fl, juce::PathStrokeType (1.3f));
+            }
+        }
+        g.setFont (uiFont (12.0f, true));
+        g.drawText (getButtonText(), r.withTrimmedRight (3.0f), juce::Justification::centred, false);
+    }
+private:
+    int den;
+};
+
 /** Small round on / off button (lit green when on). */
 class PowerButton : public juce::Button
 {

@@ -94,9 +94,7 @@ MetronomePanel::MetronomePanel (EngineHost& h, ProjectDocument& d, juce::Propert
     for (auto& [id, name] : subs) subdivision.addItem (name, id);
     subdivision.onChange = [this] { if (! updating) doc.set (metroNode, ids::subdivision, subdivision.getSelectedId(), false); };
 
-    sound.addItem ("Electronic", 1);
-    sound.addItem ("Woodblock", 2);
-    sound.addItem ("Cowbell", 3);
+    for (int i = 0; i < MetronomeDsp::numSounds; ++i) sound.addItem (MetronomeDsp::soundName (i), i + 1);
     sound.onChange = [this] { if (! updating) doc.set (metroNode, ids::sound, sound.getSelectedId() - 1, false); };
 
     setupSlider (volumeSlider, 0.0, 100.0, 1.0, " %");

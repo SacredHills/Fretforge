@@ -32,6 +32,9 @@ public:
     std::function<void()> onDeviceChanged;
 
 private:
+    juce::String inputsEnabledFor;   // device (type/name) whose inputs were all switched on
+    bool changingInputs = false;
+    void enableAllInputsIfNewDevice();
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
 };

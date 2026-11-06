@@ -127,7 +127,14 @@ public:
             k->label.setJustificationType (juce::Justification::centred);
             k->label.setFont (juce::Font (juce::FontOptions (11.5f)));
             k->label.setColour (juce::Label::textColourId, col::dim);
-            if (auto* bp = dynamic_cast<juce::AudioParameterBool*> (rp))
+            if (auto* cp = dynamic_cast<juce::AudioParameterChoice*> (rp))
+            {
+                k->combo.addItemList (cp->choices, 1);
+                k->comboAttach = std::make_unique<juce::ComboBoxParameterAttachment> (*cp, k->combo);
+                addAndMakeVisible (k->combo);
+                addAndMakeVisible (k->label);
+            }
+            else if (auto* bp = dynamic_cast<juce::AudioParameterBool*> (rp))
             {
                 k->toggle.setButtonText (rp->getName (40));
                 k->toggle.setClickingTogglesState (true);
@@ -173,6 +180,12 @@ public:
             auto cell = juce::Rectangle<int> (r.getX() + c * w, r.getY() + row * 104, w, 100).reduced (4, 0);
             auto& k = *knobs[i];
             if (k.toggle.isVisible()) { k.toggle.setBounds (cell.withSizeKeepingCentre (cell.getWidth(), 28)); continue; }
+            if (k.combo.isVisible())
+            {
+                k.label.setBounds (cell.removeFromTop (16));
+                k.combo.setBounds (cell.withSizeKeepingCentre (cell.getWidth(), 26));
+                continue;
+            }
             k.label.setBounds (cell.removeFromTop (16));
             k.slider.setBounds (cell);
         }
@@ -184,6 +197,8 @@ private:
         juce::Slider slider;
         juce::Label label;
         juce::TextButton toggle;
+        juce::ComboBox combo;
+        std::unique_ptr<juce::ComboBoxParameterAttachment> comboAttach;
         std::unique_ptr<juce::SliderParameterAttachment> attach;
         std::unique_ptr<juce::ButtonParameterAttachment> buttonAttach;
     };
@@ -921,14 +936,31 @@ private:
 
 // =====================================================================================================  reverb
 
-/** Feedback delay network: pre-delay, input diffusion, 8 damped lines mixed by a Householder matrix. */
+/** Feedback delay network: pre-delay, input diffusion, 8 damped, gently modulated lines mixed by a Householder
+    matrix. The type sets the space: line lengths, diffusion, brightness, modulation, and for Spring a chirping
+    dispersion chain. */
 class Reverb final : public Base
 {
 public:
+    static constexpr const char* typeNames[] = { "Room", "Hall", "Plate", "Chamber", "Spring", "Ambience", "Cathedral" };
+    struct Type { float size, decay, diffusion, damping, mod, spread; bool spring; };
+    static constexpr Type types[] = {
+        { 0.55f, 0.8f, 0.60f, 0.10f, 1.0f, 1.0f, false },   // room
+        { 1.25f, 1.2f, 0.70f, 0.05f, 6.0f, 1.0f, false },   // hall
+        { 0.85f, 1.0f, 0.78f, -0.25f, 3.0f, 1.0f, false },  // plate: dense and bright
+        { 0.80f, 1.0f, 0.65f, 0.15f, 2.0f, 0.8f, false },   // chamber
+        { 0.40f, 1.0f, 0.50f, 0.20f, 0.5f, 0.6f, true },    // spring
+        { 0.35f, 0.35f, 0.55f, 0.10f, 1.0f, 1.0f, false },  // ambience: short and close
+        { 1.90f, 1.6f, 0.72f, 0.20f, 8.0f, 1.0f, false },   // cathedral
+    };
+    static constexpr int numTypes = (int) std::size (typeNames);
+
     explicit Reverb (const Info& i) : Base (i, layout()) {}
     static Layout layout()
     {
         Layout l;
+        l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "type", 1 }, "Type",
+                                                              juce::StringArray (typeNames, numTypes), 1));
         l.add (param ("size", "Size", 0.0f, 100.0f, 50.0f, "%"));
         l.add (param ("decay", "Decay", 0.2f, 12.0f, 2.2f, "s", 2.0f));
         l.add (param ("damping", "Damping", 0.0f, 100.0f, 40.0f, "%"));
@@ -938,68 +970,88 @@ public:
         l.add (param ("mix", "Mix", 0.0f, 100.0f, 25.0f, "%"));
         return l;
     }
-    double getTailLengthSeconds() const override { return 12.0; }
+    double getTailLengthSeconds() const override { return 18.0; }
     void prepareToPlay (double, int) override
     {
         const double sr = sampleRate();
-        for (auto& l : lines) l.assign ((size_t) (sr * 0.32) + 8, 0.0f);
+        for (auto& l : lines) l.assign ((size_t) (sr * 0.45) + 16, 0.0f);
         for (size_t k = 0; k < diff.size(); ++k) diff[k].assign ((size_t) (sr * diffMs[k] * 0.001) + 2, 0.0f);
         pre.assign ((size_t) (sr * 0.21) + 2, 0.0f);
         std::fill (pos.begin(), pos.end(), 0);
         std::fill (dpos.begin(), dpos.end(), 0);
         std::fill (lp.begin(), lp.end(), 0.0f);
+        for (auto& c : chirp) c = {};
         prePos = 0;
+        lfo = 0.0;
         hp.reset();
+        springLp.reset();
+        lastType = -1;
     }
     void process (float* L, float* R, int n) noexcept override
     {
         if (lines[0].empty()) return;
         const double sr = sampleRate();
-        const float size = 0.5f + 1.5f * p ("size") * 0.01f;
-        const float decay = p ("decay"), mix = p ("mix") * 0.01f, width = p ("width") * 0.01f;
-        const float damp = 0.05f + 0.9f * p ("damping") * 0.01f;
+        const int typeIndex = juce::jlimit (0, numTypes - 1, juce::roundToInt (p ("type")));
+        const auto& ty = types[typeIndex];
+        if (typeIndex != lastType)   // a different space: start the tail fresh
+        {
+            for (auto& l : lines) std::fill (l.begin(), l.end(), 0.0f);
+            std::fill (lp.begin(), lp.end(), 0.0f);
+            lastType = typeIndex;
+        }
+        const float size = ty.size * (0.5f + 1.5f * p ("size") * 0.01f);
+        const float decay = juce::jmax (0.1f, p ("decay") * ty.decay), mix = p ("mix") * 0.01f, width = p ("width") * 0.01f * ty.spread;
+        const float damp = juce::jlimit (0.0f, 0.97f, 0.05f + 0.9f * p ("damping") * 0.01f + ty.damping);
+        const float dg = ty.diffusion;
         const int preLen = (int) pre.size();
         const int preD = juce::jlimit (0, preLen - 1, (int) (p ("predelay") * 0.001 * sr));
-        hp.set (Biquad::highPass, sr, p ("lowCut"), 0.707);
-        std::array<int, numLines> len {};
+        hp.set (Biquad::highPass, sr, ty.spring ? juce::jmax (300.0f, p ("lowCut")) : p ("lowCut"), 0.707);
+        springLp.set (Biquad::lowPass, sr, 4200.0, 0.8);
+        const double modDepth = ty.mod * sr / 48000.0;
+        const double lfoInc = juce::MathConstants<double>::twoPi * 0.7 / sr;
+        std::array<double, numLines> len {};
         std::array<float, numLines> g {};
         for (int k = 0; k < numLines; ++k)
         {
-            len[(size_t) k] = juce::jlimit (8, (int) lines[(size_t) k].size() - 1, (int) (lineMs[(size_t) k] * size * 0.001 * sr));
+            const int maxLen = (int) lines[(size_t) k].size() - 4 - (int) modDepth;
+            len[(size_t) k] = juce::jlimit (8.0, (double) maxLen, lineMs[(size_t) k] * size * 0.001 * sr);
             g[(size_t) k] = std::pow (10.0f, -3.0f * (float) len[(size_t) k] / (decay * (float) sr));
         }
         for (int i = 0; i < n; ++i)
         {
             const float inL = L[i], inR = R != nullptr ? R[i] : L[i];
-            // pre-delay
             pre[(size_t) prePos] = 0.5f * (inL + inR);
             int rp = prePos - preD;
             if (rp < 0) rp += preLen;
             float x = hp.process (pre[(size_t) rp]);
             prePos = (prePos + 1) % preLen;
-            // input diffusion (allpasses)
-            for (size_t k = 0; k < diff.size(); ++k)
+            for (size_t k = 0; k < diff.size(); ++k)   // input diffusion
             {
                 auto& d = diff[k];
                 const float dv = d[(size_t) dpos[k]];
-                const float y = -0.6f * x + dv;
-                d[(size_t) dpos[k]] = x + 0.6f * y;
+                const float y = -dg * x + dv;
+                d[(size_t) dpos[k]] = x + dg * y;
                 dpos[k] = (dpos[k] + 1) % (int) d.size();
                 x = y;
             }
-            // network
+            lfo += lfoInc;
+            if (lfo > juce::MathConstants<double>::twoPi) lfo -= juce::MathConstants<double>::twoPi;
             std::array<float, numLines> out {};
             float sum = 0.0f;
             for (int k = 0; k < numLines; ++k)
             {
                 auto& line = lines[(size_t) k];
                 const int size_ = (int) line.size();
-                int r = pos[(size_t) k] - len[(size_t) k];
-                if (r < 0) r += size_;
-                auto& s = lp[(size_t) k];
-                s += (1.0f - damp) * (line[(size_t) r] - s);
-                out[(size_t) k] = s;
-                sum += s;
+                const double m = modDepth * std::sin (lfo + k * 0.785398);   // each line drifts a little: no metallic ring
+                double r = pos[(size_t) k] - (len[(size_t) k] + m);
+                while (r < 0) r += size_;
+                const int r0 = (int) r;
+                const float f = (float) (r - r0);
+                const float v = line[(size_t) r0] + f * (line[(size_t) ((r0 + 1) % size_)] - line[(size_t) r0]);
+                auto& st = lp[(size_t) k];
+                st += (1.0f - damp) * (v - st);
+                out[(size_t) k] = st;
+                sum += st;
             }
             sum *= 2.0f / (float) numLines;
             float wl = 0.0f, wr = 0.0f;
@@ -1011,6 +1063,18 @@ public:
                 if (k & 1) wr += out[(size_t) k]; else wl += out[(size_t) k];
             }
             wl *= 0.5f; wr *= 0.5f;
+            if (ty.spring)   // dispersion: a chain of first-order all-passes makes the springy "drip"
+            {
+                for (auto& c : chirp)
+                {
+                    const float yl = -0.62f * wl + c.xl + 0.62f * c.yl;
+                    c.xl = wl; c.yl = yl; wl = yl;
+                    const float yr = -0.62f * wr + c.xr + 0.62f * c.yr;
+                    c.xr = wr; c.yr = yr; wr = yr;
+                }
+                wl = springLp.process (wl);
+                wr = 0.8f * wr + 0.2f * wl;
+            }
             const float mid = 0.5f * (wl + wr), side = 0.5f * (wl - wr) * width;
             wl = mid + side;
             wr = mid - side;
@@ -1018,7 +1082,7 @@ public:
             if (R != nullptr) R[i] = inR * (1.0f - mix) + wr * mix;
             else L[i] = inL * (1.0f - mix) + mid * mix;
         }
-        for (auto& s : lp) if (std::abs (s) < 1.0e-20f) s = 0.0f;
+        for (auto& st : lp) if (std::abs (st) < 1.0e-20f) st = 0.0f;
     }
 private:
     static constexpr int numLines = 8;
@@ -1030,8 +1094,11 @@ private:
     std::array<std::vector<float>, 4> diff;
     std::array<int, 4> dpos {};
     std::vector<float> pre;
-    int prePos = 0;
-    Biquad hp;
+    int prePos = 0, lastType = -1;
+    double lfo = 0.0;
+    struct ChirpStage { float xl = 0, yl = 0, xr = 0, yr = 0; };
+    std::array<ChirpStage, 16> chirp {};
+    Biquad hp, springLp;
 };
 } // namespace
 

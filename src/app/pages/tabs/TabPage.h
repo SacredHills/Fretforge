@@ -54,9 +54,15 @@ private:
     juce::TextButton importButton { "Import..." }, exportButton { "Export..." };
     juce::TextButton notationButton { "Notation" }, midiButton { "MIDI In" }, drumsButton { "Drums" };
     // row 2: entry palette
-    juce::OwnedArray<juce::TextButton> durButtons;
+    juce::OwnedArray<NoteValueButton> durButtons;
     juce::TextButton dotButton { "." }, tripletButton { "3" }, restButton { "Rest" };
-    juce::OwnedArray<juce::TextButton> techButtons;
+    juce::OwnedArray<juce::TextButton> techButtons;   // the common techniques; all of them are in techMenuButton
+    juce::TextButton techMenuButton { "All techniques..." };
+    struct Tech { juce::String label, name, key; std::function<void (TabEditor&)> fn; };
+    std::vector<Tech> techs;
+    static constexpr int numVisibleTechs = 5;
+    void showTechMenu();
+    std::array<bool, 16> techActive {};
     juce::TextButton transDownButton { "-1" }, transUpButton { "+1" };
     juce::ComboBox sigCombo;
     juce::TextButton barButton { "Bar..." }, textButton { "Text..." };

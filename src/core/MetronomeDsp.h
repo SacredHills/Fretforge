@@ -21,7 +21,9 @@ public:
     static constexpr int maxSubdivision = 8;
 
     enum Level : int { mute = 0, normal = 1, accent = 2 };
-    enum Sound : int { electronic = 0, woodblock = 1, cowbell = 2, numSounds = 3 };
+    enum Sound : int { electronic = 0, woodblock = 1, cowbell = 2, claves = 3, sticks = 4, hihat = 5, rimshot = 6,
+                       beep = 7, kickHat = 8, numSounds = 9 };
+    static const char* soundName (int s);
 
     MetronomeDsp();
 

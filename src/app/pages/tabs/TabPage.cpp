@@ -91,7 +91,7 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
     const std::pair<int, const char*> durs[] = { { 1, "1" }, { 2, "1/2" }, { 4, "1/4" }, { 8, "1/8" }, { 16, "1/16" }, { 32, "1/32" }, { 64, "1/64" } };
     for (auto [dur, name] : durs)
     {
-        auto* b = durButtons.add (new juce::TextButton (name));
+        auto* b = durButtons.add (new NoteValueButton (dur, name));
         b->setTooltip ("Note value (+ / - keys)");
         b->onClick = [this, dur = dur] { editor.setDuration (dur); editor.grabKeyboardFocus(); };
     }
@@ -102,31 +102,36 @@ TabPage::TabPage (ProjectDocument& d, EngineHost& h, juce::PropertiesFile& s)
     tripletButton.onClick = [this] { editor.toggleTuplet(); editor.grabKeyboardFocus(); };
     restButton.onClick = [this] { editor.toggleRest(); editor.grabKeyboardFocus(); };
 
-    struct Tech { const char* label; const char* tip; std::function<void (TabEditor&)> fn; };
-    const std::vector<Tech> techs {
-        { "H/P", "Hammer-on / pull-off to the next note (H)", [] (TabEditor& e) { e.toggleNoteFlag (tids::hammer, "Hammer-on"); } },
-        { "Sld", "Slide: to next / in from below / out downwards (S)", [] (TabEditor& e) { e.cycleSlide(); } },
-        { "Bnd", "Bend: 1/2, full, 1 1/2, 2 (B)", [] (TabEditor& e) { e.cycleBend(); } },
-        { "Vib", "Vibrato (V)", [] (TabEditor& e) { e.toggleNoteFlag (tids::vibrato, "Vibrato"); } },
-        { "PM", "Palm mute (P)", [] (TabEditor& e) { e.toggleNoteFlag (tids::palmMute, "Palm mute"); } },
-        { "X", "Dead note (X)", [] (TabEditor& e) { e.toggleNoteFlag (tids::dead, "Dead note"); } },
-        { "( )", "Ghost note (G)", [] (TabEditor& e) { e.toggleNoteFlag (tids::ghost, "Ghost note"); } },
-        { "NH", "Natural harmonic (N)", [] (TabEditor& e) { e.cycleHarmonic (tab::harmNatural); } },
-        { "AH", "Artificial harmonic (A)", [] (TabEditor& e) { e.cycleHarmonic (tab::harmArtificial); } },
-        { "LR", "Let ring (L)", [] (TabEditor& e) { e.toggleNoteFlag (tids::letRing, "Let ring"); } },
-        { "Tap", "Tapping (Shift+T)", [] (TabEditor& e) { e.toggleNoteFlag (tids::tap, "Tap"); } },
-        { "Tie", "Tie to the previous note (Z)", [] (TabEditor& e) { e.toggleNoteFlag (tids::tie, "Tie"); } },
-        { ">", "Accent (>)", [] (TabEditor& e) { e.toggleNoteFlag (tids::accent, "Accent"); } },
-        { "Dn", "Downstroke (D)", [] (TabEditor& e) { e.setStroke (tab::strokeDown); } },
-        { "Up", "Upstroke (U)", [] (TabEditor& e) { e.setStroke (tab::strokeUp); } },
-        { "Trm", "Tremolo picking (W)", [] (TabEditor& e) { e.toggleBeatFlag (tids::tremolo, "Tremolo picking"); } },
+    techs = {
+        { "Hammer", "Hammer-on / pull-off to the next note", "H", [] (TabEditor& e) { e.toggleNoteFlag (tids::hammer, "Hammer-on"); } },
+        { "Slide", "Slide: to next / in from below / out downwards", "S", [] (TabEditor& e) { e.cycleSlide(); } },
+        { "Bend", "Bend: 1/2, full, 1 1/2, 2", "B", [] (TabEditor& e) { e.cycleBend(); } },
+        { "Vibrato", "Vibrato", "V", [] (TabEditor& e) { e.toggleNoteFlag (tids::vibrato, "Vibrato"); } },
+        { "Palm mute", "Palm mute", "P", [] (TabEditor& e) { e.toggleNoteFlag (tids::palmMute, "Palm mute"); } },
+        { "Dead note", "Dead note (x)", "X", [] (TabEditor& e) { e.toggleNoteFlag (tids::dead, "Dead note"); } },
+        { "Ghost note", "Ghost note ( )", "G", [] (TabEditor& e) { e.toggleNoteFlag (tids::ghost, "Ghost note"); } },
+        { "Natural harmonic", "Natural harmonic", "N", [] (TabEditor& e) { e.cycleHarmonic (tab::harmNatural); } },
+        { "Artificial harmonic", "Artificial harmonic", "A", [] (TabEditor& e) { e.cycleHarmonic (tab::harmArtificial); } },
+        { "Let ring", "Let ring", "L", [] (TabEditor& e) { e.toggleNoteFlag (tids::letRing, "Let ring"); } },
+        { "Tapping", "Tapping", "Shift+T", [] (TabEditor& e) { e.toggleNoteFlag (tids::tap, "Tap"); } },
+        { "Tie", "Tie to the previous note", "Z", [] (TabEditor& e) { e.toggleNoteFlag (tids::tie, "Tie"); } },
+        { "Accent", "Accent (>)", ">", [] (TabEditor& e) { e.toggleNoteFlag (tids::accent, "Accent"); } },
+        { "Downstroke", "Downstroke", "D", [] (TabEditor& e) { e.setStroke (tab::strokeDown); } },
+        { "Upstroke", "Upstroke", "U", [] (TabEditor& e) { e.setStroke (tab::strokeUp); } },
+        { "Tremolo picking", "Tremolo picking", "W", [] (TabEditor& e) { e.toggleBeatFlag (tids::tremolo, "Tremolo picking"); } },
     };
-    for (auto& t : techs)
+    for (int i = 0; i < numVisibleTechs; ++i)
     {
-        auto* b = techButtons.add (new juce::TextButton (t.label));
-        b->setTooltip (t.tip);
-        b->onClick = [this, fn = t.fn] { fn (editor); editor.grabKeyboardFocus(); };
+        auto* b = techButtons.add (new juce::TextButton (techs[(size_t) i].label));
+        b->setTooltip (techs[(size_t) i].name + " (" + techs[(size_t) i].key + ")");
+        b->setColour (juce::TextButton::buttonOnColourId, palette::accent);
+        b->setColour (juce::TextButton::textColourOnId, juce::Colour (0xff15171a));
+        b->onClick = [this, fn = techs[(size_t) i].fn] { fn (editor); editor.grabKeyboardFocus(); };
     }
+    techMenuButton.setTooltip ("Every technique (dead / ghost notes, harmonics, let ring, tapping, ties, strokes...)");
+    techMenuButton.onClick = [this] { showTechMenu(); };
+    techMenuButton.setWantsKeyboardFocus (false);
+    addAndMakeVisible (techMenuButton);
 
     transDownButton.setTooltip ("Transpose selection down a semitone");
     transUpButton.setTooltip ("Transpose selection up a semitone");
@@ -217,6 +222,25 @@ void TabPage::refreshTracks()
     refreshPalette();
 }
 
+void TabPage::showTechMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Techniques for the note at the cursor");
+    const char* groups[] = { "Legato and bends", nullptr, nullptr, nullptr, "Muting and feel", nullptr, nullptr, "Harmonics", nullptr,
+                             "Sustain", "Two hands", "Ties and accents", nullptr, "Picking", nullptr, nullptr };
+    for (int i = 0; i < (int) techs.size(); ++i)
+    {
+        if (i < (int) std::size (groups) && groups[i] != nullptr && i > 0) m.addSeparator();
+        m.addItem (i + 1, techs[(size_t) i].label + "        " + techs[(size_t) i].key, true, techActive[(size_t) i]);
+    }
+    juce::Component::SafePointer<TabPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&techMenuButton), [safe] (int r) {
+        if (safe == nullptr || r <= 0) return;
+        safe->techs[(size_t) (r - 1)].fn (safe->editor);
+        safe->editor.grabKeyboardFocus();
+    });
+}
+
 void TabPage::refreshPalette()
 {
     const juce::ScopedValueSetter<bool> svs (updating, true);
@@ -237,6 +261,7 @@ void TabPage::refreshPalette()
                            (bool) note[tids::accent], (int) beat[tids::stroke] == 1, (int) beat[tids::stroke] == 2, (bool) beat[tids::tremolo] };
     for (int i = 0; i < techButtons.size(); ++i)
         techButtons[i]->setToggleState (noteFlags[i], juce::dontSendNotification);
+    for (int i = 0; i < (int) std::size (noteFlags) && i < (int) techActive.size(); ++i) techActive[(size_t) i] = noteFlags[i];
 
     auto meas = tab::measures (score).getChild (editor.cursor.bar);
     const auto sig = juce::String ((int) meas.getProperty (tids::tsNum, 4)) + "/" + juce::String ((int) meas.getProperty (tids::tsDen, 4));
@@ -802,7 +827,7 @@ void TabPage::resized()
     importButton.setBounds (row1.removeFromRight (juce::jmax (60, juce::jmin (70, row1.getWidth()))));
 
     auto row2 = r.removeFromTop (42).reduced (8, 8);
-    for (auto* b : durButtons) { b->setBounds (row2.removeFromLeft (34)); row2.removeFromLeft (2); }
+    for (auto* b : durButtons) { b->setBounds (row2.removeFromLeft (52)); row2.removeFromLeft (2); }
     row2.removeFromLeft (4);
     dotButton.setBounds (row2.removeFromLeft (26)); row2.removeFromLeft (2);
     tripletButton.setBounds (row2.removeFromLeft (26)); row2.removeFromLeft (2);
@@ -813,8 +838,9 @@ void TabPage::resized()
     sigCombo.setBounds (row2.removeFromRight (66)); row2.removeFromRight (4);
     textButton.setBounds (row2.removeFromRight (50)); row2.removeFromRight (2);
     barButton.setBounds (row2.removeFromRight (48)); row2.removeFromRight (10);
-    const int tw = juce::jmax (30, (row2.getWidth() - 2 * techButtons.size()) / juce::jmax (1, techButtons.size()));
-    for (auto* b : techButtons) { b->setBounds (row2.removeFromLeft (tw)); row2.removeFromLeft (2); }
+    techMenuButton.setBounds (row2.removeFromRight (juce::jmin (124, row2.getWidth() / 4))); row2.removeFromRight (6);
+    const int tw = juce::jmax (40, (row2.getWidth() - 2 * techButtons.size()) / juce::jmax (1, techButtons.size()));
+    for (auto* b : techButtons) { b->setBounds (row2.removeFromLeft (juce::jmin (tw, 104))); row2.removeFromLeft (2); }
 
     status.setBounds (r.removeFromBottom (24).reduced (10, 0));
     viewport.setBounds (r);

@@ -186,6 +186,17 @@ public:
             expect (late < early * 0.01f, "1 s decay: down by > 40 dB two seconds later");
             setP (*p, "mix", 0.0f);
             expectWithinAbsoluteError (peakDb (run (*p, sine (440.0, 0.5f, 12000)), 6000), -6.02f, 0.05f);
+            setP (*p, "mix", 100.0f);
+            for (int type = 0; type < 7; ++type)   // every reverb type rings, stays finite and dies away
+            {
+                setP (*p, "type", (float) type);
+                p->prepareToPlay (sr, 256);
+                auto o = run (*p, imp);
+                bool finite = true;
+                for (int i = 0; i < o.getNumSamples(); ++i) finite = finite && std::isfinite (o.getSample (0, i));
+                const float e1 = o.getRMSLevel (0, 2400, 9600), e2 = o.getRMSLevel (0, 48000 * 2 + 24000, 24000);
+                expect (finite && e1 > 1.0e-4f && e2 < e1 * 0.05f, "type " + juce::String (type) + ": " + juce::String (e1) + " / " + juce::String (e2));
+            }
         }
     }
 };
