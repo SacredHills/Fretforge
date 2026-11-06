@@ -32,13 +32,32 @@ void addMidiRange (PlayTrack& t, juce::int64 from, int n, int offset) noexcept
     }
 }
 
-void allNotesOff (juce::MidiBuffer& b) noexcept
+void allNotesOff (juce::MidiBuffer& b, int offset = 0) noexcept
 {
     for (int ch = 1; ch <= 16; ++ch)
     {
-        b.addEvent (juce::MidiMessage::controllerEvent (ch, 64, 0), 0);
-        b.addEvent (juce::MidiMessage::allNotesOff (ch), 0);
+        b.addEvent (juce::MidiMessage::controllerEvent (ch, 64, 0), offset);
+        b.addEvent (juce::MidiMessage::allNotesOff (ch), offset);
     }
+}
+
+/** Starting (or jumping) to `at`: notes that began a little before and are still held sound from here, so a note right
+    at the start point is never lost to rounding and starting inside a long note plays it. Also the pedal state. */
+void chaseNotes (PlayTrack& t, juce::int64 at, int offset) noexcept
+{
+    bool pedal[16] = {};
+    for (const auto& e : t.midiEvents)
+    {
+        if (e.pos >= at) break;
+        if ((e.b0 & 0xF0) == 0xB0 && e.b1 == 64) pedal[e.b0 & 0x0F] = e.b2 >= 64;
+        if ((e.b0 & 0xF0) == 0x90 && e.end > at)
+        {
+            const juce::uint8 bytes[3] = { e.b0, e.b1, e.b2 };
+            t.midiBuffer.addEvent (bytes, 3, offset);
+        }
+    }
+    for (int ch = 0; ch < 16; ++ch)
+        if (pedal[ch]) t.midiBuffer.addEvent (juce::MidiMessage::controllerEvent (ch + 1, 64, 127), offset);
 }
 }
 
@@ -76,24 +95,29 @@ void prepareTrackBlock (PlayTrack& t, const BlockTiming& bt, int n) noexcept
         t.midiNextPos = -1;
         return;
     }
-    if (t.midiWasRolling && bt.from != t.midiNextPos) allNotesOff (t.midiBuffer);   // jumped (seek / loop)
+    const bool jumped = ! t.midiWasRolling || bt.from != t.midiNextPos;   // started, sought or looped
+    if (t.midiWasRolling && jumped) allNotesOff (t.midiBuffer);
     t.midiWasRolling = true;
     if (bt.looping && bt.loopEnd > bt.loopStart && bt.from >= bt.loopEnd)
     {
         const juce::int64 f = bt.loopStart + (bt.from - bt.loopEnd) % (bt.loopEnd - bt.loopStart);
+        if (jumped) chaseNotes (t, f, 0);
         addMidiRange (t, f, n, 0);
         t.midiNextPos = f + n;
     }
     else if (bt.looping && bt.loopEnd > bt.loopStart && bt.from + n > bt.loopEnd)
     {
         const int first = (int) (bt.loopEnd - bt.from);
+        if (jumped) chaseNotes (t, bt.from, 0);
         addMidiRange (t, bt.from, first, 0);
-        allNotesOff (t.midiBuffer);   // wrap: notes still held at the loop end stop there
+        allNotesOff (t.midiBuffer, first);   // wrap: notes still held at the loop end stop there
+        chaseNotes (t, bt.loopStart, first);
         addMidiRange (t, bt.loopStart, n - first, first);
         t.midiNextPos = bt.loopStart + (n - first);
     }
     else
     {
+        if (jumped) chaseNotes (t, bt.from, 0);
         addMidiRange (t, bt.from, n, 0);
         t.midiNextPos = bt.from + n;
     }
@@ -174,8 +198,9 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
                     if (on < cs - 1.0e-9 || on >= ce) continue;
                     const double offT = juce::jmin (ce, on + nt.length);
                     const auto vel = (juce::uint8) juce::jlimit (1, 127, nt.velocity);
-                    pt.midiEvents.push_back ({ toS (on), (juce::uint8) (0x90 | (ch - 1)), (juce::uint8) nt.pitch, vel });
-                    pt.midiEvents.push_back ({ juce::jmax (toS (on) + 1, toS (offT)), (juce::uint8) (0x80 | (ch - 1)), (juce::uint8) nt.pitch, 0 });
+                    const auto offS = juce::jmax (toS (on) + 1, toS (offT));
+                    pt.midiEvents.push_back ({ toS (on), (juce::uint8) (0x90 | (ch - 1)), (juce::uint8) nt.pitch, vel, offS });
+                    pt.midiEvents.push_back ({ offS, (juce::uint8) (0x80 | (ch - 1)), (juce::uint8) nt.pitch, 0 });
                 }
                 bool down = false;
                 for (const auto& pe : midiclip::pedalOf (c))

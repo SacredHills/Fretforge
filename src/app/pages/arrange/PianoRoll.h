@@ -13,7 +13,7 @@ namespace ff
     select with a box, double-click empty grid to add a note, double-click a note to delete it. With Draw on, a single
     click adds a note and dragging sets its length. Keys: Delete, Ctrl+A, arrows (Shift+Up / Down: octave), Ctrl+Z / Y,
     Q quantise. The keyboard plays the track's instrument. Every edit is one undo step in the project. */
-class PianoRoll : public juce::Component, private juce::Timer, private juce::ValueTree::Listener
+class PianoRoll : public juce::Component, private juce::Timer, private juce::ValueTree::Listener, private juce::ScrollBar::Listener
 {
 public:
     PianoRoll (ProjectDocument&, EngineHost&, juce::ValueTree clip);
@@ -45,14 +45,19 @@ private:
     double scrollT = 0.0;       // seconds (timeline) at the grid's left edge
     float keyH = 12.0f;         // pixels per semitone
     float topPitch = 84.0f;     // pitch at the top of the grid
-    static constexpr int toolbarH = 36, rulerH = 20, keysW = 56, velH = 72;
+    static constexpr int toolbarH = 36, rulerH = 20, keysW = 56, velH = 72, sbW = 12;
+    juce::ScrollBar hbar { false }, vbar { true };
+    double lastPlayhead = -1.0;
+    int flashTicks = 0;              // info shows a message (e.g. after Quantize) for a moment
+    int velTip = -1;                 // velocity drag: value shown by the cursor
+    juce::Point<float> velTipPos;
 
     juce::TextButton drawButton { "Draw" }, quantizeButton { "Quantize" }, zoomIn { "+" }, zoomOut { "-" }, fitButton { "Fit" };
     juce::ComboBox gridBox, lengthBox;
     juce::Label gridLabel, lengthLabel, info;
 
     // gesture
-    enum class Drag { none, move, resize, marquee, velocity, draw, keyboard } drag = Drag::none;
+    enum class Drag { none, move, resize, marquee, velocity, draw, keyboard, scrub } drag = Drag::none;
     struct Orig { double start, length; int pitch, velocity; };
     std::vector<Orig> origs;
     int anchor = -1;
@@ -65,6 +70,10 @@ private:
     juce::Rectangle<int> gridArea() const;
     juce::Rectangle<int> velArea() const;
     juce::Rectangle<int> keysArea() const;
+    juce::Rectangle<int> rulerArea() const;
+    void updateScrollBars();
+    void scrollBarMoved (juce::ScrollBar*, double newRangeStart) override;
+    void flash (const juce::String&);
     float xFor (double t) const;
     double timeFor (float x) const;
     float yFor (int pitch) const;        // top of the pitch row

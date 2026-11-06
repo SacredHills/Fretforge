@@ -134,10 +134,17 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     static constexpr int markerLane = 18;
+    static constexpr int loopLane = 14;   // the loop bar's strip at the top
+    void mouseMove (const juce::MouseEvent&) override;
 private:
     ArrangeView& owner;
     double dragStart = -1.0;
     juce::ValueTree markerAt (float x) const;
+    // loop bar (like Studio One): drag the bar to move it, its ends to resize it, the empty strip to draw a new one
+    enum class LoopDrag { none, move, left, right, draw } loopDrag = LoopDrag::none;
+    double loopA0 = 0.0, loopB0 = 0.0;
+    bool scrubbing = false;
+    LoopDrag loopHit (float x) const;
 };
 
 /** The Studio arrange window: toolbar, ruler, track headers and the clip timeline. */

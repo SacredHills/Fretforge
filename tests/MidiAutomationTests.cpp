@@ -41,8 +41,9 @@ struct PlaySource final : GraphMixer::Source
 };
 
 /** Renders `seconds` of the graph; returns the left channel. */
-std::vector<float> render (PlaybackGraph& g, double seconds, float constant = 0.0f)
+std::vector<float> render (PlaybackGraph& g, double seconds, float constant = 0.0f, double startAt = 0.0)
 {
+    const auto start = (juce::int64) (startAt * sr);
     GraphMixer m;
     m.prepare (256, sr);
     PlaySource src;
@@ -53,7 +54,7 @@ std::vector<float> render (PlaybackGraph& g, double seconds, float constant = 0.
     {
         std::fill (L.begin(), L.end(), 0.0f);
         std::fill (R.begin(), R.end(), 0.0f);
-        src.pos = p;
+        src.pos = start + p;
         m.mix (g, src, L.data(), R.data(), 256);
         out.insert (out.end(), L.begin(), L.end());
     }
@@ -176,17 +177,34 @@ public:
                 auto t = tl::createBusTrack ("Keys", 0, tl::TrackKind::instrument);
                 tracks.appendChild (t, nullptr);
                 const bool drums = juce::String (id).contains ("drum");
-                t.appendChild (mc::createMidiClip ("c", 0.0, { { 0.25, 0.3, drums ? 38 : 57, 120 } }), nullptr);
+                t.appendChild (mc::createMidiClip ("c", 0.0, { { 0.0, 0.1, drums ? 36 : 48, 120 }, { 0.25, 0.3, drums ? 38 : 57, 120 } }), nullptr);
                 GraphBuildOptions o;
                 o.sampleRate = sr;
                 o.instrumentFor = [&] (const juce::ValueTree&) { return builtinInstrument (id); };
                 auto g = buildPlaybackGraph (tracks, noBundle, cache, o);
-                expectEquals ((int) g->tracks[0].midiEvents.size(), 2, id);
+                expectEquals ((int) g->tracks[0].midiEvents.size(), 4, id);
                 const auto out = render (*g, 2.0);
-                expect (peak (out, 0.0, 0.249) < 1.0e-6f, "silent before the note");
+                expect (peak (out, 0.0, 0.05) > 0.02f, juce::String (id) + ": the very first note (at 0) sounds");
                 expect (peak (out, 0.25, 0.4) > 0.02f, juce::String (id) + " sounds: " + juce::String (peak (out, 0.25, 0.4)));
                 expect (peak (out, 1.8, 2.0) < peak (out, 0.25, 0.4) * 0.05f, "and stops after the note");
             }
+        }
+
+        beginTest ("starting inside a held note plays it (note chase)");
+        {
+            juce::ValueTree tracks ("TRACKS");
+            auto t = tl::createBusTrack ("Keys", 0, tl::TrackKind::instrument);
+            tracks.appendChild (t, nullptr);
+            t.appendChild (mc::createMidiClip ("c", 0.0, { { 0.0, 1.5, 60, 120 } }), nullptr);
+            GraphBuildOptions o;
+            o.sampleRate = sr;
+            o.instrumentFor = [&] (const juce::ValueTree&) { return builtinInstrument ("fretforge:synth"); };
+            auto g = buildPlaybackGraph (tracks, noBundle, cache, o);
+            const auto out = render (*g, 1.0, 0.0f, 0.4);
+            expect (peak (out, 0.0, 0.05) > 0.02f, "the held note sounds from the start point");
+            auto g2 = buildPlaybackGraph (tracks, noBundle, cache, o);
+            const auto late = render (*g2, 0.5, 0.0f, 1.6);
+            expect (peak (late, 0.1, 0.5) < 0.001f, "a note that has ended is not chased");
         }
 
         beginTest ("volume, pan and plugin automation");

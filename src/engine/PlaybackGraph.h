@@ -43,7 +43,7 @@ struct PlayTrack
 
     // instrument tracks
     std::shared_ptr<fx::InstrumentSlot> instrument;
-    struct MidiEvent { juce::int64 pos; juce::uint8 b0, b1, b2; };
+    struct MidiEvent { juce::int64 pos; juce::uint8 b0, b1, b2; juce::int64 end = 0; };   // end: a note-on's note-off position
     std::vector<MidiEvent> midiEvents;        // from the MIDI clips, timeline samples, sorted
     juce::MidiBuffer midiBuffer;              // this block's events (space reserved at build)
 

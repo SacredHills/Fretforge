@@ -21,11 +21,13 @@ PianoRoll::PianoRoll (ProjectDocument& d, EngineHost& h, juce::ValueTree c) : do
     setWantsKeyboardFocus (true);
     for (int i = 0; i < (int) std::size (gridNames); ++i) gridBox.addItem (gridNames[i], i + 1);
     gridBox.setSelectedId (5, juce::dontSendNotification);   // 1/16
-    gridBox.onChange = [this] { repaint(); };
+    gridBox.onChange = [this] { flashTicks = 0; updateInfo(); repaint(); };
     for (int i = 0; i < (int) std::size (lengthNames); ++i) lengthBox.addItem (lengthNames[i], i + 1);
     lengthBox.setSelectedId (1, juce::dontSendNotification);
     gridLabel.setText ("Grid", juce::dontSendNotification);
-    lengthLabel.setText ("New notes", juce::dontSendNotification);
+    lengthLabel.setText ("Length", juce::dontSendNotification);
+    lengthBox.setTooltip ("Length of the notes you add (Draw tool or double-click). Grid: one grid step.");
+    gridBox.setTooltip ("Grid: where notes snap when you add, move or resize them (hold Alt to place freely), and what Quantize moves notes onto");
     for (auto* l : { &gridLabel, &lengthLabel, &info })
     {
         l->setColour (juce::Label::textColourId, palette::textDim);
@@ -45,6 +47,13 @@ PianoRoll::PianoRoll (ProjectDocument& d, EngineHost& h, juce::ValueTree c) : do
         c2->setWantsKeyboardFocus (false);
         addAndMakeVisible (c2);
     }
+    for (auto* sb : { &hbar, &vbar })
+    {
+        sb->setAutoHide (false);
+        sb->addListener (this);
+        sb->setWantsKeyboardFocus (false);
+        addAndMakeVisible (sb);
+    }
     clip.addListener (this);
     load();
     startTimerHz (30);
@@ -60,15 +69,49 @@ PianoRoll::~PianoRoll()
 
 juce::Rectangle<int> PianoRoll::gridArea() const
 {
-    return getLocalBounds().withTrimmedTop (toolbarH + rulerH).withTrimmedLeft (keysW).withTrimmedBottom (velH);
+    return getLocalBounds().withTrimmedTop (toolbarH + rulerH).withTrimmedLeft (keysW).withTrimmedBottom (velH + sbW).withTrimmedRight (sbW);
 }
 juce::Rectangle<int> PianoRoll::velArea() const
 {
-    return getLocalBounds().removeFromBottom (velH).withTrimmedLeft (keysW).withTrimmedTop (4);
+    return getLocalBounds().withTrimmedBottom (sbW).removeFromBottom (velH).withTrimmedLeft (keysW).withTrimmedRight (sbW).withTrimmedTop (4);
 }
 juce::Rectangle<int> PianoRoll::keysArea() const
 {
-    return getLocalBounds().withTrimmedTop (toolbarH + rulerH).withTrimmedBottom (velH).removeFromLeft (keysW);
+    return getLocalBounds().withTrimmedTop (toolbarH + rulerH).withTrimmedBottom (velH + sbW).removeFromLeft (keysW);
+}
+juce::Rectangle<int> PianoRoll::rulerArea() const
+{
+    return { keysW, toolbarH, getWidth() - keysW - sbW, rulerH };
+}
+
+void PianoRoll::updateScrollBars()
+{
+    const auto g = gridArea();
+    if (g.getWidth() <= 0 || g.getHeight() <= 0) return;
+    const double view = g.getWidth() / pps;
+    double end = clipEnd();
+    for (auto& n : notes) end = juce::jmax (end, absStart (n) + n.length);
+    end += 4.0 * quarterSec() * juce::jmax (1, doc.tsNum());
+    const double lo = juce::jmin (0.0, scrollT), hi = juce::jmax (end, scrollT + view);
+    hbar.setRangeLimits (lo, hi, juce::dontSendNotification);
+    hbar.setCurrentRange (scrollT, view, juce::dontSendNotification);
+    const double rows = g.getHeight() / (double) keyH;
+    vbar.setRangeLimits (0.0, 128.0, juce::dontSendNotification);
+    vbar.setCurrentRange (127.0 - topPitch, rows, juce::dontSendNotification);
+}
+
+void PianoRoll::scrollBarMoved (juce::ScrollBar* sb, double start)
+{
+    if (sb == &hbar) scrollT = start;
+    else topPitch = (float) (127.0 - start);
+    repaint();
+}
+
+void PianoRoll::flash (const juce::String& message)
+{
+    info.setText (message, juce::dontSendNotification);
+    info.setColour (juce::Label::textColourId, palette::accent);
+    flashTicks = 75;   // 2.5 s at 30 Hz
 }
 float PianoRoll::xFor (double t) const { return (float) gridArea().getX() + (float) ((t - scrollT) * pps); }
 double PianoRoll::timeFor (float x) const { return scrollT + (x - (float) gridArea().getX()) / pps; }
@@ -149,6 +192,8 @@ void PianoRoll::commit (const juce::String& undoName)
 
 void PianoRoll::updateInfo()
 {
+    if (flashTicks > 0) return;
+    info.setColour (juce::Label::textColourId, palette::textDim);
     const int s = numSelected();
     juce::String t = juce::String ((int) notes.size()) + " notes";
     if (s > 0)
@@ -179,16 +224,27 @@ void PianoRoll::stopAudition()
 
 void PianoRoll::quantize()
 {
-    if (gridSec() <= 0.0 || notes.empty()) return;
+    if (notes.empty()) { flash ("No notes to quantize"); return; }
+    if (gridSec() <= 0.0) { flash ("Grid is Off: pick a grid (e.g. 1/16) to quantize to"); return; }
     const bool any = numSelected() > 0;
+    int moved = 0, count = 0;
     for (size_t i = 0; i < notes.size(); ++i)
         if (! any || selected[i])
         {
             auto& n = notes[i];
+            ++count;
             const double a = snap (absStart (n), true);
-            n.start = a - clipStart() + offset();
+            const double s = a - clipStart() + offset();
+            if (std::abs (s - n.start) > 1.0e-5) { n.start = s; ++moved; }
         }
+    const auto gridName = gridBox.getText();
+    if (moved == 0)
+    {
+        flash (juce::String (any ? "The selected notes are" : "All notes are") + " already on the " + gridName + " grid");
+        return;
+    }
     commit ("Quantize notes");
+    flash ("Quantized " + juce::String (moved) + " of " + juce::String (count) + " notes to " + gridName);
 }
 
 void PianoRoll::deleteSelected()
@@ -235,6 +291,7 @@ void PianoRoll::fit()
 
 void PianoRoll::paint (juce::Graphics& g)
 {
+    updateScrollBars();
     g.fillAll (palette::bg);
     const auto grid = gridArea();
     const auto keys = keysArea();
@@ -252,9 +309,12 @@ void PianoRoll::paint (juce::Graphics& g)
         {
             const float y = yFor (p);
             if (y > (float) grid.getBottom() || y + keyH < (float) grid.getY()) continue;
-            g.setColour (isBlackKey (p) ? palette::bg.darker (0.25f) : palette::bg.brighter (0.03f));
+            g.setColour (isBlackKey (p) ? palette::bg.darker (0.45f) : palette::bg.brighter (0.07f));
             g.fillRect ((float) grid.getX(), y, (float) grid.getWidth(), keyH);
-            if (p % 12 == 0) { g.setColour (palette::outline); g.drawHorizontalLine ((int) (y + keyH), (float) grid.getX(), (float) grid.getRight()); }
+            // a line under every row; stronger between E / F and at each octave (under C)
+            const int k = p % 12;
+            g.setColour (k == 0 ? juce::Colours::white.withAlpha (0.22f) : k == 5 ? juce::Colours::white.withAlpha (0.12f) : juce::Colours::black.withAlpha (0.5f));
+            g.drawHorizontalLine ((int) (y + keyH), (float) grid.getX(), (float) grid.getRight());
         }
         // outside the clip: darker
         const float cx0 = xFor (clipStart()), cx1 = xFor (clipEnd());
@@ -262,22 +322,25 @@ void PianoRoll::paint (juce::Graphics& g)
         g.fillRect (juce::Rectangle<float> ((float) grid.getX(), (float) grid.getY(), cx0 - (float) grid.getX(), (float) grid.getHeight()));
         g.fillRect (juce::Rectangle<float> (cx1, (float) grid.getY(), (float) grid.getRight() - cx1, (float) grid.getHeight()));
 
-        // bars, beats, grid
+        // grid: a line at every grid step (bars strongest, then beats, then the rest); alternate bars shaded
         const double q = quarterSec();
         const int num = juce::jmax (1, doc.tsNum()), den = juce::jmax (1, doc.tsDen());
         const double beat = q * 4.0 / den, bar = beat * num;
         const double t0 = timeFor ((float) grid.getX()), t1 = timeFor ((float) grid.getRight());
-        const double gs = gridSec();
-        if (gs > 0.0 && gs * pps > 5.0)
-            for (double t = std::floor (t0 / gs) * gs; t < t1; t += gs)
+        for (auto b = (juce::int64) std::floor (t0 / bar); (double) b * bar < t1; ++b)
+            if ((b & 1) != 0)
             {
-                g.setColour (palette::outline.withAlpha (0.25f));
-                g.drawVerticalLine ((int) xFor (t), (float) grid.getY(), (float) grid.getBottom());
+                g.setColour (juce::Colours::white.withAlpha (0.025f));
+                g.fillRect (juce::Rectangle<float> (xFor ((double) b * bar), (float) grid.getY(), (float) (bar * pps), (float) grid.getHeight()));
             }
-        for (double t = std::floor (t0 / beat) * beat; t < t1; t += beat)
+        double step = gridSec() > 0.0 ? gridSec() : beat;
+        while (step * pps < 6.0 && step < bar) step = step < beat ? beat : bar;   // too dense to draw: coarser lines
+        const auto onMultiple = [] (double t, double m) { return std::abs (std::remainder (t, m)) < 1.0e-6; };
+        for (auto k = (juce::int64) std::floor (t0 / step); (double) k * step < t1; ++k)
         {
-            const bool isBar = std::abs (std::remainder (t, bar)) < 1.0e-6;
-            g.setColour (palette::outline.withAlpha (isBar ? 0.9f : 0.5f));
+            const double t = (double) k * step;
+            const bool isBar = onMultiple (t, bar), isBeat = onMultiple (t, beat);
+            g.setColour (juce::Colours::white.withAlpha (isBar ? 0.42f : isBeat ? 0.2f : 0.08f));
             g.drawVerticalLine ((int) xFor (t), (float) grid.getY(), (float) grid.getBottom());
         }
 
@@ -331,29 +394,46 @@ void PianoRoll::paint (juce::Graphics& g)
         }
         g.setColour (palette::accent.withAlpha (0.5f));
         g.fillRect (juce::Rectangle<float> (xFor (clipStart()), (float) ruler.getBottom() - 3.0f, xFor (clipEnd()) - xFor (clipStart()), 3.0f));
+        // playhead marker (click or drag in the ruler to move it)
+        const float px = xFor (host.engine.getPositionSeconds());
+        juce::Path tri;
+        tri.addTriangle (px - 6.0f, (float) ruler.getY() + 6.0f, px + 6.0f, (float) ruler.getY() + 6.0f, px, (float) ruler.getBottom());
+        g.setColour (palette::accent);
+        g.fillPath (tri);
     }
 
     // keyboard
     {
         juce::Graphics::ScopedSaveState ss (g);
         g.reduceClipRegion (keys);
+        // white keys first (each spans its row plus half of a neighbouring black key's), then the black keys over them
+        g.setColour (juce::Colour (0xff15171a));
+        g.fillRect (keys);
         for (int p = 127; p >= 0; --p)
         {
-            const float y = yFor (p);
-            if (y > (float) keys.getBottom() || y + keyH < (float) keys.getY()) continue;
-            const bool black = isBlackKey (p);
-            auto r = juce::Rectangle<float> ((float) keys.getX(), y, (float) keys.getWidth(), keyH);
-            g.setColour (p == keyboardNote ? palette::accent : black ? juce::Colour (0xff22252a) : juce::Colour (0xffd9dde2));
-            g.fillRect (black ? r.withWidth (r.getWidth() * 0.62f) : r);
-            if (black && p != keyboardNote) { g.setColour (juce::Colour (0xffd9dde2)); g.fillRect (r.withTrimmedLeft (r.getWidth() * 0.62f)); }
-            g.setColour (juce::Colours::black.withAlpha (0.25f));
-            g.drawHorizontalLine ((int) (y + keyH), r.getX(), r.getRight());
+            if (isBlackKey (p)) continue;
+            float top = yFor (p), bottom = top + keyH;
+            if (p < 127 && isBlackKey (p + 1)) top -= keyH * 0.5f;
+            if (p > 0 && isBlackKey (p - 1)) bottom += keyH * 0.5f;
+            if (top > (float) keys.getBottom() || bottom < (float) keys.getY()) continue;
+            auto r = juce::Rectangle<float> ((float) keys.getX(), std::round (top), (float) keys.getWidth() - 1.0f, std::round (bottom) - std::round (top) - 1.0f);
+            g.setColour (p == keyboardNote ? palette::accent : juce::Colour (0xffe4e7eb));
+            g.fillRect (r);
             if (p % 12 == 0 && keyH >= 7.0f)
             {
-                g.setColour (juce::Colours::black);
+                g.setColour (juce::Colour (0xff30343a));
                 g.setFont (uiFont (juce::jmin (11.0f, keyH), true));
-                g.drawText (juce::MidiMessage::getMidiNoteName (p, true, true, 4), r.reduced (3.0f, 0.0f), juce::Justification::centredRight);
+                g.drawText (juce::MidiMessage::getMidiNoteName (p, true, true, 4), r.reduced (3.0f, 0.0f).withTrimmedTop (r.getHeight() - keyH), juce::Justification::centredRight);
             }
+        }
+        for (int p = 127; p >= 0; --p)
+        {
+            if (! isBlackKey (p)) continue;
+            const float y = yFor (p);
+            if (y > (float) keys.getBottom() || y + keyH < (float) keys.getY()) continue;
+            const auto r = juce::Rectangle<float> ((float) keys.getX(), y + 0.5f, (float) keys.getWidth() * 0.62f, keyH - 1.0f);
+            g.setColour (p == keyboardNote ? palette::accent : juce::Colour (0xff1d2024));
+            g.fillRoundedRectangle (r, 1.5f);
         }
     }
 
@@ -378,6 +458,21 @@ void PianoRoll::paint (juce::Graphics& g)
             g.fillEllipse (x - 2.0f, (float) vel.getBottom() - h - 3.0f, 7.0f, 7.0f);
         }
     }
+
+    // velocity value by the cursor while dragging
+    if (velTip >= 0)
+    {
+        const juce::String t (velTip);
+        g.setFont (uiFont (12.0f, true));
+        auto r = juce::Rectangle<float> (velTipPos.x + 12.0f, velTipPos.y - 26.0f, 34.0f, 20.0f);
+        r = r.constrainedWithin (getLocalBounds().toFloat().reduced (2.0f));
+        g.setColour (juce::Colours::black.withAlpha (0.85f));
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (palette::accent);
+        g.drawRoundedRectangle (r, 4.0f, 1.0f);
+        g.setColour (juce::Colours::white);
+        g.drawText (t, r, juce::Justification::centred);
+    }
 }
 
 void PianoRoll::resized()
@@ -393,6 +488,9 @@ void PianoRoll::resized()
     zoomIn.setBounds (tb.removeFromRight (30)); tb.removeFromRight (2);
     zoomOut.setBounds (tb.removeFromRight (30)); tb.removeFromRight (10);
     info.setBounds (tb);
+    const auto grid = gridArea();
+    hbar.setBounds (keysW, getHeight() - sbW, getWidth() - keysW - sbW, sbW);
+    vbar.setBounds (grid.getRight(), grid.getY(), sbW, grid.getHeight());
 }
 
 // ------------------------------------------------------------------ mouse
@@ -404,7 +502,15 @@ void PianoRoll::mouseDown (const juce::MouseEvent& e)
     drag = Drag::none;
     changed = false;
     const bool snapOn = ! e.mods.isAltDown();
+    flashTicks = 0;
 
+    if (rulerArea().contains (e.getPosition()))   // set the play position
+    {
+        drag = Drag::scrub;
+        host.engine.locateSeconds (snap (timeFor (e.position.x), snapOn));
+        repaint();
+        return;
+    }
     if (keysArea().contains (e.getPosition()))
     {
         drag = Drag::keyboard;
@@ -495,6 +601,10 @@ void PianoRoll::mouseDrag (const juce::MouseEvent& e)
     const bool snapOn = ! e.mods.isAltDown();
     switch (drag)
     {
+        case Drag::scrub:
+            host.engine.locateSeconds (snap (timeFor (e.position.x), snapOn));
+            repaint();
+            break;
         case Drag::keyboard:
         {
             const int p = pitchFor (e.position.y);
@@ -542,6 +652,8 @@ void PianoRoll::mouseDrag (const juce::MouseEvent& e)
             const int delta = target - origs[(size_t) anchor].velocity;
             for (size_t i = 0; i < notes.size(); ++i)
                 if (selected[i]) notes[i].velocity = juce::jlimit (1, 127, origs[i].velocity + delta);
+            velTip = notes[(size_t) anchor].velocity;
+            velTipPos = e.position;
             commit();
             break;
         }
@@ -563,6 +675,7 @@ void PianoRoll::mouseUp (const juce::MouseEvent&)
 {
     stopAudition();
     marquee = {};
+    velTip = -1;
     drag = Drag::none;
     repaint();
 }
@@ -571,6 +684,8 @@ void PianoRoll::mouseMove (const juce::MouseEvent& e)
 {
     bool edge = false;
     const int hit = gridArea().contains (e.getPosition()) ? noteAt (e.position, edge) : -1;
+    if (rulerArea().contains (e.getPosition())) { setMouseCursor (juce::MouseCursor::PointingHandCursor); return; }
+    if (velArea().contains (e.getPosition())) { setMouseCursor (juce::MouseCursor::UpDownResizeCursor); return; }
     setMouseCursor (hit >= 0 ? (edge ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::DraggingHandCursor)
                              : drawButton.getToggleState() && gridArea().contains (e.getPosition()) ? juce::MouseCursor::CrosshairCursor
                                                                                                    : juce::MouseCursor::NormalCursor);
@@ -647,7 +762,17 @@ void PianoRoll::timerCallback()
 {
     if (! fitted && isShowing() && gridArea().getWidth() > 200 && gridArea().getHeight() > 100) { fitted = true; fit(); }
     if (! clip.getParent().isValid()) { stopTimer(); if (onClipGone) onClipGone(); return; }
-    if (host.engine.isPlaying()) repaint (gridArea());
+    if (flashTicks > 0 && --flashTicks == 0) updateInfo();
+    const double ph = host.engine.getPositionSeconds();
+    if (ph != lastPlayhead)
+    {
+        lastPlayhead = ph;
+        // keep the playhead in view while playing
+        const double view = gridArea().getWidth() / pps;
+        if (host.engine.isPlaying() && drag == Drag::none && (ph > scrollT + view * 0.95 || ph < scrollT))
+            scrollT = ph - view * 0.05;
+        repaint();
+    }
 }
 
 void PianoRoll::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier&)

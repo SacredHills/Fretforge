@@ -366,8 +366,14 @@ void Ruler::paint (juce::Graphics& g)
     auto t = owner.doc.transport();
     const float lx0 = geo.xFor (prop (t, pids::loopStart)), lx1 = geo.xFor (prop (t, pids::loopEnd));
     const bool loopOn = (bool) t[pids::loopEnabled];
-    g.setColour ((loopOn ? palette::accent : palette::textDim).withAlpha (loopOn ? 0.55f : 0.25f));
-    g.fillRect (juce::Rectangle<float> (lx0, 2.0f, lx1 - lx0, 8.0f));
+    {
+        auto bar = juce::Rectangle<float> (lx0, 2.0f, juce::jmax (4.0f, lx1 - lx0), (float) loopLane - 3.0f);
+        g.setColour ((loopOn ? palette::accent : palette::textDim).withAlpha (loopOn ? 0.75f : 0.35f));
+        g.fillRoundedRectangle (bar, 3.0f);
+        g.setColour (loopOn ? palette::accent.brighter (0.4f) : palette::textDim);
+        g.fillRect (bar.withWidth (3.0f));                              // drag handles
+        g.fillRect (bar.withX (bar.getRight() - 3.0f).withWidth (3.0f));
+    }
     if ((bool) t[pids::punchEnabled])
     {
         g.setColour (palette::bad);
@@ -390,7 +396,7 @@ void Ruler::paint (juce::Graphics& g)
         g.setColour (palette::textDim);
         g.drawVerticalLine ((int) x, (float) r.getBottom() - 14.0f, (float) r.getBottom());
         if (b % labelEvery == 0)
-            g.drawText (juce::String (b + 1), (int) x + 3, r.getY() + 10, 40, 14, juce::Justification::left);
+            g.drawText (juce::String (b + 1), (int) x + 3, r.getY() + loopLane, 40, 14, juce::Justification::left);
         if (beat * geo.pixelsPerSecond > 8.0)
             for (int k = 1; k < geo.tsNum; ++k)
             {
@@ -452,34 +458,90 @@ void Ruler::mouseDown (const juce::MouseEvent& e)
         owner.locate (prop (m, ids::time));
         return;
     }
-    dragStart = owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown());
+    loopDrag = LoopDrag::none;
+    scrubbing = false;
+    auto tr = owner.doc.transport();
+    if (e.y < loopLane)
+    {
+        loopDrag = loopHit ((float) e.x);
+        loopA0 = prop (tr, pids::loopStart);
+        loopB0 = prop (tr, pids::loopEnd);
+        dragStart = owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown());
+        owner.doc.undo().beginNewTransaction ("Loop range");
+        return;
+    }
+    // the bar numbers: click or drag to move the playhead (never touches the loop)
+    scrubbing = true;
+    owner.locate (owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown()));
+}
+
+Ruler::LoopDrag Ruler::loopHit (float x) const
+{
+    auto tr = owner.doc.transport();
+    const float a = owner.geo.xFor (prop (tr, pids::loopStart)), b = owner.geo.xFor (prop (tr, pids::loopEnd));
+    const float edge = juce::jmin (7.0f, (b - a) * 0.3f);
+    if (std::abs (x - a) <= edge) return LoopDrag::left;
+    if (std::abs (x - b) <= edge) return LoopDrag::right;
+    if (x > a && x < b) return LoopDrag::move;
+    return LoopDrag::draw;
+}
+
+void Ruler::mouseMove (const juce::MouseEvent& e)
+{
+    if (e.y >= loopLane) { setMouseCursor (juce::MouseCursor::NormalCursor); return; }
+    const auto h = loopHit ((float) e.x);
+    setMouseCursor (h == LoopDrag::left || h == LoopDrag::right ? juce::MouseCursor::LeftRightResizeCursor
+                    : h == LoopDrag::move ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
 void Ruler::mouseDrag (const juce::MouseEvent& e)
 {
-    if (dragStart < 0.0 || e.getDistanceFromDragStartX() == 0 || std::abs (e.getDistanceFromDragStartX()) < 4)
+    const bool snapOn = ! e.mods.isAltDown();
+    if (scrubbing)
+    {
+        owner.locate (owner.geo.snap (owner.geo.timeFor ((float) e.x), snapOn));
         return;
-    const double t = owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown());
+    }
+    if (loopDrag == LoopDrag::none || std::abs (e.getDistanceFromDragStartX()) < 3) return;
     auto tr = owner.doc.transport();
-    const double a = juce::jmin (dragStart, t), b = juce::jmax (dragStart, t);
-    if (b - a < 0.01) return;
-    if (! e.mouseWasDraggedSinceMouseDown() || owner.doc.undo().getCurrentTransactionName() != "Set loop range")
-        owner.doc.undo().beginNewTransaction ("Set loop range");
+    const double minLen = juce::jmax (0.05, owner.geo.gridSec() > 0.0 ? owner.geo.gridSec() : 0.05);
+    double a = loopA0, b = loopB0;
+    const double t = owner.geo.snap (owner.geo.timeFor ((float) e.x), snapOn);
+    switch (loopDrag)
+    {
+        case LoopDrag::move:
+        {
+            const double d = owner.geo.snap (loopA0 + (t - dragStart), snapOn) - loopA0;
+            a = juce::jmax (0.0, loopA0 + d);
+            b = a + (loopB0 - loopA0);
+            break;
+        }
+        case LoopDrag::left: a = juce::jlimit (0.0, loopB0 - minLen, t); break;
+        case LoopDrag::right: b = juce::jmax (loopA0 + minLen, t); break;
+        case LoopDrag::draw: a = juce::jmin (dragStart, t); b = juce::jmax (dragStart, t); if (b - a < minLen) return; break;
+        case LoopDrag::none: return;
+    }
     owner.doc.set (tr, pids::loopStart, a);
     owner.doc.set (tr, pids::loopEnd, b);
-    owner.doc.set (tr, pids::loopEnabled, true);
     repaint();
 }
 
-void Ruler::mouseUp (const juce::MouseEvent& e)
+void Ruler::mouseUp (const juce::MouseEvent&)
 {
-    if (dragStart >= 0.0 && std::abs (e.getDistanceFromDragStartX()) < 4 && e.y < getHeight() - markerLane)
-        owner.locate (owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown()));
     dragStart = -1.0;
+    loopDrag = LoopDrag::none;
+    scrubbing = false;
 }
 
 void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    if (e.y < loopLane && loopHit ((float) e.x) != LoopDrag::draw)   // double-click the loop bar: loop on / off
+    {
+        auto tr = owner.doc.transport();
+        owner.doc.undo().beginNewTransaction ("Loop on / off");
+        owner.doc.set (tr, pids::loopEnabled, ! (bool) tr[pids::loopEnabled]);
+        return;
+    }
     if (e.y >= getHeight() - markerLane && ! markerAt ((float) e.x).isValid())
     {
         owner.doc.undo().beginNewTransaction ("Add marker");
