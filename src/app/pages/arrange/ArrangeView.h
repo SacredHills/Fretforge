@@ -5,6 +5,9 @@
 #include "../../SessionController.h"
 #include "../../Widgets.h"
 #include "core/Timeline.h"
+#include "core/MidiClip.h"
+#include "core/Automation.h"
+#include <map>
 
 namespace ff
 {
@@ -46,6 +49,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void tickMeter();
     void refreshInputs();
+    void refreshAutomation();
     juce::ValueTree track;
     int index;
 
@@ -54,7 +58,7 @@ private:
     juce::Label name;
     juce::TextButton arm { "R" }, mon { "I" }, mute { "M" }, solo { "S" };
     juce::ComboBox input;
-    juce::TextButton route;
+    juce::TextButton route, laneButton;   // laneButton: automation mode, which lane the track shows
     juce::Slider gain, pan;
     juce::Array<std::pair<int, bool>> inputValues;
     std::vector<std::pair<juce::ValueTree, double>> groupStart; // other selected tracks' values at drag start
@@ -100,9 +104,22 @@ private:
     int dropX = -1, dropY = -1;
 
     Mode modeAt (const juce::ValueTree& clip, juce::Point<float> p) const;
+    const std::vector<midiclip::Note>& cachedNotes (const juce::ValueTree& clip);
+    std::map<juce::String, std::pair<juce::String, std::vector<midiclip::Note>>> noteCache;
     void drawClip (juce::Graphics&, const juce::ValueTree& clip, juce::Rectangle<float> r, juce::Colour colour, bool selected);
     void showClipMenu (juce::ValueTree clip);
     void showLaneMenu (int trackIndex, double time);
+
+    // automation mode: points of the lane each track shows
+    juce::ValueTree autoLane;
+    int autoTrack = -1, autoPoint = -1;
+    std::vector<automation::Point> autoPts;
+    bool autoMouseDown (const juce::MouseEvent&);
+    void autoMouseDrag (const juce::MouseEvent&);
+    juce::Rectangle<float> laneRect (int trackIndex) const;
+    juce::Point<float> pointPos (const juce::String& param, const automation::Point&, juce::Rectangle<float> row) const;
+    int pointAt (juce::Point<float>, const std::vector<automation::Point>&, const juce::String& param, juce::Rectangle<float> row) const;
+    void drawAutomation (juce::Graphics&);
 };
 
 class Ruler : public juce::Component
@@ -185,8 +202,13 @@ private:
     juce::OwnedArray<TrackHeader> headers;
     juce::ScrollBar hScroll { false }, vScroll { true };
     juce::TextButton addTrackButton { "+ Track" }, importButton { "Import" }, zoomInButton { "+" }, zoomOutButton { "-" },
-        fitButton { "Fit" }, followButton { "Follow" }, sliceButton { "Slice" };
+        fitButton { "Fit" }, followButton { "Follow" }, sliceButton { "Slice" }, autoButton { "Automation" };
 public:
+    /** Automation mode: tracks show an automation lane (volume, pan, plugin parameters) over their clips. */
+    bool automationMode() const { return autoButton.getToggleState(); }
+    juce::String laneParamFor (const juce::ValueTree& track) const;
+    juce::String laneLabel (const juce::ValueTree& track, const juce::String& param) const;
+    void showLaneChooser (juce::ValueTree track, juce::Component* target);
     bool sliceMode() const { return sliceButton.getToggleState(); }
     void setSliceMode (bool on) { sliceButton.setToggleState (on, juce::sendNotificationSync); }
     /** Splits the clips at time t (seconds). */

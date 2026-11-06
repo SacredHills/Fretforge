@@ -35,9 +35,16 @@ juce::ValueTree createMarker (const juce::String& name, double time);
 
 /** Audio tracks hold clips and record; bus tracks mix the tracks routed to them; FX (return) tracks are fed
     by sends. All three can have an amp rig and plugins, a fader and pan, and an output. */
-enum class TrackKind { audio, bus, fx };
+enum class TrackKind { audio, bus, fx, instrument };
 TrackKind kindOf (const juce::ValueTree& track);
 inline bool isAudioTrack (const juce::ValueTree& t) { return kindOf (t) == TrackKind::audio; }
+/** Instrument tracks hold MIDI clips played by their instrument plugin. */
+inline bool isInstrumentTrack (const juce::ValueTree& t) { return kindOf (t) == TrackKind::instrument; }
+/** Audio and instrument tracks make sound of their own; bus and FX tracks mix what is routed to them. */
+inline bool isSourceKind (TrackKind k) { return k == TrackKind::audio || k == TrackKind::instrument; }
+inline bool isSourceTrack (const juce::ValueTree& t) { return isSourceKind (kindOf (t)); }
+/** Whether a clip may live on a track: audio clips on audio tracks, MIDI clips on instrument tracks. */
+bool acceptsClip (const juce::ValueTree& track, const juce::ValueTree& clip);
 juce::String kindName (TrackKind);
 juce::ValueTree createBusTrack (const juce::String& name, int paletteIndex, TrackKind kind);
 juce::ValueTree findTrack (const juce::ValueTree& tracks, const juce::String& id);

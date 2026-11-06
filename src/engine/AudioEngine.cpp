@@ -29,6 +29,7 @@ AudioEngine::AudioEngine()
     analysis.prepare (1 << 18);
     retired.prepare (1024);
     retiredTabs.prepare (256);
+    liveMidiIn.prepare (1024);
     pendingSamples.prepare (128);
     retiredSamples.prepare (256);
 }
@@ -298,6 +299,26 @@ struct AudioEngine::Segment final : GraphMixer::Source
     bool fill (int, PlayTrack& t, float* sL, float* sR, int len) noexcept override
     {
         auto& meter = e.trackMeters[(size_t) juce::jlimit (0, timeline::maxTracks - 1, t.meterSlot)];
+        if (! t.lanes.empty() || t.instrument != nullptr)   // automation, and the MIDI of instrument tracks
+        {
+            BlockTiming bt;
+            bt.from = e.pos + readAhead (t);
+            bt.rolling = rolling;
+            bt.looping = e.segLooping;
+            bt.loopStart = e.segLoopStart;
+            bt.loopEnd = e.segLoopEnd;
+            const double sr = e.sampleRate.load (std::memory_order_relaxed);
+            bt.timeSec = sr > 0 ? (double) e.pos / sr : 0.0;
+            prepareTrackBlock (t, bt, len);
+        }
+        if (t.kind == timeline::TrackKind::instrument)
+        {
+            if (t.instrument != nullptr && (t.armed || t.monitor) && offset == 0)   // MIDI keyboard
+                for (int i = 0; i < e.liveMidiCount; ++i)
+                    t.midiBuffer.addEvent (e.liveMidiBlock[(size_t) i].b, e.liveMidiBlock[(size_t) i].size, 0);
+            if (! t.audible) meter.rms.store (0.0f, std::memory_order_relaxed);
+            return t.audible;
+        }
         if (t.kind != timeline::TrackKind::audio)
         {
             if (! t.audible) meter.rms.store (0.0f, std::memory_order_relaxed);
@@ -384,6 +405,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         tabNeedsSeek = tabNeedsSeekClicks = true;
     }
     const bool tab = tabMode.load();
+    liveMidiCount = liveMidiIn.pop (liveMidiBlock.data(), (int) liveMidiBlock.size());
 
     // ---- transport commands ----
     const auto loc = locateRequest.exchange (-1);

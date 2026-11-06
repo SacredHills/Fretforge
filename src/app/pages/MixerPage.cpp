@@ -1,6 +1,7 @@
 #include "MixerPage.h"
 #include "core/Timeline.h"
 #include "core/ProjectFile.h"
+#include "core/MidiClip.h"
 
 namespace ff
 {
@@ -69,7 +70,12 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
     ampButton.setColour (juce::TextButton::buttonOnColourId, palette::accent);
     ampButton.setWantsKeyboardFocus (false);
     ampButton.setTooltip ("Neural Amp Modeler amp on this track: click to add / open it");
-    ampButton.onClick = [this] { session.addTrackRig (track); };
+    ampButton.onClick = [this] {
+        if (! isInstrumentTrack (track)) { session.addTrackRig (track); return; }
+        if (juce::ModifierKeys::currentModifiers.isPopupMenu() || track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isEmpty())
+            session.showInstrumentMenu (track, &ampButton);
+        else session.openInstrument (track);
+    };
     addAndMakeVisible (ampButton);
     ampPower.setTooltip ("Switch the NAM amp on / off");
     ampPower.onClick = [this] {
@@ -285,8 +291,13 @@ void ChannelStrip::refresh()
     solo.setToggleState ((bool) track[ids::solo], juce::dontSendNotification);
     arm.setToggleState ((bool) track[ids::armed], juce::dontSendNotification);
     ampButton.setToggleState (session.trackHasRig (track), juce::dontSendNotification);
-    arm.setVisible (isAudioTrack (track));
-    ampButton.setVisible (isAudioTrack (track));
+    arm.setVisible (isSourceTrack (track));
+    ampButton.setVisible (isSourceTrack (track));
+    if (isInstrumentTrack (track))
+    {
+        ampButton.setButtonText (session.instrumentName (track));
+        ampButton.setTooltip ("Instrument: click to open it, right-click to choose another");
+    }
     ampPower.setVisible (isAudioTrack (track) && session.trackHasRig (track));
     ampPower.setToggleState (! (bool) rig::find (track)[rig::ids::bypass], juce::dontSendNotification);
     routeList.repaint();
@@ -332,6 +343,7 @@ void ChannelStrip::showMenu()
     else m.addItem (10, "Add NAM amp...");
     m.addItem (12, "Add plugin...", session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
     m.addItem (13, "Output and sends...");
+    if (isInstrumentTrack (track)) { m.addItem (14, "Choose instrument..."); m.addItem (15, "Open instrument"); }
     m.addSeparator();
     m.addItem (4, "Duplicate track");
     m.addItem (5, "Delete track");
@@ -345,6 +357,8 @@ void ChannelStrip::showMenu()
         else if (r == 10) sc.addTrackRig (t);
         else if (r == 12) sc.showAddInsertMenu (t, safe.getComponent());
         else if (r == 13) sc.showRoutingMenu (t, safe.getComponent());
+        else if (r == 14) sc.showInstrumentMenu (t, safe.getComponent());
+        else if (r == 15) sc.openInstrument (t);
         else if (r == 11) sc.removeTrackRig (t);
         else if (r == 4) sc.duplicateTrack (t);
         else if (r == 5) sc.deleteTrack (t);   // destroys this strip
@@ -404,11 +418,11 @@ void ChannelStrip::resized()
     pan.setBounds (r.removeFromTop (40).withSizeKeepingCentre (40, 40));
     r.removeFromTop (6);
     auto buttons = r.removeFromTop (24);
-    const int w = buttons.getWidth() / (isAudioTrack (track) ? 3 : 2);
-    if (isAudioTrack (track)) arm.setBounds (buttons.removeFromLeft (w).reduced (1));
+    const int w = buttons.getWidth() / (isSourceTrack (track) ? 3 : 2);
+    if (isSourceTrack (track)) arm.setBounds (buttons.removeFromLeft (w).reduced (1));
     mute.setBounds (buttons.removeFromLeft (w).reduced (1));
     solo.setBounds (buttons.reduced (1));
-    if (isAudioTrack (track))
+    if (isSourceTrack (track))
     {
         auto row = r.removeFromTop (30).reduced (1, 4);
         if (session.trackHasRig (track)) ampPower.setBounds (row.removeFromRight (18));
@@ -428,7 +442,7 @@ void ChannelStrip::resized()
 int ChannelStrip::wantedFaderTop() const
 {
     const int ins = insertList.rowsWanted(), routes = routeList.rowsWanted();
-    return 44 + 40 + 6 + 24 + (isAudioTrack (track) ? 30 : 6) + ins * InsertList::rowHeight + (ins > 0 ? 6 : 0)
+    return 44 + 40 + 6 + 24 + (isSourceTrack (track) ? 30 : 6) + ins * InsertList::rowHeight + (ins > 0 ? 6 : 0)
            + routes * RouteList::rowHeight + 6;
 }
 

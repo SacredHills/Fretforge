@@ -99,6 +99,16 @@ public:
     // ---- media ----
     /** Copies files into the project's Audio folder and places clips on `track` from `atSec`. */
     juce::Result importFiles (const juce::Array<juce::File>& files, juce::ValueTree track, double atSec);
+    /** A MIDI file: one instrument track per MIDI track (drums get the Drum Kit, the rest the Basic Synth); the
+        project takes the file's tempo if it has no clips yet. */
+    juce::Result importMidi (const juce::File& file, double atSec);
+
+    // ---- instrument tracks ----
+    /** Menu of instruments (built-in, then your VST / AU instruments) for an instrument track. */
+    void showInstrumentMenu (juce::ValueTree track, juce::Component* target);
+    void setInstrument (juce::ValueTree track, const juce::String& descXml, const juce::String& name, const juce::String& state = {});
+    void openInstrument (juce::ValueTree track);
+    juce::String instrumentName (const juce::ValueTree& track) const;
 
     // ---- recording ----
     void toggleRecord();

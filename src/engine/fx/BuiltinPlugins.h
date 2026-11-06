@@ -15,6 +15,7 @@ struct Info
     const char* name;        // "EQ"
     const char* category;    // "EQ", "Dynamics", "Delay", "Modulation", "Reverb"
     const char* description;
+    bool instrument = false;   // a synth: MIDI in, audio out
 };
 const std::vector<Info>& all();
 const Info* find (const juce::String& id);

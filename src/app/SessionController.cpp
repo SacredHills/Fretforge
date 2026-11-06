@@ -1,6 +1,8 @@
 #include "SessionController.h"
 #include "plugins/PluginManager.h"
 #include "engine/fx/BuiltinPlugins.h"
+#include "core/MidiClip.h"
+#include "core/Automation.h"
 
 namespace ff
 {
@@ -218,7 +220,8 @@ void SessionController::setOnTracks (const juce::ValueTree& clicked, const juce:
 
 void SessionController::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier&)
 {
-    if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP) || node.hasType (ids::SEND) || node.hasType (rig::ids::RIG))
+    if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP) || node.hasType (ids::SEND) || node.hasType (rig::ids::RIG)
+        || node.hasType (automation::LANE) || node.hasType (midiclip::MIDI))
         triggerAsyncUpdate();
 }
 
@@ -395,6 +398,7 @@ void SessionController::rebuildGraphNow()
     };
     opt.insertsFor = [this] (const juce::ValueTree& t) { return rigBank->insertsForTrack (t[ids::id].toString()); };
     opt.masterInserts = rigBank->insertsForTrack (project::masterId);
+    opt.instrumentFor = [this] (const juce::ValueTree& t) { return rigBank->instrumentForTrack (t[ids::id].toString()); };
     host.engine.submitGraph (buildPlaybackGraph (doc.tracks(), doc.mediaBundle(), cache, opt));
 }
 
@@ -422,15 +426,24 @@ juce::ValueTree SessionController::addTrack (const juce::String& nameIn, int ins
     int sameKind = 1;
     for (auto x : tracks) sameKind += kindOf (x) == kind ? 1 : 0;
     const auto name = nameIn.isNotEmpty() ? nameIn
-                    : (kind == TrackKind::bus ? "Bus " : kind == TrackKind::fx ? "FX " : "Track ") + juce::String (sameKind);
+                    : (kind == TrackKind::bus ? "Bus " : kind == TrackKind::fx ? "FX " : kind == TrackKind::instrument ? "Instrument " : "Track ")
+                      + juce::String (sameKind);
     auto t = kind == TrackKind::audio ? createTrack (name, tracks.getNumChildren()) : createBusTrack (name, tracks.getNumChildren(), kind);
+    if (kind == TrackKind::instrument)   // starts with the built-in synth
+    {
+        juce::ValueTree in (midiclip::INSTRUMENT);
+        in.setProperty (rig::ids::desc, fx::builtin::descriptionXml ("fretforge:synth"), nullptr);
+        in.setProperty (rig::ids::name, "Basic Synth", nullptr);
+        t.appendChild (in, nullptr);
+    }
     if (kind == TrackKind::audio)
     {
         const auto inputs = host.activeInputChannelNames();
         t.setProperty (ids::inputChannel, inputs.isEmpty() ? -1 : 0, nullptr);
     }
     else t.setProperty (ids::inputChannel, -1, nullptr);
-    doc.undo().beginNewTransaction (kind == TrackKind::bus ? "Add bus" : kind == TrackKind::fx ? "Add FX track" : "Add track");
+    doc.undo().beginNewTransaction (kind == TrackKind::bus ? "Add bus" : kind == TrackKind::fx ? "Add FX track"
+                                    : kind == TrackKind::instrument ? "Add instrument track" : "Add track");
     tracks.addChild (t, insertIndex, &doc.undo());
     setSelectedTracks ({ t });
     return t;
@@ -442,11 +455,13 @@ void SessionController::showAddTrackMenu (juce::Component* target, int insertInd
     m.addItem (1, "Audio track");
     m.addItem (2, "Bus track (group tracks: route them to it)");
     m.addItem (3, "FX track (shared effect: send tracks to it)");
+    m.addItem (4, "Instrument track (MIDI with a synth / VST instrument)");
     juce::Component::SafePointer<juce::Component> safe (target);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, insertIndex] (int r) {
         if (r == 1) addTrack ({}, insertIndex);
         else if (r == 2) addTrack ({}, insertIndex, TrackKind::bus);
         else if (r == 3) addTrack ({}, insertIndex, TrackKind::fx);
+        else if (r == 4) addTrack ({}, insertIndex, TrackKind::instrument);
     });
 }
 
@@ -478,7 +493,7 @@ void SessionController::showRoutingMenu (juce::ValueTree track, juce::Component*
     juce::Array<juce::ValueTree> targets;
     for (auto t : tracks)
     {
-        if (t.hasType (ids::TRACK) && ! isAudioTrack (t) && t != track)
+        if (t.hasType (ids::TRACK) && ! isSourceTrack (t) && t != track)
         {
             targets.add (t);
             const bool ok = canRouteTo (tracks, track, t);
@@ -619,8 +634,107 @@ juce::StringArray SessionController::inputChoiceNames (juce::Array<std::pair<int
 
 // ------------------------------------------------------------------ import
 
-juce::Result SessionController::importFiles (const juce::Array<juce::File>& files, juce::ValueTree track, double atSec)
+juce::String SessionController::instrumentName (const juce::ValueTree& track) const
 {
+    const auto n = track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::name].toString();
+    return n.isNotEmpty() ? n : juce::String ("No instrument");
+}
+
+void SessionController::setInstrument (juce::ValueTree track, const juce::String& desc, const juce::String& name, const juce::String& state)
+{
+    auto in = track.getChildWithName (midiclip::INSTRUMENT);
+    doc.undo().beginNewTransaction ("Instrument " + name);
+    if (! in.isValid())
+    {
+        in = juce::ValueTree (midiclip::INSTRUMENT);
+        track.appendChild (in, &doc.undo());
+    }
+    in.setProperty (rig::ids::state, state, &doc.undo());
+    in.setProperty (rig::ids::name, name, &doc.undo());
+    in.setProperty (rig::ids::desc, desc, &doc.undo());
+}
+
+void SessionController::showInstrumentMenu (juce::ValueTree track, juce::Component* target)
+{
+    if (plugins == nullptr) return;
+    juce::PopupMenu m;
+    plugins->addToMenu (m, PluginManager::instrumentMenu);
+    m.addSeparator();
+    m.addItem (-2, "Scan for plugins / manage...");
+    juce::Component::SafePointer<juce::Component> safe (target);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track] (int r) {
+        if (r == 0) return;
+        if (r == -2) { plugins->showManager(); return; }
+        juce::String name;
+        const auto desc = plugins->descriptionForMenuResult (r, PluginManager::instrumentMenu, name);
+        if (desc.isNotEmpty()) setInstrument (track, desc, name);
+    });
+}
+
+void SessionController::openInstrument (juce::ValueTree track)
+{
+    if (plugins == nullptr) return;
+    if (auto p = rigBank->instrumentPlugin (track))
+        plugins->showEditor (p, track[ids::name].toString() + " - " + instrumentName (track));
+    else
+    {
+        const auto st = rigBank->instrumentStatus (track);
+        if (onError) onError ("Instrument", st.error.isNotEmpty() ? st.error : juce::String ("The instrument is still loading."));
+    }
+}
+
+juce::Result SessionController::importMidi (const juce::File& file, double atSec)
+{
+    const auto mf = midiclip::readMidiFile (file);
+    if (mf.error.isNotEmpty()) return juce::Result::fail (mf.error);
+    auto tracks = doc.tracks();
+    if (tracks.getNumChildren() + (int) mf.tracks.size() > maxTracks)
+        return juce::Result::fail ("That would be more than " + juce::String (maxTracks) + " tracks.");
+    bool anyClips = false;
+    for (auto t : tracks) for (auto c : t) anyClips = anyClips || c.hasType (ids::CLIP);
+    doc.undo().beginNewTransaction ("Import MIDI " + file.getFileName());
+    if (! anyClips && mf.firstTempo > 20.0)   // an empty project follows the song's tempo, so the grid lines up
+    {
+        auto tr = doc.tree().getChildWithName (project::ids::TRANSPORT);
+        tr.setProperty (project::ids::bpm, std::round (mf.firstTempo * 100.0) / 100.0, &doc.undo());
+        if (mf.tsNum > 0 && mf.tsDen > 0)
+        {
+            tr.setProperty (project::ids::tsNum, mf.tsNum, &doc.undo());
+            tr.setProperty (project::ids::tsDen, mf.tsDen, &doc.undo());
+        }
+    }
+    juce::Array<juce::ValueTree> created;
+    for (auto& it : mf.tracks)
+    {
+        const bool drums = it.channel == 10;
+        auto t = createBusTrack (it.name, tracks.getNumChildren(), TrackKind::instrument);
+        t.setProperty (ids::inputChannel, -1, nullptr);
+        juce::ValueTree in (midiclip::INSTRUMENT);
+        in.setProperty (rig::ids::desc, fx::builtin::descriptionXml (drums ? "fretforge:drumkit" : "fretforge:synth"), nullptr);
+        in.setProperty (rig::ids::name, drums ? "Drum Kit" : "Basic Synth", nullptr);
+        t.appendChild (in, nullptr);
+        auto clip = midiclip::createMidiClip (it.name, atSec, it.notes, it.pedal);
+        clip.setProperty (midiclip::channel, it.channel, nullptr);
+        t.appendChild (clip, nullptr);
+        tracks.appendChild (t, &doc.undo());
+        created.add (t);
+    }
+    setSelectedTracks (created);
+    return juce::Result::ok();
+}
+
+juce::Result SessionController::importFiles (const juce::Array<juce::File>& filesIn, juce::ValueTree track, double atSec)
+{
+    // MIDI files become instrument tracks
+    juce::Array<juce::File> files;
+    for (auto& f : filesIn)
+        if (f.hasFileExtension ("mid;midi;smf"))
+        {
+            if (auto r = importMidi (f, atSec); r.failed()) return r;
+        }
+        else files.add (f);
+    if (files.isEmpty()) return juce::Result::ok();
+
     // One file goes onto the given track (a new one if none). Several files each get their own
     // track, named after the file, all starting at the same position - like dragging stems in.
     auto tracks = doc.tracks();

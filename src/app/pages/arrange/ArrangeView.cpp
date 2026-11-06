@@ -1,4 +1,5 @@
 #include "ArrangeView.h"
+#include "core/MidiClip.h"
 
 namespace ff
 {
@@ -57,7 +58,14 @@ TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t),
     };
     addAndMakeVisible (input);
     route.setTooltip ("Where this bus / FX track plays into, and its sends");
-    route.onClick = [this] { owner.session.showRoutingMenu (track, &route); };
+    laneButton.onClick = [this] { owner.showLaneChooser (track, &laneButton); };
+    addChildComponent (laneButton);
+    route.onClick = [this] {
+        if (! isInstrumentTrack (track)) { owner.session.showRoutingMenu (track, &route); return; }
+        if (juce::ModifierKeys::currentModifiers.isPopupMenu() || track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isEmpty())
+            owner.session.showInstrumentMenu (track, &route);
+        else owner.session.openInstrument (track);
+    };
     addChildComponent (route);
 
     gain.setSliderStyle (juce::Slider::LinearHorizontal);
@@ -110,17 +118,37 @@ void TrackHeader::refreshInputs()
     refresh();
 }
 
+void TrackHeader::refreshAutomation()
+{
+    const bool a = owner.automationMode();
+    laneButton.setVisible (a);
+    input.setVisible (! a && isAudioTrack (track));
+    route.setVisible (! a && ! isAudioTrack (track));
+    if (a)
+    {
+        const auto prm = owner.laneParamFor (track);
+        laneButton.setButtonText ("A: " + owner.laneLabel (track, prm));
+        laneButton.setTooltip ("Automation lane shown for this track (click to pick volume, pan or a plugin parameter)");
+        input.setVisible (false);
+        route.setVisible (false);
+    }
+}
+
 void TrackHeader::refresh()
 {
     const juce::ScopedValueSetter<bool> svs (updating, true);
     name.setText (track[ids::name].toString(), juce::dontSendNotification);
     arm.setToggleState ((bool) track[ids::armed], juce::dontSendNotification);
-    const bool audio = isAudioTrack (track);
-    arm.setVisible (audio);
+    const bool audio = isAudioTrack (track), inst = isInstrumentTrack (track);
+    arm.setVisible (audio || inst);
+    arm.setTooltip (inst ? "Play this instrument from your MIDI keyboard" : "Arm for recording");
     mon.setVisible (audio);
     input.setVisible (audio);
     route.setVisible (! audio);
-    route.setButtonText ((kindOf (track) == TrackKind::fx ? "FX  > " : "BUS  > ") + owner.session.outputName (track));
+    if (inst) route.setButtonText ("SYNTH  " + owner.session.instrumentName (track));
+    else route.setButtonText ((kindOf (track) == TrackKind::fx ? "FX  > " : "BUS  > ") + owner.session.outputName (track));
+    route.setTooltip (inst ? "Click to open the instrument; right-click to choose another" : "Where this bus / FX track plays into, and its sends");
+    refreshAutomation();
     mon.setToggleState ((bool) track[ids::monitor], juce::dontSendNotification);
     mute.setToggleState ((bool) track[ids::mute], juce::dontSendNotification);
     solo.setToggleState ((bool) track[ids::solo], juce::dontSendNotification);
@@ -207,6 +235,7 @@ void TrackHeader::resized()
     row.removeFromRight (4);
     input.setBounds (row.removeFromLeft (row.getWidth() / 2 + 10));
     route.setBounds (input.getBounds());
+    laneButton.setBounds (input.getBounds());
     row.removeFromLeft (4);
     gain.setBounds (row);
 }
@@ -266,6 +295,11 @@ void TrackHeader::showMenu()
     else m.addItem (10, "Add NAM amp...");
     m.addItem (12, "Add plugin...", owner.session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
     m.addItem (13, "Output and sends  (now: " + owner.session.outputName (track) + ")...");
+    if (isInstrumentTrack (track))
+    {
+        m.addItem (14, "Choose instrument  (now: " + owner.session.instrumentName (track) + ")...");
+        m.addItem (15, "Open instrument");
+    }
     for (int i = 0; i < rig::numInserts (track); ++i)
         m.addItem (200 + i, "Plugin: " + rig::insertNode (track, i)[rig::ids::name].toString()
                                 + ((bool) rig::insertNode (track, i)[rig::ids::bypass] ? "  (bypassed)" : "") + "...");
@@ -290,6 +324,8 @@ void TrackHeader::showMenu()
         else if (r == 11) o.session.removeTrackRig (t);
         else if (r == 12) o.session.showAddInsertMenu (t, safe.getComponent());
         else if (r == 13) o.session.showRoutingMenu (t, safe.getComponent());
+        else if (r == 14) o.session.showInstrumentMenu (t, safe.getComponent());
+        else if (r == 15) o.session.openInstrument (t);
         else if (r >= 200 && r < 200 + rig::maxInserts) o.session.showInsertMenu (t, r - 200, safe.getComponent());
         else if (r >= 100) { o.doc.undo().beginNewTransaction ("Track colour"); o.doc.set (t, ids::colour, trackPalette()[r - 100]); }
         else if (r == 2) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx - 1, &o.doc.undo()); }
@@ -456,6 +492,14 @@ void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
 // TimelineCanvas
 // =====================================================================================
 
+const std::vector<midiclip::Note>& TimelineCanvas::cachedNotes (const juce::ValueTree& clip)
+{
+    const auto text = clip.getChildWithName (midiclip::MIDI)[midiclip::notes].toString();
+    auto& e = noteCache[clip[ids::id].toString()];
+    if (e.first != text) { e.first = text; e.second = midiclip::notesOf (clip); }
+    return e.second;
+}
+
 void TimelineCanvas::drawClip (juce::Graphics& g, const juce::ValueTree& clip, juce::Rectangle<float> r, juce::Colour colour,
                                bool selected)
 {
@@ -476,6 +520,35 @@ void TimelineCanvas::drawClip (juce::Graphics& g, const juce::ValueTree& clip, j
     const auto& geo = owner.geo;
     const double start = prop (clip, ids::start), len = prop (clip, ids::length), offset = prop (clip, ids::offset);
     auto wave = r.withTrimmedTop (16.0f).reduced (0.0f, 2.0f);
+    if (midiclip::isMidiClip (clip))   // MIDI: a mini piano roll
+    {
+        const auto& notes = cachedNotes (clip);
+        int lo = 0, hi = 0;
+        if (midiclip::pitchRange (notes, lo, hi) && wave.getHeight() > 4.0f)
+        {
+            lo = juce::jmin (lo, hi - 11);   // at least an octave tall
+            const float rowH = wave.getHeight() / (float) (hi - lo + 1);
+            g.setColour (colour.brighter (0.5f).withAlpha (0.95f * alpha));
+            for (const auto& n : notes)
+            {
+                const double t0 = start + (n.start - offset), t1 = t0 + n.length;
+                if (t1 <= start || t0 >= start + len) continue;
+                const float x0 = juce::jmax (r.getX(), geo.xFor (juce::jmax (t0, start)));
+                const float x1 = juce::jmin (r.getRight(), geo.xFor (juce::jmin (t1, start + len)));
+                if (x1 < 0.0f || x0 > (float) getWidth()) continue;
+                const float y = wave.getBottom() - (float) (n.pitch - lo + 1) * rowH;
+                g.fillRect (x0, y, juce::jmax (1.5f, x1 - x0 - 1.0f), juce::jmax (1.5f, rowH - 0.5f));
+            }
+        }
+        else
+        {
+            g.setColour (palette::textDim);
+            g.setFont (uiFont (11.0f));
+            g.drawText ("Empty MIDI clip", wave.toNearestInt(), juce::Justification::centred, true);
+        }
+        juce::ignoreUnused (selected);
+        return;
+    }
     auto audio = owner.session.audioFor (clip);
     if (audio == nullptr)
     {
@@ -616,6 +689,8 @@ void TimelineCanvas::paint (juce::Graphics& g)
         }
     }
 
+    if (owner.automationMode()) drawAutomation (g);
+
     if (n == 0)
     {
         g.setColour (palette::textDim);
@@ -718,6 +793,7 @@ static juce::ValueTree clipAt (ArrangeView& v, juce::Point<float> p)
 void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
+    if (owner.automationMode() && owner.trackIndexAtY (e.y) < owner.numTracks()) { mode = Mode::none; autoMouseDown (e); return; }
     mode = Mode::none;
     dragged = false;
     const auto p = e.position;
@@ -800,6 +876,7 @@ void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
 
 void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
 {
+    if (owner.automationMode() && autoLane.isValid()) { autoMouseDrag (e); return; }
     if (mode == Mode::marquee)
     {
         if (! dragged && e.getDistanceFromDragStart() < 4) return;
@@ -852,7 +929,7 @@ void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
             bool tracksOk = true;
             for (auto& o : originals)
                 tracksOk = tracksOk && juce::isPositiveAndBelow (o.track + dTrack, owner.numTracks())
-                           && isAudioTrack (owner.trackAtIndex (o.track + dTrack));   // bus / FX tracks hold no clips
+                           && acceptsClip (owner.trackAtIndex (o.track + dTrack), o.clip);   // audio / MIDI clips on their own kind of track
             for (auto& o : originals)
             {
                 doc.set (o.clip, ids::start, juce::jmax (0.0, o.start + delta));
@@ -918,6 +995,7 @@ void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
 
 void TimelineCanvas::mouseUp (const juce::MouseEvent& e)
 {
+    if (autoLane.isValid()) { autoLane = {}; autoPoint = -1; autoTrack = -1; repaint(); return; }
     if (mode == Mode::marquee)
     {
         if (! dragged)
@@ -981,8 +1059,163 @@ void TimelineCanvas::mouseMove (const juce::MouseEvent& e)
     setMouseCursor (newCursor);
 }
 
+juce::Rectangle<float> TimelineCanvas::laneRect (int i) const
+{
+    const auto& geo = owner.geo;
+    return { 0.0f, (float) (i * geo.trackHeight - geo.scrollY) + 6.0f, (float) getWidth(), (float) geo.trackHeight - 13.0f };
+}
+
+juce::Point<float> TimelineCanvas::pointPos (const juce::String& prm, const automation::Point& p, juce::Rectangle<float> row) const
+{
+    return { owner.geo.xFor (p.time), row.getBottom() - automation::toNormal (prm, p.value) * row.getHeight() };
+}
+
+int TimelineCanvas::pointAt (juce::Point<float> at, const std::vector<automation::Point>& pts, const juce::String& prm, juce::Rectangle<float> row) const
+{
+    for (int k = 0; k < (int) pts.size(); ++k)
+        if (pointPos (prm, pts[(size_t) k], row).getDistanceFrom (at) < 7.0f) return k;
+    return -1;
+}
+
+void TimelineCanvas::drawAutomation (juce::Graphics& g)
+{
+    const int n = owner.numTracks();
+    for (int i = 0; i < n; ++i)
+    {
+        const auto row = laneRect (i);
+        if (row.getBottom() < 0.0f || row.getY() > (float) getHeight()) continue;
+        auto t = owner.trackAtIndex (i);
+        const auto prm = owner.laneParamFor (t);
+        // dim the clips: the lane is what is being edited
+        g.setColour (palette::bg.withAlpha (0.55f));
+        g.fillRect (row.expanded (0.0f, 3.0f));
+        const auto colour = palette::warn;
+        const auto pts = automation::pointsOf (automation::lane (t, prm, false, nullptr));
+        g.setFont (uiFont (10.5f, true));
+        g.setColour (colour.withAlpha (0.8f));
+        g.drawText (owner.laneLabel (t, prm), row.reduced (6.0f, 2.0f).toNearestInt(), juce::Justification::topLeft, true);
+        if (pts.empty())
+        {
+            const float y = row.getBottom() - automation::toNormal (prm, automation::defaultValue (prm, t)) * row.getHeight();
+            const float dashes[] = { 5.0f, 4.0f };
+            g.setColour (colour.withAlpha (0.45f));
+            g.drawDashedLine ({ 0.0f, y, (float) getWidth(), y }, dashes, 2, 1.5f);
+            continue;
+        }
+        juce::Path p;
+        const auto first = pointPos (prm, pts.front(), row);
+        p.startNewSubPath (0.0f, first.y);
+        for (auto& pt : pts) p.lineTo (pointPos (prm, pt, row));
+        p.lineTo ((float) getWidth(), pointPos (prm, pts.back(), row).y);
+        g.setColour (colour);
+        g.strokePath (p, juce::PathStrokeType (2.0f));
+        for (int k = 0; k < (int) pts.size(); ++k)
+        {
+            const auto c = pointPos (prm, pts[(size_t) k], row);
+            if (c.x < -6.0f || c.x > (float) getWidth() + 6.0f) continue;
+            const bool hot = i == autoTrack && k == autoPoint;
+            g.setColour (hot ? juce::Colours::white : colour);
+            g.fillEllipse (c.x - 4.5f, c.y - 4.5f, 9.0f, 9.0f);
+            if (hot)
+            {
+                g.setFont (uiFont (11.0f, true));
+                g.drawText (automation::valueText (prm, pts[(size_t) k].value), juce::Rectangle<float> (c.x + 8.0f, c.y - 16.0f, 90.0f, 14.0f),
+                            juce::Justification::centredLeft, false);
+            }
+        }
+    }
+}
+
+bool TimelineCanvas::autoMouseDown (const juce::MouseEvent& e)
+{
+    const int ti = owner.trackIndexAtY (e.y);
+    auto t = owner.trackAtIndex (ti);
+    autoTrack = -1;
+    autoPoint = -1;
+    if (! t.isValid()) return true;
+    const auto prm = owner.laneParamFor (t);
+    const auto row = laneRect (ti);
+    auto existing = automation::lane (t, prm, false, nullptr);
+    auto pts = automation::pointsOf (existing);
+    const int hit = pointAt (e.position, pts, prm, row);
+    if (e.mods.isPopupMenu())
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "Delete point", hit >= 0);
+        m.addItem (2, "Clear this lane", ! pts.empty());
+        juce::Component::SafePointer<TimelineCanvas> safe (this);
+        m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, t, prm, hit] (int r) {
+            if (safe == nullptr || r == 0) return;
+            auto l = automation::lane (t, prm, false, nullptr);
+            if (! l.isValid()) return;
+            auto p2 = automation::pointsOf (l);
+            safe->owner.doc.undo().beginNewTransaction ("Automation");
+            if (r == 1 && juce::isPositiveAndBelow (hit, (int) p2.size())) p2.erase (p2.begin() + hit);
+            if (r == 2) p2.clear();
+            automation::setPoints (l, p2, &safe->owner.doc.undo());
+            safe->repaint();
+        });
+        return true;
+    }
+    owner.doc.undo().beginNewTransaction ("Automation");
+    autoLane = automation::lane (t, prm, true, &owner.doc.undo());
+    autoTrack = ti;
+    if (hit >= 0) autoPoint = hit;
+    else
+    {
+        automation::Point np;
+        np.time = owner.geo.snap (owner.geo.timeFor (e.position.x), ! e.mods.isAltDown());
+        np.value = automation::fromNormal (prm, (row.getBottom() - e.position.y) / row.getHeight());
+        if (pts.empty())   // the first point: hold the current value up to here
+        {
+            const float v0 = automation::defaultValue (prm, t);
+            if (np.time > 0.001) pts.push_back ({ 0.0, v0 });
+        }
+        pts.push_back (np);
+        std::stable_sort (pts.begin(), pts.end(), [] (const automation::Point& a, const automation::Point& b) { return a.time < b.time; });
+        for (int k = 0; k < (int) pts.size(); ++k)
+            if (pts[(size_t) k].time == np.time && pts[(size_t) k].value == np.value) autoPoint = k;
+        automation::setPoints (autoLane, pts, &owner.doc.undo());
+    }
+    autoPts = automation::pointsOf (autoLane);
+    repaint();
+    return true;
+}
+
+void TimelineCanvas::autoMouseDrag (const juce::MouseEvent& e)
+{
+    if (! autoLane.isValid() || ! juce::isPositiveAndBelow (autoPoint, (int) autoPts.size())) return;
+    const auto t = owner.trackAtIndex (autoTrack);
+    const auto prm = owner.laneParamFor (t);
+    const auto row = laneRect (autoTrack);
+    auto& p = autoPts[(size_t) autoPoint];
+    const double lo = autoPoint > 0 ? autoPts[(size_t) autoPoint - 1].time : 0.0;
+    const double hi = autoPoint + 1 < (int) autoPts.size() ? autoPts[(size_t) autoPoint + 1].time : 1.0e9;
+    p.time = juce::jlimit (lo, hi, owner.geo.snap (owner.geo.timeFor (e.position.x), ! e.mods.isAltDown()));
+    p.value = automation::fromNormal (prm, (row.getBottom() - e.position.y) / row.getHeight());
+    automation::setPoints (autoLane, autoPts, &owner.doc.undo());
+    repaint();
+}
+
 void TimelineCanvas::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    if (owner.automationMode())
+    {
+        const int ti = owner.trackIndexAtY (e.y);
+        auto t = owner.trackAtIndex (ti);
+        if (! t.isValid()) return;
+        const auto prm = owner.laneParamFor (t);
+        auto l = automation::lane (t, prm, false, nullptr);
+        auto pts = automation::pointsOf (l);
+        const int hit = pointAt (e.position, pts, prm, laneRect (ti));
+        if (hit < 0) return;
+        owner.doc.undo().beginNewTransaction ("Delete automation point");
+        pts.erase (pts.begin() + hit);
+        automation::setPoints (l, pts, &owner.doc.undo());
+        autoPoint = -1;
+        repaint();
+        return;
+    }
     if (owner.trackIndexAtY (e.y) >= owner.numTracks())
         owner.addTrack();
 }
@@ -1006,7 +1239,7 @@ void TimelineCanvas::mouseWheelMove (const juce::MouseEvent& e, const juce::Mous
 bool TimelineCanvas::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (auto& f : files)
-        if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3"))
+        if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3;mid;midi"))
             return true;
     return false;
 }
@@ -1016,7 +1249,7 @@ void TimelineCanvas::filesDropped (const juce::StringArray& files, int x, int y)
     dropX = -1;
     juce::Array<juce::File> list;
     for (auto& f : files)
-        if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3"))
+        if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3;mid;midi"))
             list.add (juce::File (f));
     auto track = owner.trackAtIndex (owner.trackIndexAtY (y));
     const auto r = owner.session.importFiles (list, track, owner.geo.snap (owner.geo.timeFor ((float) x)));
@@ -1127,7 +1360,7 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
     : doc (d), host (h), session (s), settings (p)
 {
     addTrackButton.setTooltip ("Add an audio track (Ctrl+T); right-click for a bus or FX track");
-    importButton.setTooltip ("Import WAV/AIFF/FLAC/OGG/MP3 onto the selected track at the playhead (Ctrl+I)");
+    importButton.setTooltip ("Import WAV/AIFF/FLAC/OGG/MP3 onto the selected track at the playhead, or a MIDI file as instrument tracks (Ctrl+I)");
     zoomInButton.setTooltip ("Zoom in (Ctrl + mouse wheel)");
     zoomOutButton.setTooltip ("Zoom out");
     fitButton.setTooltip ("Zoom to fit the song");
@@ -1157,7 +1390,15 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
     sliceButton.setTooltip ("Slice: click a clip to cut it there (snaps to the grid; hold Alt for no snap). "
                             "Click Slice again (or press Esc) to go back to normal editing.");
     sliceButton.onClick = [this] { canvas.setMouseCursor (sliceMode() ? juce::MouseCursor::IBeamCursor : juce::MouseCursor::NormalCursor); repaintAll(); };
-    for (auto* b : { &followButton, &sliceButton })
+    autoButton.setClickingTogglesState (true);
+    autoButton.setTooltip ("Automation: draw volume, pan and plugin changes over time. Click a track's lane to add a point, "
+                           "drag points, double-click or right-click one to remove it. Pick the lane at the left of each track.");
+    autoButton.onClick = [this] {
+        if (automationMode() && sliceMode()) setSliceMode (false);
+        for (auto* h : headers) h->refreshAutomation();
+        repaintAll();
+    };
+    for (auto* b : { &followButton, &sliceButton, &autoButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -1396,6 +1637,8 @@ void ArrangeView::resized()
     tb.removeFromLeft (20);
     sliceButton.setBounds (tb.removeFromLeft (64));
     tb.removeFromLeft (6);
+    autoButton.setBounds (tb.removeFromLeft (96));
+    tb.removeFromLeft (6);
     followButton.setBounds (tb.removeFromLeft (70));
     fitButton.setBounds (tb.removeFromRight (44));
     tb.removeFromRight (4);
@@ -1441,10 +1684,78 @@ void ArrangeView::addTrack()
     session.addTrack ({}, primary.isValid() ? doc.tracks().indexOf (primary) + 1 : -1);
 }
 
+juce::String ArrangeView::laneParamFor (const juce::ValueTree& track) const
+{
+    const auto p = track[automation::showLane].toString();
+    return p.isNotEmpty() ? p : automation::volumeParam;
+}
+
+juce::String ArrangeView::laneLabel (const juce::ValueTree& track, const juce::String& prm) const
+{
+    if (prm == automation::volumeParam) return "Volume";
+    if (prm == automation::panParam) return "Pan";
+    int slot = -1, index = -1;
+    if (! automation::parsePluginParam (prm, slot, index)) return prm;
+    for (int i = 0; i < rig::numInserts (track); ++i)
+    {
+        const auto node = rig::insertNode (track, i);
+        if ((int) node[rig::ids::slot] != slot) continue;
+        juce::String pname = "parameter " + juce::String (index + 1);
+        if (auto p = session.rigs().insertPlugin (track, i))
+            if (juce::isPositiveAndBelow (index, p->getParameters().size())) pname = p->getParameters()[index]->getName (40);
+        return node[rig::ids::name].toString() + ": " + pname;
+    }
+    return "Removed plugin";
+}
+
+void ArrangeView::showLaneChooser (juce::ValueTree track, juce::Component* target)
+{
+    juce::PopupMenu m;
+    const auto cur = laneParamFor (track);
+    auto has = [&track] (const juce::String& prm) { return automation::lane (track, prm, false, nullptr)[automation::points].toString().isNotEmpty(); };
+    juce::StringArray params;
+    auto add = [&] (juce::PopupMenu& menu, const juce::String& prm, const juce::String& label) {
+        params.add (prm);
+        menu.addItem (params.size(), label + (has (prm) ? "   *" : ""), true, prm == cur);
+    };
+    m.addSectionHeader ("Automation lane  (* = has points)");
+    add (m, automation::volumeParam, "Volume");
+    add (m, automation::panParam, "Pan");
+    for (int i = 0; i < rig::numInserts (track); ++i)
+    {
+        const auto node = rig::insertNode (track, i);
+        juce::PopupMenu sub;
+        if (auto p = session.rigs().insertPlugin (track, i))
+        {
+            const auto& ps = p->getParameters();
+            for (int k = 0; k < ps.size() && k < 400; ++k)
+                if (ps[k]->isAutomatable()) add (sub, automation::pluginParam ((int) node[rig::ids::slot], k), ps[k]->getName (60));
+        }
+        else sub.addItem (-1, "(the plugin is not loaded)", false);
+        m.addSubMenu (node[rig::ids::name].toString(), sub);
+    }
+    if (rig::numInserts (track) == 0) m.addItem (-1, "(add plugins to the track to automate their parameters)", false);
+    m.addSeparator();
+    m.addItem (-2, "Clear this lane", has (cur));
+    juce::Component::SafePointer<ArrangeView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [safe, track, params, cur] (int r) {
+        if (safe == nullptr) return;
+        auto t = track;
+        if (r == -2)
+        {
+            safe->doc.undo().beginNewTransaction ("Clear automation");
+            if (auto l = automation::lane (t, cur, false, nullptr); l.isValid()) automation::setPoints (l, {}, &safe->doc.undo());
+        }
+        else if (r > 0 && r <= params.size()) t.setProperty (automation::showLane, params[r - 1], nullptr);
+        for (auto* h : safe->headers) h->refreshAutomation();
+        safe->repaintAll();
+    });
+}
+
 void ArrangeView::importAudioDialog()
 {
     chooser = std::make_unique<juce::FileChooser> ("Import audio", juce::File::getSpecialLocation (juce::File::userMusicDirectory),
-                                                   "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+                                                   "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3;*.mid;*.midi");
     juce::Component::SafePointer<ArrangeView> safe (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::canSelectMultipleItems,
@@ -1563,7 +1874,7 @@ void ArrangeView::paste()
     for (auto& item : clipboard)
     {
         auto t = trackAtIndex (juce::jlimit (0, numTracks() - 1, base + item.trackOffset));
-        if (! isAudioTrack (t)) continue;   // bus / FX tracks hold no clips
+        if (! acceptsClip (t, item.clip)) continue;   // audio / MIDI clips only on their own kind of track
         auto c = item.clip.createCopy();
         c.setProperty (ids::id, newId(), nullptr);
         c.setProperty (ids::start, at + item.timeOffset, nullptr);

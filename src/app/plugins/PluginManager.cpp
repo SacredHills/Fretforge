@@ -361,22 +361,31 @@ void PluginManager::changeListenerCallback (juce::ChangeBroadcaster*)
     lastBlacklistSize = blacklisted;
 }
 
-void PluginManager::addToMenu (juce::PopupMenu& menu, int) const
+void PluginManager::addToMenu (juce::PopupMenu& menu, int firstId) const
 {
+    const bool instruments = firstId == instrumentMenu;
     menu.addSectionHeader ("FretForge");
     int i = 0;
     for (auto& b : fx::builtin::all())
-        menu.addItem (builtinMenuBase + i++, b.name);
-    juce::Array<juce::PluginDescription> effects;
+    {
+        if (b.instrument == instruments) menu.addItem (builtinMenuBase + i, b.name);
+        ++i;
+    }
+    juce::Array<juce::PluginDescription> list;
     for (auto& d : known.getTypes())
-        if (! d.isInstrument) effects.add (d);
-    if (effects.isEmpty()) return;
-    menu.addSectionHeader ("Your plugins");
-    juce::KnownPluginList::addToMenu (menu, effects, juce::KnownPluginList::sortByManufacturer);
+        if (d.isInstrument == instruments) list.add (d);
+    if (list.isEmpty())
+    {
+        if (instruments) menu.addItem (-1, "(scan your plugin folders to list your VST / AU instruments)", false);
+        return;
+    }
+    menu.addSectionHeader (instruments ? "Your instruments" : "Your plugins");
+    juce::KnownPluginList::addToMenu (menu, list, juce::KnownPluginList::sortByManufacturer);
 }
 
-juce::String PluginManager::descriptionForMenuResult (int result, int, juce::String& name) const
+juce::String PluginManager::descriptionForMenuResult (int result, int firstId, juce::String& name) const
 {
+    const bool instruments = firstId == instrumentMenu;
     if (const auto& b = fx::builtin::all(); result >= builtinMenuBase && result < builtinMenuBase + (int) b.size())
     {
         name = b[(size_t) (result - builtinMenuBase)].name;
@@ -384,7 +393,7 @@ juce::String PluginManager::descriptionForMenuResult (int result, int, juce::Str
     }
     juce::Array<juce::PluginDescription> effects;
     for (auto& d : known.getTypes())
-        if (! d.isInstrument) effects.add (d);
+        if (d.isInstrument == instruments) effects.add (d);
     const int idx = juce::KnownPluginList::getIndexChosenByMenu (effects, result);
     if (! juce::isPositiveAndBelow (idx, effects.size())) return {};
     name = effects[idx].name;

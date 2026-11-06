@@ -51,6 +51,12 @@ void GraphMixer::updateLatencies (PlaybackGraph& g) noexcept
 
 void GraphMixer::processTrack (PlayTrack& t, float* L, float* R, int n) noexcept
 {
+    if (t.instrument != nullptr)   // instrument tracks: the synth plays its MIDI, then the plugins (never idle)
+    {
+        t.instrument->render (L, R, n, t.midiBuffer);
+        if (t.inserts != nullptr) t.inserts->process (L, R, n);
+        return;
+    }
     if (t.rig == nullptr && t.inserts == nullptr) return;
     auto& idle = t.idle;
     if (peakOf (L, R, n) > silenceThreshold) { idle.silentIn = 0; idle.sleeping = false; }
@@ -85,7 +91,7 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
     updateLatencies (g);
 
     for (int i = 0; i < numTracks; ++i)
-        if (g.tracks[(size_t) i].kind != timeline::TrackKind::audio)
+        if (! timeline::isSourceKind (g.tracks[(size_t) i].kind))
         {
             juce::FloatVectorOperations::clear (bufL[(size_t) i].data(), n);
             juce::FloatVectorOperations::clear (bufR[(size_t) i].data(), n);
@@ -110,13 +116,13 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
             auto& t = g.tracks[(size_t) ti];
             float* L = bufL[(size_t) ti].data();
             float* R = bufR[(size_t) ti].data();
-            if (t.kind == timeline::TrackKind::audio)
+            if (timeline::isSourceKind (t.kind))
             {
                 juce::FloatVectorOperations::clear (L, n);
                 juce::FloatVectorOperations::clear (R, n);
             }
             active[(size_t) ti] = source.fill (ti, t, L, R, n) ? 1 : 0;
-            if (active[(size_t) ti] && (t.rig != nullptr || t.inserts != nullptr)) stage.push_back (ti);
+            if (active[(size_t) ti] && (t.rig != nullptr || t.inserts != nullptr || t.instrument != nullptr)) stage.push_back (ti);
         }
 
         // 2. effects (parallel)
@@ -138,8 +144,16 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
                 addScaled (bufL[(size_t) s.target].data(), L, s.gain * (s.pre ? 1.0f : t.gainL), n);
                 addScaled (bufR[(size_t) s.target].data(), R, s.gain * (s.pre ? 1.0f : t.gainR), n);
             }
-            juce::FloatVectorOperations::multiply (L, t.gainL, n);
-            juce::FloatVectorOperations::multiply (R, t.gainR, n);
+            // fader / pan (ramped when automation moved them since the last block)
+            auto applyGain = [n] (float* x, float from, float to) {
+                if (from < 0.0f || std::abs (from - to) < 1.0e-6f) { juce::FloatVectorOperations::multiply (x, to, n); return; }
+                const float step = (to - from) / (float) n;
+                for (int i = 0; i < n; ++i) x[i] *= from + step * (float) (i + 1);
+            };
+            applyGain (L, t.prevGainL, t.gainL);
+            applyGain (R, t.prevGainR, t.gainR);
+            t.prevGainL = t.gainL;
+            t.prevGainR = t.gainR;
             source.post (ti, t, L, R, n);
             if (t.outputMuted) continue;
             float* dL = outL;

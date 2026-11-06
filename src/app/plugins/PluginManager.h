@@ -44,6 +44,7 @@ public:
     juce::KnownPluginList known;
 
     static constexpr int builtinMenuBase = 9000;
+    static constexpr int instrumentMenu = -100;   // pass as firstId to list instruments instead of effects
     /** Menu of FretForge's own effects, then the known plugins (by manufacturer). */
     void addToMenu (juce::PopupMenu& menu, int firstId) const;
     /** The plugin chosen from that menu, as description XML (empty if none). */

@@ -1,5 +1,7 @@
 #include "BuiltinPlugins.h"
 #include "Biquad.h"
+#include "engine/DrumSynth.h"
+#include "core/DrumModel.h"
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <cmath>
@@ -42,16 +44,20 @@ std::unique_ptr<juce::AudioParameterFloat> param (const char* id, const char* na
 class Base : public juce::AudioPluginInstance
 {
 public:
+    static BusesProperties busesFor (const Info& i)
+    {
+        if (i.instrument) return BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo());
+        return BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo()).withOutput ("Output", juce::AudioChannelSet::stereo());
+    }
     Base (const Info& i, Layout layout)
-        : juce::AudioPluginInstance (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo())
-                                                      .withOutput ("Output", juce::AudioChannelSet::stereo())),
+        : juce::AudioPluginInstance (busesFor (i)),
           info (i), state (*this, nullptr, "STATE", std::move (layout)) {}
 
     void fillInPluginDescription (juce::PluginDescription& d) const override { d = describe (info); }
     const juce::String getName() const override { return info.name; }
     void releaseResources() override {}
     double getTailLengthSeconds() const override { return 0.0; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return info.instrument; }
     bool producesMidi() const override { return false; }
     bool hasEditor() const override { return true; }
     juce::AudioProcessorEditor* createEditor() override;
@@ -72,6 +78,7 @@ public:
     bool isBusesLayoutSupported (const BusesLayout& l) const override
     {
         const auto in = l.getMainInputChannelSet(), out = l.getMainOutputChannelSet();
+        if (info.instrument) return in.isDisabled() && out == juce::AudioChannelSet::stereo();
         return in == out && (out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo());
     }
 
@@ -93,7 +100,13 @@ public:
     virtual std::unique_ptr<juce::Component> createDisplay() { return nullptr; }
     virtual int displayHeight() const { return 0; }
 
-    float p (const char* id) const noexcept { return state.getRawParameterValue (id)->load (std::memory_order_relaxed); }
+    /** A parameter in its own units. Read from the parameter itself, so a host's setValue (automation) is seen at
+        once (the value-tree state's copy only follows setValueNotifyingHost). */
+    float p (const char* id) const noexcept
+    {
+        auto* rp = state.getParameter (id);
+        return rp != nullptr ? rp->convertFrom0to1 (rp->getValue()) : 0.0f;
+    }
     double sampleRate() const noexcept { return juce::jmax (8000.0, getSampleRate()); }
 
     const Info& info;
@@ -662,6 +675,217 @@ private:
 
 std::unique_ptr<juce::Component> Compressor::createDisplay() { return std::make_unique<CompDisplay> (*this); }
 
+// =====================================================================================================  instruments
+
+/** Base for the built-in instruments: splits each block at the MIDI events so they land on their sample. */
+class InstrumentBase : public Base
+{
+public:
+    using Base::Base;
+    void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer& midi) override
+    {
+        juce::ScopedNoDenormals nd;
+        const int n = b.getNumSamples();
+        b.clear();
+        if (b.getNumChannels() == 0 || n == 0) return;
+        float* L = b.getWritePointer (0);
+        float* R = b.getNumChannels() > 1 ? b.getWritePointer (1) : nullptr;
+        int pos = 0;
+        for (const auto meta : midi)
+        {
+            const int at = juce::jlimit (0, n, meta.samplePosition);
+            if (at > pos) { render (L + pos, R != nullptr ? R + pos : nullptr, at - pos); pos = at; }
+            handle (meta.getMessage());
+        }
+        if (pos < n) render (L + pos, R != nullptr ? R + pos : nullptr, n - pos);
+    }
+    void process (float*, float*, int) noexcept override {}
+    virtual void handle (const juce::MidiMessage&) noexcept = 0;
+    virtual void render (float* L, float* R, int n) noexcept = 0;
+};
+
+/** Polyphonic subtractive synth: two detuned oscillators, a resonant low-pass with its own envelope, ADSR. */
+class BasicSynth final : public InstrumentBase
+{
+public:
+    static constexpr const char* waves[] = { "Saw", "Square", "Triangle", "Sine", "Pluck" };
+    explicit BasicSynth (const Info& i) : InstrumentBase (i, layout()) {}
+    static Layout layout()
+    {
+        Layout l;
+        l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "wave", 1 }, "Wave", juce::StringArray (waves, 5), 0));
+        l.add (param ("detune", "Detune", 0.0f, 50.0f, 8.0f, "ct"));
+        l.add (param ("cutoff", "Cutoff", 80.0f, 18000.0f, 3500.0f, "Hz", 2000.0f));
+        l.add (param ("reso", "Resonance", 0.0f, 100.0f, 20.0f, "%"));
+        l.add (param ("envAmt", "Filter env", 0.0f, 100.0f, 35.0f, "%"));
+        l.add (param ("attack", "Attack", 0.5f, 2000.0f, 5.0f, "ms", 50.0f));
+        l.add (param ("decay", "Decay", 5.0f, 4000.0f, 400.0f, "ms", 400.0f));
+        l.add (param ("sustain", "Sustain", 0.0f, 100.0f, 70.0f, "%"));
+        l.add (param ("release", "Release", 5.0f, 5000.0f, 300.0f, "ms", 400.0f));
+        l.add (param ("volume", "Volume", -36.0f, 6.0f, -8.0f, "dB"));
+        return l;
+    }
+    void prepareToPlay (double, int) override { for (auto& v : voices) v = {}; pedal = false; bend = 0.0f; }
+    void handle (const juce::MidiMessage& m) noexcept override
+    {
+        if (m.isNoteOn()) noteOn (m.getNoteNumber(), m.getFloatVelocity());
+        else if (m.isNoteOff()) noteOff (m.getNoteNumber());
+        else if (m.isSustainPedalOn()) pedal = true;
+        else if (m.isSustainPedalOff()) { pedal = false; for (auto& v : voices) if (v.held && ! v.keyDown) v.released (time); }
+        else if (m.isAllNotesOff() || m.isAllSoundOff()) for (auto& v : voices) { v.keyDown = false; v.held = false; if (v.active) v.released (time); }
+        else if (m.isPitchWheel()) bend = (float) (m.getPitchWheelValue() - 8192) / 8192.0f * 2.0f;
+    }
+    void render (float* L, float* R, int n) noexcept override
+    {
+        const double sr = sampleRate();
+        const int wave = juce::roundToInt (p ("wave"));
+        const float det = p ("detune"), cutoff = p ("cutoff"), reso = p ("reso") * 0.01f, envAmt = p ("envAmt") * 0.01f;
+        const float a = p ("attack") * 0.001f, d = p ("decay") * 0.001f, su = p ("sustain") * 0.01f, rel = p ("release") * 0.001f;
+        const float vol = juce::Decibels::decibelsToGain (p ("volume"));
+        const float k = 2.0f - 1.9f * reso;   // SVF damping
+        for (auto& v : voices)
+        {
+            if (! v.active) continue;
+            const double f0 = 440.0 * std::pow (2.0, (v.note - 69 + bend) / 12.0);
+            const double inc1 = f0 * std::pow (2.0, det / 1200.0) / sr, inc2 = f0 * std::pow (2.0, -det / 1200.0) / sr;
+            for (int i = 0; i < n; ++i)
+            {
+                // envelope (linear attack, exponential decay / release)
+                const double t = v.t;
+                float env;
+                if (! v.releasing) env = t < a ? (float) (t / a) : su + (1.0f - su) * std::exp (-(float) (t - a) / juce::jmax (0.001f, d * 0.3f));
+                else env = v.relFrom * std::exp (-(float) (t - v.relAt) / juce::jmax (0.001f, rel * 0.3f));
+                if (wave == 4 && ! v.releasing) env = std::exp (-(float) t / juce::jmax (0.01f, d * 0.4f));   // pluck: always decays
+                v.lastEnv = env;
+                v.t += 1.0 / sr;
+                if (v.releasing && env < 1.0e-4f) { v.active = false; break; }
+                const float o = osc (wave, v.ph1, inc1) + osc (wave, v.ph2, inc2);
+                v.ph1 += inc1; if (v.ph1 >= 1.0) v.ph1 -= 1.0;
+                v.ph2 += inc2; if (v.ph2 >= 1.0) v.ph2 -= 1.0;
+                // filter: cutoff follows the envelope
+                const float fc = juce::jlimit (30.0f, (float) (sr * 0.45), cutoff * (1.0f + envAmt * 4.0f * env));
+                const float g = (float) std::tan (juce::MathConstants<double>::pi * fc / sr);
+                const float hp = (o * 0.5f - (k + g) * v.s1 - v.s2) / (1.0f + g * (k + g));
+                const float bp = g * hp + v.s1; v.s1 = g * hp + bp;
+                const float lp = g * bp + v.s2; v.s2 = g * bp + lp;
+                const float out = lp * env * v.vel * vol;
+                L[i] += out;
+                if (R != nullptr) R[i] += out;
+            }
+        }
+        time += n / sr;
+    }
+private:
+    struct Voice
+    {
+        bool active = false, keyDown = false, held = false, releasing = false;
+        int note = 0;
+        float vel = 0.0f, lastEnv = 0.0f, relFrom = 0.0f, s1 = 0.0f, s2 = 0.0f;
+        double t = 0.0, relAt = 0.0, ph1 = 0.0, ph2 = 0.25, started = 0.0;
+        void released (double) { if (! releasing) { releasing = true; relAt = t; relFrom = lastEnv; } held = false; }
+    };
+    std::array<Voice, 16> voices;
+    bool pedal = false;
+    float bend = 0.0f;
+    double time = 0.0;
+
+    static float polyBlep (double t, double dt) noexcept
+    {
+        if (t < dt) { t /= dt; return (float) (t + t - t * t - 1.0); }
+        if (t > 1.0 - dt) { t = (t - 1.0) / dt; return (float) (t * t + t + t + 1.0); }
+        return 0.0f;
+    }
+    static float osc (int wave, double ph, double dt) noexcept
+    {
+        switch (wave)
+        {
+            case 1: { float s = ph < 0.5 ? 1.0f : -1.0f; s += polyBlep (ph, dt); s -= polyBlep (std::fmod (ph + 0.5, 1.0), dt); return s * 0.7f; }
+            case 2: return (float) (ph < 0.5 ? 4.0 * ph - 1.0 : 3.0 - 4.0 * ph);
+            case 3: return (float) std::sin (juce::MathConstants<double>::twoPi * ph);
+            default: return (float) (2.0 * ph - 1.0) - polyBlep (ph, dt);   // saw (and pluck)
+        }
+    }
+    void noteOn (int note, float vel) noexcept
+    {
+        Voice* v = nullptr;
+        for (auto& x : voices) if (x.active && x.note == note) { v = &x; break; }   // retrigger the same key
+        if (v == nullptr) for (auto& x : voices) if (! x.active) { v = &x; break; }
+        if (v == nullptr)   // steal the oldest
+        {
+            v = &voices[0];
+            for (auto& x : voices) if (x.started < v->started) v = &x;
+        }
+        *v = {};
+        v->active = v->keyDown = true;
+        v->note = note;
+        v->vel = 0.25f + 0.75f * vel;
+        v->started = time;
+    }
+    void noteOff (int note) noexcept
+    {
+        for (auto& v : voices)
+            if (v.active && v.note == note && v.keyDown)
+            {
+                v.keyDown = false;
+                if (pedal) v.held = true; else v.released (time);
+            }
+    }
+};
+
+/** General MIDI drum kit (any channel) played by FretForge's drum sounds. */
+class DrumKit final : public InstrumentBase
+{
+public:
+    explicit DrumKit (const Info& i) : InstrumentBase (i, layout()) {}
+    static Layout layout()
+    {
+        Layout l;
+        l.add (param ("volume", "Volume", -36.0f, 6.0f, -3.0f, "dB"));
+        return l;
+    }
+    void prepareToPlay (double, int) override { drums.prepare (sampleRate()); }
+    void handle (const juce::MidiMessage& m) noexcept override
+    {
+        if (m.isNoteOn())
+        {
+            int piece = drums::pieceForGmNote (m.getNoteNumber());
+            if (piece < 0) piece = fallback (m.getNoteNumber());
+            if (piece >= 0) drums.trigger (piece, m.getFloatVelocity());
+        }
+        else if (m.isAllSoundOff()) drums.allNotesOff();
+    }
+    void render (float* L, float* R, int n) noexcept override
+    {
+        float* r = R != nullptr ? R : L;
+        if (R == nullptr) { tmp.resize (std::max (tmp.size(), (size_t) n)); std::fill (tmp.begin(), tmp.begin() + n, 0.0f); r = tmp.data(); }
+        drums.volume = juce::Decibels::decibelsToGain (p ("volume"));
+        drums.render (L, r, n);
+        if (R == nullptr) for (int i = 0; i < n; ++i) L[i] = 0.5f * (L[i] + r[i]);
+    }
+private:
+    DrumSynth drums;
+    std::vector<float> tmp;
+    static int fallback (int note) noexcept
+    {
+        if (note == 35 || note == 36) return drums::kick;
+        if (note == 37) return drums::sideStick;
+        if (note == 38 || note == 40) return drums::snare;
+        if (note == 39) return drums::clap;
+        if (note == 42 || note == 44) return note == 42 ? drums::hhClosed : drums::hhPedal;
+        if (note == 46) return drums::hhOpen;
+        if (note == 41 || note == 43) return drums::tomFloor;
+        if (note == 45 || note == 47) return drums::tomLow;
+        if (note == 48 || note == 50) return drums::tomHigh;
+        if (note == 49 || note == 57 || note == 52) return note == 52 ? drums::china : drums::crash;
+        if (note == 51 || note == 59) return drums::ride;
+        if (note == 53) return drums::rideBell;
+        if (note == 55) return drums::splash;
+        if (note == 56) return drums::cowbell;
+        if (note >= 60) return drums::cowbell;   // percussion
+        return -1;
+    }
+};
+
 // =====================================================================================================  limiter
 
 /** Look-ahead brick-wall limiter: the gain each sample needs is held over the look-ahead window and smoothed with
@@ -1113,6 +1337,8 @@ const std::vector<Info>& all()
         { "fretforge:chorus", "Chorus", "Modulation", "Stereo chorus." },
         { "fretforge:reverb", "Reverb", "Reverb", "Room to hall reverb. On an FX track, set Mix to 100 %." },
         { "fretforge:limiter", "Limiter", "Dynamics", "Look-ahead brick-wall limiter: nothing gets past the ceiling. Put it last on the master." },
+        { "fretforge:synth", "Basic Synth", "Synth", "Polyphonic synth: two detuned oscillators, resonant filter with envelope.", true },
+        { "fretforge:drumkit", "Drum Kit", "Drums", "General MIDI drums (any channel) with FretForge's drum sounds.", true },
     };
     return list;
 }
@@ -1135,8 +1361,9 @@ juce::PluginDescription describe (const Info& i)
     d.version = "1.0";
     d.fileOrIdentifier = i.id;
     d.uniqueId = d.deprecatedUid = (int) juce::String (i.id).hashCode();
-    d.isInstrument = false;
-    d.numInputChannels = d.numOutputChannels = 2;
+    d.isInstrument = i.instrument;
+    d.numInputChannels = i.instrument ? 0 : 2;
+    d.numOutputChannels = 2;
     return d;
 }
 
@@ -1158,6 +1385,8 @@ std::unique_ptr<juce::AudioPluginInstance> create (const juce::String& id)
     if (s == "fretforge:chorus") return std::make_unique<Chorus> (*i);
     if (s == "fretforge:reverb") return std::make_unique<Reverb> (*i);
     if (s == "fretforge:limiter") return std::make_unique<Limiter> (*i);
+    if (s == "fretforge:synth") return std::make_unique<BasicSynth> (*i);
+    if (s == "fretforge:drumkit") return std::make_unique<DrumKit> (*i);
     return nullptr;
 }
 

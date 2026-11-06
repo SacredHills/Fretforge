@@ -550,7 +550,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdLoop: info.setInfo ("Loop", "Toggle the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::loopEnabled]); info.addDefaultKeypress ('l', 0); break;
         case cmdPunch: info.setInfo ("Punch In/Out", "Record only inside the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::punchEnabled]); info.addDefaultKeypress ('p', 0); break;
         case cmdAddTrack: info.setInfo ("Add Track", "Add an audio track", "Track", 0); info.addDefaultKeypress ('t', cmd); break;
-        case cmdImport: info.setInfo ("Import Audio...", "Import audio files at the playhead", "Track", 0); info.addDefaultKeypress ('i', cmd); break;
+        case cmdImport: info.setInfo ("Import Audio / MIDI...", "Import audio files at the playhead, or a MIDI file as instrument tracks", "Track", 0); info.addDefaultKeypress ('i', cmd); break;
         case cmdExport: info.setInfo ("Export Audio...", "Export the mix or stems", "File", 0); info.addDefaultKeypress ('e', cmd); break;
         case cmdSplit: info.setInfo ("Split at Playhead", "Split clips at the playhead", "Edit", 0); info.setActive (currentSection == 0); info.addDefaultKeypress ('s', 0); break;
         case cmdDuplicate: info.setInfo ("Duplicate", "Duplicate selected clips", "Edit", 0); info.setActive (currentSection == 0 && studioPage->arrange.hasSelection()); info.addDefaultKeypress ('d', cmd); break;

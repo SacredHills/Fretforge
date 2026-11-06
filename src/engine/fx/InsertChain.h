@@ -23,6 +23,11 @@ public:
     /** Returns the previous plugin of the physical slot (free it after the next audio callback). */
     std::shared_ptr<juce::AudioPluginInstance> setPlugin (int physicalSlot, std::shared_ptr<juce::AudioPluginInstance>);
     std::shared_ptr<juce::AudioPluginInstance> getPlugin (int physicalSlot) const;
+    /** The plugin running in a physical slot (audio thread; automation), nullptr if none. */
+    juce::AudioPluginInstance* activePlugin (int physicalSlot) const noexcept
+    {
+        return juce::isPositiveAndBelow (physicalSlot, maxSlots) ? slots[(size_t) physicalSlot].active.load() : nullptr;
+    }
     /** Play order as physical slots; `count` entries are used. */
     void setOrder (const std::array<int, maxSlots>& order, int count) noexcept;
     std::array<std::atomic<bool>, maxSlots> bypass {};

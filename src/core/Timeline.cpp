@@ -33,12 +33,13 @@ TrackKind kindOf (const juce::ValueTree& t)
     const auto k = t[ids::kind].toString();
     if (k == "bus") return TrackKind::bus;
     if (k == "fx") return TrackKind::fx;
+    if (k == "instrument") return TrackKind::instrument;
     return TrackKind::audio;
 }
 
 juce::String kindName (TrackKind k)
 {
-    return k == TrackKind::bus ? "bus" : k == TrackKind::fx ? "fx" : "audio";
+    return k == TrackKind::bus ? "bus" : k == TrackKind::fx ? "fx" : k == TrackKind::instrument ? "instrument" : "audio";
 }
 
 juce::ValueTree createBusTrack (const juce::String& name, int paletteIndex, TrackKind kind)
@@ -46,6 +47,12 @@ juce::ValueTree createBusTrack (const juce::String& name, int paletteIndex, Trac
     auto t = createTrack (name, paletteIndex);
     t.setProperty (ids::kind, kindName (kind), nullptr);
     return t;
+}
+
+bool acceptsClip (const juce::ValueTree& track, const juce::ValueTree& clip)
+{
+    const bool midiClip = (bool) clip["midi"];
+    return midiClip ? isInstrumentTrack (track) : isAudioTrack (track);
 }
 
 juce::ValueTree findTrack (const juce::ValueTree& tracks, const juce::String& id)
@@ -76,7 +83,7 @@ namespace
 
 bool canRouteTo (const juce::ValueTree& tracks, const juce::ValueTree& from, const juce::ValueTree& to)
 {
-    if (! from.isValid() || ! to.isValid() || from == to || isAudioTrack (to)) return false;
+    if (! from.isValid() || ! to.isValid() || from == to || isSourceTrack (to)) return false;
     // would `to` reach `from`? (then from -> to closes a loop)
     juce::StringArray seen, stack { to[ids::id].toString() };
     const auto fromId = from[ids::id].toString();

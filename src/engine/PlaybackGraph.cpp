@@ -1,6 +1,8 @@
 #include "PlaybackGraph.h"
 #include "core/Timeline.h"
 #include "core/ProjectFile.h"
+#include "core/MidiClip.h"
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -11,7 +13,90 @@ using namespace timeline;
 
 int trackLatency (const PlayTrack& t) noexcept
 {
-    return (t.rig != nullptr ? t.rig->totalLatency() : 0) + (t.inserts != nullptr ? t.inserts->latency() : 0);
+    int lat = (t.rig != nullptr ? t.rig->totalLatency() : 0) + (t.inserts != nullptr ? t.inserts->latency() : 0);
+    if (t.instrument != nullptr)
+        if (auto* p = t.instrument->activePlugin()) lat += p->getLatencySamples();
+    return lat;
+}
+
+namespace
+{
+void addMidiRange (PlayTrack& t, juce::int64 from, int n, int offset) noexcept
+{
+    auto& ev = t.midiEvents;
+    auto it = std::lower_bound (ev.begin(), ev.end(), from, [] (const PlayTrack::MidiEvent& e, juce::int64 p) { return e.pos < p; });
+    for (; it != ev.end() && it->pos < from + n; ++it)
+    {
+        const juce::uint8 bytes[3] = { it->b0, it->b1, it->b2 };
+        t.midiBuffer.addEvent (bytes, 3, offset + (int) (it->pos - from));
+    }
+}
+
+void allNotesOff (juce::MidiBuffer& b) noexcept
+{
+    for (int ch = 1; ch <= 16; ++ch)
+    {
+        b.addEvent (juce::MidiMessage::controllerEvent (ch, 64, 0), 0);
+        b.addEvent (juce::MidiMessage::allNotesOff (ch), 0);
+    }
+}
+}
+
+void prepareTrackBlock (PlayTrack& t, const BlockTiming& bt, int n) noexcept
+{
+    // ---- automation ----
+    if (! t.lanes.empty() && bt.rolling)
+    {
+        float db = t.baseGainDb, pan = t.basePan;
+        bool gains = false;
+        for (auto& l : t.lanes)
+        {
+            const float v = automation::valueAt (l.points, bt.timeSec, -1000.0f);
+            if (v <= -999.0f) continue;
+            if (l.target == PlayTrack::Lane::volume) { db = v; gains = true; }
+            else if (l.target == PlayTrack::Lane::pan) { pan = v; gains = true; }
+            else if (t.inserts != nullptr && std::abs (v - l.last) > 1.0e-4f)
+                if (auto* p = t.inserts->activePlugin (l.slot))
+                {
+                    const auto& params = p->getParameters();
+                    if (juce::isPositiveAndBelow (l.param, params.size())) params[l.param]->setValue (juce::jlimit (0.0f, 1.0f, v));
+                    l.last = v;
+                }
+        }
+        if (gains) panGains (pan, juce::Decibels::decibelsToGain (db, -60.0f), t.gainL, t.gainR);
+    }
+
+    // ---- MIDI ----
+    if (t.instrument == nullptr) return;
+    t.midiBuffer.clear();
+    if (! bt.rolling)
+    {
+        if (t.midiWasRolling) allNotesOff (t.midiBuffer);   // stopped: let go of every note
+        t.midiWasRolling = false;
+        t.midiNextPos = -1;
+        return;
+    }
+    if (t.midiWasRolling && bt.from != t.midiNextPos) allNotesOff (t.midiBuffer);   // jumped (seek / loop)
+    t.midiWasRolling = true;
+    if (bt.looping && bt.loopEnd > bt.loopStart && bt.from >= bt.loopEnd)
+    {
+        const juce::int64 f = bt.loopStart + (bt.from - bt.loopEnd) % (bt.loopEnd - bt.loopStart);
+        addMidiRange (t, f, n, 0);
+        t.midiNextPos = f + n;
+    }
+    else if (bt.looping && bt.loopEnd > bt.loopStart && bt.from + n > bt.loopEnd)
+    {
+        const int first = (int) (bt.loopEnd - bt.from);
+        addMidiRange (t, bt.from, first, 0);
+        allNotesOff (t.midiBuffer);   // wrap: notes still held at the loop end stop there
+        addMidiRange (t, bt.loopStart, n - first, first);
+        t.midiNextPos = bt.loopStart + (n - first);
+    }
+    else
+    {
+        addMidiRange (t, bt.from, n, 0);
+        t.midiNextPos = bt.from + n;
+    }
 }
 
 void panGains (float pan, float gain, float& left, float& right) noexcept
@@ -56,13 +141,66 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
                 pt.recorder = it->second;
         if (opt.rigFor && pt.kind == TrackKind::audio) pt.rig = opt.rigFor (t);   // NAM amps live on audio tracks
         if (opt.insertsFor) pt.inserts = opt.insertsFor (t);
+        pt.baseGainDb = (float) (double) t[ids::gainDb];
+        pt.basePan = (float) (double) t[ids::pan];
+
+        // automation lanes with points
+        for (const auto& lane : automation::activeLanes (t))
+        {
+            PlayTrack::Lane l;
+            const auto prm = lane[automation::param].toString();
+            if (prm == automation::volumeParam) l.target = PlayTrack::Lane::volume;
+            else if (prm == automation::panParam) l.target = PlayTrack::Lane::pan;
+            else if (automation::parsePluginParam (prm, l.slot, l.param)) l.target = PlayTrack::Lane::plugin;
+            else continue;
+            l.points = automation::pointsOf (lane);
+            if (! l.points.empty()) pt.lanes.push_back (std::move (l));
+        }
+
+        // instrument tracks: the instrument and the notes of the MIDI clips
+        if (pt.kind == TrackKind::instrument)
+        {
+            if (opt.instrumentFor) pt.instrument = opt.instrumentFor (t);
+            auto toS = [sr] (double sec) { return (juce::int64) std::llround (sec * sr); };
+            for (const auto& c : t)
+            {
+                if (! midiclip::isMidiClip (c) || (bool) c[ids::muted]) continue;
+                const double cs = (double) c[ids::start], len = (double) c[ids::length], off = (double) c[ids::offset];
+                const double ce = cs + len;
+                const int ch = juce::jlimit (1, 16, (int) c.getProperty (midiclip::channel, 1));
+                for (const auto& nt : midiclip::notesOf (c))
+                {
+                    const double on = cs + (nt.start - off);
+                    if (on < cs - 1.0e-9 || on >= ce) continue;
+                    const double offT = juce::jmin (ce, on + nt.length);
+                    const auto vel = (juce::uint8) juce::jlimit (1, 127, nt.velocity);
+                    pt.midiEvents.push_back ({ toS (on), (juce::uint8) (0x90 | (ch - 1)), (juce::uint8) nt.pitch, vel });
+                    pt.midiEvents.push_back ({ juce::jmax (toS (on) + 1, toS (offT)), (juce::uint8) (0x80 | (ch - 1)), (juce::uint8) nt.pitch, 0 });
+                }
+                bool down = false;
+                for (const auto& pe : midiclip::pedalOf (c))
+                {
+                    const double at = cs + (pe.time - off);
+                    if (at < cs || at >= ce) continue;
+                    pt.midiEvents.push_back ({ toS (at), (juce::uint8) (0xB0 | (ch - 1)), 64, (juce::uint8) (pe.down ? 127 : 0) });
+                    down = pe.down;
+                }
+                if (down) pt.midiEvents.push_back ({ toS (ce), (juce::uint8) (0xB0 | (ch - 1)), 64, 0 });
+            }
+            // note-offs before note-ons at the same sample (repeated notes)
+            std::stable_sort (pt.midiEvents.begin(), pt.midiEvents.end(), [] (const PlayTrack::MidiEvent& a, const PlayTrack::MidiEvent& b) {
+                if (a.pos != b.pos) return a.pos < b.pos;
+                return (a.b0 & 0xF0) == 0x80 && (b.b0 & 0xF0) != 0x80;
+            });
+            pt.midiBuffer.ensureSize (16384);
+        }
 
         // gather clips in layer order with their audio
         std::vector<ClipSpan> spans;
         std::vector<std::shared_ptr<const CachedAudio>> audio;
         for (const auto& c : t)
         {
-            if (! c.hasType (ids::CLIP))
+            if (! c.hasType (ids::CLIP) || midiclip::isMidiClip (c))
                 continue;
             const auto f = project::Bundle::fromPortablePath (mediaBundle, c[ids::file].toString());
             std::shared_ptr<const CachedAudio> a;
@@ -116,12 +254,12 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
     {
         auto& pt = g->tracks[(size_t) i];
         const int o = indexOf (outputOf (trees[(size_t) i]));
-        pt.output = (o >= 0 && o != i && g->tracks[(size_t) o].kind != TrackKind::audio) ? o : -1;
+        pt.output = (o >= 0 && o != i && ! isSourceKind (g->tracks[(size_t) o].kind)) ? o : -1;
         for (const auto& c : trees[(size_t) i])
             if (c.hasType (ids::SEND) && (int) pt.sends.size() < maxSends)
             {
                 const int target = indexOf (c[ids::target].toString());
-                if (target < 0 || target == i || g->tracks[(size_t) target].kind == TrackKind::audio) continue;
+                if (target < 0 || target == i || isSourceKind (g->tracks[(size_t) target].kind)) continue;
                 pt.sends.push_back ({ target, juce::Decibels::decibelsToGain ((float) (double) c[ids::level], -96.0f), (bool) c[ids::pre] });
             }
     }
@@ -138,7 +276,7 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
     std::function<int (int)> levelOf = [&] (int i) -> int {
         if (state[(size_t) i] == 2) return g->tracks[(size_t) i].level;
         state[(size_t) i] = 1;
-        int lv = g->tracks[(size_t) i].kind == TrackKind::audio ? 0 : 1;
+        int lv = isSourceKind (g->tracks[(size_t) i].kind) ? 0 : 1;
         for (int src : sources[(size_t) i])
         {
             if (state[(size_t) src] == 1)   // loop: cut this route

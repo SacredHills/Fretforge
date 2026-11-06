@@ -68,6 +68,7 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
         return rig::isEnabled (r) ? fx::makeOfflineRig (r, s.sampleRate, 4096, rigWarnings) : nullptr;
     };
     opt.insertsFor = [&] (const juce::ValueTree& t) { return fx::makeOfflineInserts (t, s.sampleRate, 4096, rigWarnings); };
+    opt.instrumentFor = [&] (const juce::ValueTree& t) { return fx::makeOfflineInstrument (t, s.sampleRate, 4096, rigWarnings); };
     if (const auto master = s.master.isValid() ? s.master : tracks.getParent().getChildWithName (project::ids::MASTER); master.isValid())
         opt.masterInserts = fx::makeOfflineInserts (master, s.sampleRate, 4096, rigWarnings);
     juce::ScopedNoDenormals noDenormals;
@@ -94,8 +95,9 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
         {
             if (t.hasType (timeline::ids::TRACK) && i < (int) graph->tracks.size())
             {
-                if (graph->tracks[(size_t) i].audible && ! graph->tracks[(size_t) i].pieces.empty()
-                    && graph->tracks[(size_t) i].kind == timeline::TrackKind::audio)
+                const auto& gt = graph->tracks[(size_t) i];
+                if (gt.audible && ((gt.kind == timeline::TrackKind::audio && ! gt.pieces.empty())
+                                   || (gt.kind == timeline::TrackKind::instrument && ! gt.midiEvents.empty())))
                     jobs.push_back ({ juce::File::createLegalFileName (t[timeline::ids::name].toString()), { i } });
                 ++i;
             }
@@ -131,15 +133,26 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
     {
         const std::vector<char>* include = nullptr;
         juce::int64 at = 0;
+        double sampleRate = 48000.0;
         bool fill (int index, PlayTrack& t, float* L, float* R, int n) noexcept override
         {
+            if (! t.lanes.empty() || t.instrument != nullptr)
+            {
+                BlockTiming bt;
+                bt.from = at + readAhead (t);
+                bt.rolling = true;
+                bt.timeSec = (double) at / sampleRate;
+                prepareTrackBlock (t, bt, n);
+            }
             if (! t.audible) return false;
-            if (t.kind != timeline::TrackKind::audio) return true;   // buses and FX returns play in every render
+            if (! timeline::isSourceKind (t.kind)) return true;   // buses and FX returns play in every render
             if (include != nullptr && ! (*include)[(size_t) index]) return false;
+            if (t.kind == timeline::TrackKind::instrument) return true;   // its instrument plays the MIDI
             renderTrackClips (t, at + readAhead (t), n, L, R);   // delay compensation
             return true;
         }
     } source;
+    source.sampleRate = s.sampleRate;
 
     for (size_t ji = 0; ji < jobs.size(); ++ji)
     {

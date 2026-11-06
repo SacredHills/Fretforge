@@ -93,6 +93,8 @@ target_sources(ff_core PRIVATE
     src/core/MetronomeDsp.cpp
     src/core/ProjectFile.cpp
     src/core/Timeline.cpp
+    src/core/MidiClip.cpp
+    src/core/Automation.cpp
     src/core/TabModel.cpp
     src/core/GuitarPro.cpp
     src/core/MusicXml.cpp
@@ -210,6 +212,7 @@ if(FF_BUILD_TESTS)
         tests/AmpRigTests.cpp
         tests/RoutingTests.cpp
         tests/BuiltinPluginTests.cpp
+        tests/MidiAutomationTests.cpp
         tests/PerfProbe.cpp)
     target_link_libraries(ff_tests PRIVATE ff_core juce::juce_recommended_config_flags)
     target_compile_definitions(ff_tests PRIVATE FF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")

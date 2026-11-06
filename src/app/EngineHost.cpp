@@ -118,6 +118,9 @@ void EngineHost::changeListenerCallback (juce::ChangeBroadcaster*)
 void EngineHost::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
 {
     if (! m.isActiveSense() && ! m.isMidiClock())
+    {
         midiActivity.fetch_add (1);
+        engine.pushLiveMidi (m);   // armed instrument tracks play it
+    }
 }
 } // namespace ff

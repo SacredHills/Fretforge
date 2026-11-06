@@ -5,6 +5,8 @@
 #include "Recorder.h"
 #include "fx/AmpRig.h"
 #include "fx/InsertChain.h"
+#include "fx/InstrumentSlot.h"
+#include "core/Automation.h"
 #include <map>
 
 namespace ff
@@ -39,10 +41,30 @@ struct PlayTrack
     int level = 0;                            // processing stage: a track's sources all have lower levels
     bool outputMuted = false;                 // solo: the track feeds a soloed bus / FX return but is not heard directly
 
+    // instrument tracks
+    std::shared_ptr<fx::InstrumentSlot> instrument;
+    struct MidiEvent { juce::int64 pos; juce::uint8 b0, b1, b2; };
+    std::vector<MidiEvent> midiEvents;        // from the MIDI clips, timeline samples, sorted
+    juce::MidiBuffer midiBuffer;              // this block's events (space reserved at build)
+
+    // automation
+    struct Lane
+    {
+        enum Target { volume, pan, plugin } target = volume;
+        int slot = -1, param = -1;            // plugin: insert physical slot and parameter index
+        std::vector<automation::Point> points;
+        float last = -1.0f;                   // audio thread: last value sent to the plugin
+    };
+    std::vector<Lane> lanes;
+    float baseGainDb = 0.0f, basePan = 0.0f;  // fader / pan without automation
+
     // audio-thread state
     struct Idle { juce::int64 silentIn = 0, quietOut = 0; bool sleeping = false; } idle;   // skip effects that have nothing to do
     int downstreamLatency = 0;                // latency of the buses this track plays through
-    void resetState() noexcept { idle = {}; }
+    juce::int64 midiNextPos = -1;             // where the last rolling block ended (a jump silences held notes)
+    bool midiWasRolling = false;
+    float prevGainL = -1.0f, prevGainR = -1.0f;   // fader ramp across blocks (automation)
+    void resetState() noexcept { idle = {}; midiNextPos = -1; midiWasRolling = false; prevGainL = prevGainR = -1.0f; for (auto& l : lanes) l.last = -1.0f; }
 };
 
 /** Immutable snapshot of everything the audio thread needs to play the arrangement.
@@ -64,6 +86,7 @@ struct GraphBuildOptions
     std::function<std::shared_ptr<fx::AmpRig> (const juce::ValueTree& track)> rigFor;    // amp rig per track (optional)
     std::function<std::shared_ptr<fx::InsertChain> (const juce::ValueTree& track)> insertsFor;
     std::shared_ptr<fx::InsertChain> masterInserts;
+    std::function<std::shared_ptr<fx::InstrumentSlot> (const juce::ValueTree& track)> instrumentFor;
 };
 
 /** Builds the graph from the TRACKS node. Clip files are resolved relative to mediaBundle. */
@@ -78,6 +101,19 @@ void renderTrackClips (const PlayTrack& track, juce::int64 t0, int n, float* lef
 int trackLatency (const PlayTrack&) noexcept;
 /** How far ahead to read a track's clips so it lines up after its own effects and the buses it plays through. */
 inline int readAhead (const PlayTrack& t) noexcept { return trackLatency (t) + t.downstreamLatency; }
+
+/** Per block, before the track is mixed: collects the MIDI of [from, from + n) into midiBuffer (wrapping at the
+    loop), silences held notes after a jump or a stop, and applies the automation at `timeSec` (fader / pan gains,
+    plugin parameters). Real-time safe. */
+struct BlockTiming
+{
+    juce::int64 from = 0;          // timeline samples (with read-ahead)
+    bool rolling = false;
+    bool looping = false;
+    juce::int64 loopStart = 0, loopEnd = 0;
+    double timeSec = 0.0;          // audible time, for automation
+};
+void prepareTrackBlock (PlayTrack&, const BlockTiming&, int n) noexcept;
 
 /** Constant-power pan with unity at centre. */
 void panGains (float pan, float gain, float& left, float& right) noexcept;

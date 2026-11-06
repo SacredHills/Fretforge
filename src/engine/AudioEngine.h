@@ -9,6 +9,7 @@
 #include "TabSynth.h"
 #include "fx/AmpRig.h"
 #include <array>
+#include <cstring>
 #include <atomic>
 
 namespace ff
@@ -161,6 +162,22 @@ private:
     std::atomic<TabSequence*> pendingTab { nullptr };
     TabSequence* tabSeq = nullptr;
     SpscFifo<TabSequence*> retiredTabs;
+    // live MIDI (keyboard) for armed instrument tracks
+    struct LiveMidi { juce::uint8 b[3] {}; juce::uint8 size = 0; };
+    SpscFifo<LiveMidi> liveMidiIn;
+    std::array<LiveMidi, 256> liveMidiBlock;
+    int liveMidiCount = 0;
+public:
+    /** A message from a MIDI keyboard: played by every armed / monitored instrument track. Any single thread. */
+    void pushLiveMidi (const juce::MidiMessage& m) noexcept
+    {
+        if (m.getRawDataSize() > 3 || m.getRawDataSize() <= 0 || m.isSysEx()) return;
+        LiveMidi lm;
+        lm.size = (juce::uint8) m.getRawDataSize();
+        std::memcpy (lm.b, m.getRawData(), (size_t) lm.size);
+        liveMidiIn.push (&lm, 1);
+    }
+private:
     GuitarSynth synth;
     DrumSynth drumSynth;
     std::atomic<int> drumPreview { -1 };

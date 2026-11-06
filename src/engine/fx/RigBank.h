@@ -1,6 +1,7 @@
 #pragma once
 #include "AmpRig.h"
 #include "InsertChain.h"
+#include "InstrumentSlot.h"
 #include <map>
 
 namespace ff { class AudioEngine; }
@@ -18,6 +19,10 @@ std::shared_ptr<AmpRig> makeOfflineRig (const juce::ValueTree& rigTree, double s
 /** The same for a track's inserts (nullptr if the track has none). */
 std::shared_ptr<InsertChain> makeOfflineInserts (const juce::ValueTree& track, double sampleRate, int maxBlock,
                                                  juce::StringArray& warnings);
+
+/** The instrument of an instrument track for offline rendering (nullptr if none or it failed; then a warning). */
+std::shared_ptr<InstrumentSlot> makeOfflineInstrument (const juce::ValueTree& track, double sampleRate, int maxBlock,
+                                                       juce::StringArray& warnings);
 
 /** Message-thread owner of the live rigs: one per track whose RIG is enabled, plus the live practice rig.
 
@@ -67,6 +72,11 @@ public:
     Status::Plugin insertStatus (const juce::ValueTree& track, int slot) const;
     std::shared_ptr<juce::AudioPluginInstance> insertPlugin (const juce::ValueTree& track, int slot) const;
 
+    // ---- instruments of instrument tracks (TRACK/INSTRUMENT { desc, name, state }) ----
+    std::shared_ptr<InstrumentSlot> instrumentForTrack (const juce::String& trackId) const;
+    Status::Plugin instrumentStatus (const juce::ValueTree& track) const;
+    std::shared_ptr<juce::AudioPluginInstance> instrumentPlugin (const juce::ValueTree& track) const;
+
     /** Copies every plugin's current state into its PLUGIN node (also done every two seconds). */
     void captureAllPluginStates();
     /** Tries again to load every plugin that failed to load (e.g. after it was re-enabled). */
@@ -97,6 +107,17 @@ private:
         std::array<int, InsertChain::maxSlots> generation {};
     };
     std::map<juce::String, InsertEntry> inserts;
+    struct InstrumentEntry
+    {
+        std::shared_ptr<InstrumentSlot> slot;
+        juce::ValueTree node;   // the INSTRUMENT node
+        juce::String loadedDesc;
+        Status::Plugin status;
+        int generation = 0;
+    };
+    std::map<juce::String, InstrumentEntry> instruments;
+    void loadInstrument (const juce::String& key);
+    void syncInstruments (bool& changed);
     void syncInserts (InsertEntry&);
     void loadInsert (InsertEntry&, int physical);
     void releaseInsertPlugins (InsertEntry&);
