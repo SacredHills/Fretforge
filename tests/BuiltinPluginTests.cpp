@@ -107,6 +107,7 @@ public:
             expectEquals (p->getLatencySamples(), 0);
             expectWithinAbsoluteError (peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000), -12.04f, 0.1f);   // flat by default
             setP (*p, "b1on", 1.0f);
+            setP (*p, "b1use", 1.0f);
             setP (*p, "b1type", 0.0f);   // bell
             setP (*p, "b1freq", 1000.0f);
             setP (*p, "b1gain", 12.0f);
@@ -114,6 +115,7 @@ public:
             expectWithinAbsoluteError (peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000), -12.04f + 12.0f, 0.3f);
             setP (*p, "b1on", 0.0f);
             setP (*p, "b2on", 1.0f);
+            setP (*p, "b2use", 1.0f);
             setP (*p, "b2type", 3.0f);   // low cut
             setP (*p, "b2freq", 500.0f);
             expect (peakDb (run (*p, sine (50.0, 0.25f, 48000)), 24000) < -12.04f - 30.0f, "50 Hz is cut");
@@ -126,6 +128,7 @@ public:
             {
                 auto p = make ("fretforge:eq");
                 setP (*p, "b1on", 1.0f);
+                setP (*p, "b1use", 1.0f);
                 setP (*p, "b1type", 4.0f);   // high cut
                 setP (*p, "b1freq", 1000.0f);
                 setP (*p, "b1q", 0.7071f);
@@ -143,6 +146,7 @@ public:
         {
             auto p = make ("fretforge:eq");
             setP (*p, "b1on", 1.0f);
+            setP (*p, "b1use", 1.0f);
             setP (*p, "b1type", 0.0f);
             setP (*p, "b1freq", 1000.0f);
             setP (*p, "b1gain", 0.0f);
@@ -163,6 +167,7 @@ public:
         {
             auto p = make ("fretforge:eq");
             setP (*p, "b1on", 1.0f);
+            setP (*p, "b1use", 1.0f);
             setP (*p, "b1type", 0.0f);
             setP (*p, "b1freq", 1000.0f);
             setP (*p, "b1q", 0.7f);
@@ -188,6 +193,28 @@ public:
             expectEquals (p->getLatencySamples(), 0);
         }
 
+        beginTest ("EQ: a bypassed band does nothing, factory presets load");
+        {
+            auto p = make ("fretforge:eq");
+            setP (*p, "b1use", 1.0f);
+            setP (*p, "b1on", 0.0f);
+            setP (*p, "b1freq", 1000.0f);
+            setP (*p, "b1gain", 12.0f);
+            expectWithinAbsoluteError (peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000), -12.04f, 0.1f);
+            const auto& presets = bi::factoryPresets ("fretforge:eq");
+            expect (presets.size() > 10);
+            for (auto& pr : presets)
+            {
+                expect (bi::applyPreset (*p, pr));
+                const auto out = run (*p, sine (1000.0, 0.25f, 24000));
+                expect (std::isfinite (out.getMagnitude (0, 0, out.getNumSamples())), pr.name);
+            }
+            expect (bi::applyPreset (*p, presets.front()));   // flat
+            expectEquals (getP (*p, "b1use"), 0.0f);
+            p->prepareToPlay (sr, 256);
+            expectWithinAbsoluteError (peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000), -12.04f, 0.1f);
+        }
+
         beginTest ("EQ: projects with the old six-band EQ keep their settings");
         {
             juce::ValueTree st ("STATE");
@@ -200,7 +227,8 @@ public:
             p->setStateInformation (mb.getData(), (int) mb.getSize());
             expectEquals (getP (*p, "b1on"), 1.0f);
             expectWithinAbsoluteError (getP (*p, "b1freq"), 120.0f, 0.5f);
-            expectEquals (getP (*p, "b2on"), 0.0f);
+            expectEquals (getP (*p, "b1use"), 1.0f);
+            expectEquals (getP (*p, "b2use"), 0.0f);
             expectEquals (getP (*p, "b3on"), 1.0f);
             expectWithinAbsoluteError (getP (*p, "b3gain"), 6.0f, 0.01f);
             expectWithinAbsoluteError (getP (*p, "b3q"), 2.0f, 0.01f);

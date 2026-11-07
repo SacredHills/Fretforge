@@ -314,7 +314,12 @@ void SessionController::openInsert (juce::ValueTree track, int slot)
 {
     if (plugins == nullptr) return;
     if (auto p = rigBank->insertPlugin (track, slot))
-        plugins->showEditor (p, rig::insertNode (track, slot)[rig::ids::name].toString() + "  (" + track[ids::name].toString() + ")");
+    {
+        PluginManager::BypassControl bc;
+        bc.isBypassed = [this, track, slot] { return (bool) rig::insertNode (track, slot)[rig::ids::bypass]; };
+        bc.toggle = [this, track, slot] { toggleInsertBypass (track, slot); };
+        plugins->showEditor (p, rig::insertNode (track, slot)[rig::ids::name].toString() + "  (" + track[ids::name].toString() + ")", bc);
+    }
 }
 
 void SessionController::toggleInsertBypass (juce::ValueTree track, int slot)

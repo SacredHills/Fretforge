@@ -64,7 +64,22 @@ public:
     void disablePlugin (const juce::String& fileOrIdentifier);
     /** Called when plugins may load again (a held-back plugin was kept, or the blacklist changed). */
     std::function<void()> onPluginsReenabled;
-    void showEditor (std::shared_ptr<juce::AudioPluginInstance>, const juce::String& title);
+    /** Optional bypass switch shown in the plugin window (for track / master inserts). */
+    struct BypassControl
+    {
+        std::function<bool()> isBypassed;
+        std::function<void()> toggle;
+    };
+    void showEditor (std::shared_ptr<juce::AudioPluginInstance>, const juce::String& title, BypassControl bypass = {});
+
+    // ---- presets (the Presets button in every plugin window) ----
+    /** Where a plugin's own saved presets live: Documents/<app>/Presets/<plugin name>. */
+    static juce::File presetFolder (const juce::AudioPluginInstance&);
+    /** Saves the plugin's current settings as a .ffpreset file. Returns an error message, empty on success. */
+    static juce::String savePreset (juce::AudioPluginInstance&, const juce::File&);
+    /** Loads a .ffpreset file saved from the same plugin. Returns an error message, empty on success. */
+    static juce::String loadPreset (juce::AudioPluginInstance&, const juce::File&);
+    void showPresetMenu (juce::Component& anchor, juce::AudioPluginInstance&, std::function<void (const juce::String&)> status);
     void closeEditor (juce::AudioPluginInstance*);
     void closeAllEditors();
 
@@ -83,6 +98,7 @@ private:
     std::unique_ptr<juce::DocumentWindow> managerWindow;
     struct EditorWindow;
     std::map<juce::AudioPluginInstance*, std::unique_ptr<EditorWindow>> editors;
+    std::unique_ptr<juce::FileChooser> presetChooser;
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 };

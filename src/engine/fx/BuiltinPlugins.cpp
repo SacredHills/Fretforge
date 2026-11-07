@@ -1071,6 +1071,82 @@ juce::String stateWith (const juce::String& id, const std::map<juce::String, flo
     return mb.toBase64Encoding();
 }
 
+namespace
+{
+/** One EQ band for a preset: type, frequency, gain, Q, slope index (cuts), dynamics (0 off, 1 dynamic, 2 spectral). */
+struct PB { int type; float freq, gain = 0.0f, q = 1.0f; int slope = 1, dyn = 0; float thr = -24.0f, range = -6.0f; };
+Preset eqPreset (const char* category, const char* name, std::initializer_list<PB> bands, float out = 0.0f)
+{
+    Preset p { name, category, {} };
+    int b = 0;
+    for (auto& x : bands)
+    {
+        const auto id = [b] (const char* w) { return "b" + juce::String (b + 1) + w; };
+        p.values[id ("use")] = 1.0f;
+        p.values[id ("on")] = 1.0f;
+        p.values[id ("type")] = (float) x.type;
+        p.values[id ("freq")] = x.freq;
+        p.values[id ("gain")] = x.gain;
+        p.values[id ("q")] = x.q;
+        p.values[id ("slope")] = (float) x.slope;
+        p.values[id ("dyn")] = (float) x.dyn;
+        p.values[id ("thr")] = x.thr;
+        p.values[id ("range")] = x.range;
+        ++b;
+    }
+    p.values["out"] = out;
+    return p;
+}
+} // namespace
+
+const std::vector<Preset>& factoryPresets (const juce::String& id)
+{
+    static const std::vector<Preset> none;
+    // types: 0 bell, 1 low shelf, 2 high shelf, 3 low cut, 4 high cut, 5 notch, 6 band pass
+    // slopes: 0 = 6, 1 = 12, 2 = 18, 3 = 24, 4 = 36, 5 = 48, 6 = 72, 7 = 96 dB/oct
+    static const std::vector<Preset> eq {
+        eqPreset ("", "Flat (reset)", {}),
+        eqPreset ("Cleanup", "Low cut 80 Hz", { { 3, 80.0f, 0.0f, 0.7071f, 3 } }),
+        eqPreset ("Cleanup", "Remove 60 Hz hum", { { 5, 60.0f, 0.0f, 12.0f }, { 5, 120.0f, 0.0f, 12.0f }, { 5, 180.0f, 0.0f, 12.0f } }),
+        eqPreset ("Cleanup", "Resonance control (spectral)",
+                  { { 0, 2500.0f, 0.0f, 0.4f, 1, 2, -45.0f, -4.0f }, { 0, 220.0f, 0.0f, 0.6f, 1, 2, -35.0f, -3.0f } }),
+        eqPreset ("Vocals", "Clarity", { { 3, 100.0f, 0.0f, 0.7071f, 2 }, { 0, 300.0f, -3.0f, 1.2f }, { 0, 3000.0f, 2.5f, 1.0f }, { 2, 10000.0f, 3.0f, 0.7071f } }),
+        eqPreset ("Vocals", "De-esser (dynamic)", { { 3, 90.0f, 0.0f, 0.7071f, 1 }, { 0, 6500.0f, 0.0f, 3.0f, 1, 1, -32.0f, -8.0f } }),
+        eqPreset ("Vocals", "Warm & smooth", { { 3, 80.0f, 0.0f, 0.7071f, 1 }, { 1, 200.0f, 1.5f, 0.7071f }, { 0, 3500.0f, 0.0f, 0.8f, 1, 2, -40.0f, -5.0f } }),
+        eqPreset ("Guitar", "Tame harshness (spectral)", { { 3, 80.0f, 0.0f, 0.7071f, 1 }, { 0, 3000.0f, 0.0f, 0.7f, 1, 2, -40.0f, -6.0f } }),
+        eqPreset ("Guitar", "Remove mud", { { 3, 90.0f, 0.0f, 0.7071f, 3 }, { 0, 250.0f, -3.5f, 1.4f }, { 0, 1800.0f, 1.5f, 1.0f } }),
+        eqPreset ("Guitar", "Fizz cut (high gain)", { { 3, 90.0f, 0.0f, 0.7071f, 3 }, { 4, 9000.0f, 0.0f, 0.7071f, 3 }, { 0, 5500.0f, -3.0f, 2.0f } }),
+        eqPreset ("Guitar", "Acoustic sparkle", { { 3, 70.0f, 0.0f, 0.7071f, 1 }, { 0, 220.0f, -2.5f, 1.2f }, { 2, 8000.0f, 3.0f, 0.7071f } }),
+        eqPreset ("Bass", "Tight low end", { { 3, 35.0f, 0.0f, 0.7071f, 3 }, { 0, 80.0f, 2.0f, 1.0f }, { 0, 250.0f, -3.0f, 1.5f }, { 1, 120.0f, 0.0f, 0.7071f, 1, 1, -20.0f, -4.0f } }),
+        eqPreset ("Bass", "Growl", { { 3, 40.0f, 0.0f, 0.7071f, 3 }, { 0, 700.0f, 3.0f, 1.2f }, { 0, 2000.0f, 2.0f, 1.0f } }),
+        eqPreset ("Drums", "Kick punch", { { 3, 30.0f, 0.0f, 0.7071f, 3 }, { 0, 60.0f, 4.0f, 1.2f }, { 0, 350.0f, -5.0f, 2.0f }, { 0, 4000.0f, 3.0f, 1.0f } }),
+        eqPreset ("Drums", "Snare crack", { { 3, 100.0f, 0.0f, 0.7071f, 2 }, { 0, 200.0f, 2.0f, 1.0f }, { 0, 900.0f, -3.0f, 2.0f }, { 2, 5000.0f, 3.0f, 0.7071f } }),
+        eqPreset ("Drums", "Overheads / cymbals", { { 3, 200.0f, 0.0f, 0.7071f, 3 }, { 0, 3500.0f, 0.0f, 0.7f, 1, 2, -38.0f, -4.0f }, { 2, 12000.0f, 2.0f, 0.7071f } }),
+        eqPreset ("Drums", "Drum bus glue", { { 1, 80.0f, 1.5f, 0.7071f }, { 0, 400.0f, -2.0f, 0.8f }, { 2, 10000.0f, 2.0f, 0.7071f } }),
+        eqPreset ("Master", "Gentle air & low cut", { { 3, 25.0f, 0.0f, 0.7071f, 5 }, { 2, 12000.0f, 1.5f, 0.7071f } }),
+        eqPreset ("Master", "Smile curve", { { 3, 25.0f, 0.0f, 0.7071f, 5 }, { 1, 90.0f, 2.0f, 0.7071f }, { 0, 800.0f, -1.5f, 0.5f }, { 2, 10000.0f, 2.0f, 0.7071f } }),
+        eqPreset ("Master", "Low end control (dynamic)", { { 3, 25.0f, 0.0f, 0.7071f, 5 }, { 1, 100.0f, 0.0f, 0.7071f, 1, 1, -18.0f, -3.0f } }),
+        eqPreset ("Effects", "Telephone", { { 3, 400.0f, 0.0f, 0.7071f, 3 }, { 4, 3500.0f, 0.0f, 0.7071f, 3 }, { 0, 1500.0f, 4.0f, 1.0f } }),
+        eqPreset ("Effects", "AM radio", { { 6, 1200.0f, 0.0f, 0.9f }, { 4, 5000.0f, 0.0f, 0.7071f, 5 } }, 6.0f),
+    };
+    return id == "fretforge:eq" ? eq : none;
+}
+
+bool applyPreset (juce::AudioPluginInstance& inst, const Preset& preset)
+{
+    auto* b = dynamic_cast<Base*> (&inst);
+    if (b == nullptr) return false;
+    for (auto* prm : b->getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (prm))
+        {
+            const auto it = preset.values.find (rp->getParameterID());
+            rp->beginChangeGesture();
+            rp->setValueNotifyingHost (it != preset.values.end() ? rp->convertTo0to1 (it->second) : rp->getDefaultValue());
+            rp->endChangeGesture();
+        }
+    return true;
+}
+
 void Format::findAllTypesForFile (juce::OwnedArray<juce::PluginDescription>& results, const juce::String& id)
 {
     if (const auto* i = find (id)) results.add (new juce::PluginDescription (describe (*i)));

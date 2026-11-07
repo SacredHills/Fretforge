@@ -28,6 +28,16 @@ std::unique_ptr<juce::AudioPluginInstance> create (const juce::String& id);
     track. Values are in the parameter's own units. */
 juce::String stateWith (const juce::String& id, const std::map<juce::String, float>& values);
 
+/** A factory preset: parameter values in their own units; every parameter not listed goes back to its default. */
+struct Preset
+{
+    juce::String name, category;
+    std::map<juce::String, float> values;
+};
+const std::vector<Preset>& factoryPresets (const juce::String& id);
+/** Applies a preset to a built-in plugin instance (false if it is not one). */
+bool applyPreset (juce::AudioPluginInstance&, const Preset&);
+
 /** Plugin format for the AudioPluginFormatManager, so the built-ins are created like any other plugin. */
 class Format final : public juce::AudioPluginFormat
 {

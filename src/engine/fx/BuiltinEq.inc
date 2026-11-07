@@ -23,10 +23,11 @@ juce::String eqId (int band, const char* what) { return "b" + juce::String (band
 /** One band's settings. All floats (choices as their index) so a whole set compares with memcmp. */
 struct EqBand
 {
-    float on = 0, type = 0, freq = 1000, gain = 0, q = 1, slope = 1, dyn = 0, range = -6, thr = -24;
+    float on = 0, type = 0, freq = 1000, gain = 0, q = 1, slope = 1, dyn = 0, range = -6, thr = -24, use = 0;   // use: the band exists (on: not bypassed)
     int typeI() const { return juce::roundToInt (type); }
     int dynI() const { return juce::roundToInt (dyn); }
-    bool isOn() const { return on > 0.5f; }
+    bool isUsed() const { return use > 0.5f; }
+    bool isOn() const { return isUsed() && on > 0.5f; }
     bool dynamic() const { return isOn() && dynI() == eqDynDynamic && eqHasGain (typeI()); }
     bool spectral() const { return isOn() && dynI() == eqDynSpectral && ! eqIsCut (typeI()); }
 };
@@ -240,11 +241,12 @@ public:
     {
         for (int b = 0; b < eqBandCount; ++b)
         {
-            const char* what[] { "on", "type", "freq", "gain", "q", "slope", "dyn", "range", "thr" };
-            for (int k = 0; k < 9; ++k) bandParams[(size_t) b][(size_t) k] = state.getParameter (eqId (b, what[k]));
+            const char* what[] { "on", "type", "freq", "gain", "q", "slope", "dyn", "range", "thr", "use" };
+            for (int k = 0; k < 10; ++k) bandParams[(size_t) b][(size_t) k] = state.getParameter (eqId (b, what[k]));
             bandParams[(size_t) b][6]->addListener (this);
             bandParams[(size_t) b][1]->addListener (this);
             bandParams[(size_t) b][0]->addListener (this);
+            bandParams[(size_t) b][9]->addListener (this);
         }
         attackP = state.getParameter ("attack");
         releaseP = state.getParameter ("release");
@@ -255,7 +257,7 @@ public:
     ~Eq() override
     {
         cancelPendingUpdate();
-        for (auto& bp : bandParams) for (int k : { 0, 1, 6 }) bp[(size_t) k]->removeListener (this);
+        for (auto& bp : bandParams) for (int k : { 0, 1, 6, 9 }) bp[(size_t) k]->removeListener (this);
     }
 
     static Layout layout()
@@ -289,6 +291,9 @@ public:
         l.add (param ("attack", "Dyn attack", 0.5f, 200.0f, 10.0f, "ms", 15.0f));
         l.add (param ("release", "Dyn release", 5.0f, 2000.0f, 120.0f, "ms", 150.0f));
         l.add (param ("out", "Output", -18.0f, 18.0f, 0.0f, "dB"));
+        // added later: at the end so automation (by parameter index) of the parameters above keeps working
+        for (int b = 0; b < eqBandCount; ++b)
+            l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { eqId (b, "use"), 1 }, "Band " + juce::String (b + 1) + " in use", false));
         return l;
     }
 
@@ -301,7 +306,7 @@ public:
             auto& p = bandParams[(size_t) b];
             auto& x = s.b[(size_t) b];
             x.on = value (p[0]); x.type = value (p[1]); x.freq = value (p[2]); x.gain = value (p[3]); x.q = value (p[4]);
-            x.slope = value (p[5]); x.dyn = value (p[6]); x.range = value (p[7]); x.thr = value (p[8]);
+            x.slope = value (p[5]); x.dyn = value (p[6]); x.range = value (p[7]); x.thr = value (p[8]); x.use = value (p[9]);
         }
         s.attack = value (attackP);
         s.release = value (releaseP);
@@ -332,6 +337,14 @@ public:
         if (x == nullptr || ! x->hasTagName (state.state.getType())) return;
         auto tree = juce::ValueTree::fromXml (*x);
         if (tree.getChildWithProperty ("id", "m1G").isValid()) tree = migrateOldState (tree);
+        else if (! tree.getChildWithProperty ("id", "b1use").isValid())   // saved before bands could be bypassed: on = in use
+            for (int b = 0; b < eqBandCount; ++b)
+            {
+                juce::ValueTree c ("PARAM");
+                c.setProperty ("id", eqId (b, "use"), nullptr);
+                c.setProperty ("value", tree.getChildWithProperty ("id", eqId (b, "on"))["value"], nullptr);
+                tree.appendChild (c, nullptr);
+            }
         state.replaceState (tree);
         updateLatency();
     }
@@ -431,7 +444,7 @@ public:
     std::atomic<bool> spectralOn { false };
 
 private:
-    std::array<std::array<juce::RangedAudioParameter*, 9>, eqBandCount> bandParams {};
+    std::array<std::array<juce::RangedAudioParameter*, 10>, eqBandCount> bandParams {};
     juce::RangedAudioParameter *attackP = nullptr, *releaseP = nullptr, *outP = nullptr;
     std::array<std::array<EqBandFilter, eqBandCount>, 2> filters;
     std::array<Biquad, eqBandCount> detectors;
@@ -466,6 +479,7 @@ private:
         };
         auto band = [&] (int b, bool on, int type, float f, float g, float q) {
             set (eqId (b, "on"), on ? 1.0f : 0.0f);
+            set (eqId (b, "use"), on ? 1.0f : 0.0f);
             set (eqId (b, "type"), (float) type);
             set (eqId (b, "freq"), f);
             set (eqId (b, "gain"), g);
@@ -523,7 +537,7 @@ public:
             g.drawText (f >= 1000.0f ? juce::String (juce::roundToInt (f / 1000.0f)) + "k" : juce::String (juce::roundToInt (f)),
                         juce::Rectangle<float> (x + 2, r.getBottom() - 14, 30, 12), juce::Justification::centredLeft);
         }
-        for (float db : { -24.0f, -18.0f, -12.0f, -6.0f, 0.0f, 6.0f, 12.0f, 18.0f, 24.0f })
+        for (float db : { -30.0f, -24.0f, -18.0f, -12.0f, -6.0f, 0.0f, 6.0f, 12.0f, 18.0f, 24.0f, 30.0f })
         {
             const float y = yFor (db);
             g.setColour (col::outline.withAlpha (db == 0.0f ? 1.0f : 0.4f));
@@ -610,9 +624,21 @@ public:
         for (int b = 0; b < eqBandCount; ++b)
         {
             const auto& band = s.b[(size_t) b];
-            if (! band.isOn()) continue;
+            if (! band.isUsed()) continue;
             const auto p = nodePos (b, s);
             const auto c = eqBandColours[b];
+            if (! band.isOn())   // bypassed: a hollow point, still there to grab and switch back on
+            {
+                const bool hotB = b == selected || b == hover || b == dragging;
+                g.setColour (col::well);
+                g.fillEllipse (p.x - 7.0f, p.y - 7.0f, 14.0f, 14.0f);
+                g.setColour (c.withAlpha (hotB ? 0.9f : 0.5f));
+                g.drawEllipse (p.x - 7.0f, p.y - 7.0f, 14.0f, 14.0f, 1.5f);
+                if (b == selected) { g.setColour (juce::Colours::white.withAlpha (0.7f)); g.drawEllipse (p.x - 9.0f, p.y - 9.0f, 18.0f, 18.0f, 1.0f); }
+                g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+                g.drawText (juce::String (b + 1), juce::Rectangle<float> (p.x - 7.0f, p.y - 7.0f, 14.0f, 14.0f), juce::Justification::centred);
+                continue;
+            }
             const bool hot = b == selected || b == hover || b == dragging;
             if (band.dynamic() || band.spectral())   // a ring marks a dynamic band
             {
@@ -635,7 +661,7 @@ public:
 
         // readout for the node under the mouse
         const int info = dragging >= 0 ? dragging : hover;
-        if (info >= 0 && s.b[(size_t) info].isOn())
+        if (info >= 0 && s.b[(size_t) info].isUsed())
         {
             const auto& band = s.b[(size_t) info];
             juce::String t = eqTypeNames[band.typeI()] + "  " + freqText (band.freq);
@@ -643,6 +669,7 @@ public:
             if (eqIsCut (band.typeI())) t << "  " << eqSlopeNames[juce::roundToInt (band.slope)];
             else t << "  Q " << juce::String (band.q, 2);
             if (band.dynamic() || band.spectral()) t << "  (" << eqDynNames[band.dynI()] << ")";
+            if (! band.isOn()) t << "  (bypassed)";
             const auto p = nodePos (info, s);
             g.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
             auto box = juce::Rectangle<float> (p.x + 12.0f, p.y - 30.0f, (float) juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), t) + 14.0f, 20.0f)
@@ -695,10 +722,10 @@ public:
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
         const int b = nodeAt (e.position);
-        if (b >= 0) { set (b, 0, 0.0f); select (-1); return; }   // remove the band
+        if (b >= 0) { set (b, 9, 0.0f); select (-1); return; }   // remove the band
         const auto s = eq.settings();
         int free = -1;
-        for (int k = 0; k < eqBandCount && free < 0; ++k) if (! s.b[(size_t) k].isOn()) free = k;
+        for (int k = 0; k < eqBandCount && free < 0; ++k) if (! s.b[(size_t) k].isUsed()) free = k;
         if (free < 0) return;
         const float f = freqFor (e.position.x);
         const int type = f < 35.0f ? eqLowCut : f > 15000.0f ? eqHighCut : eqBell;
@@ -708,6 +735,7 @@ public:
         set (free, 4, type == eqBell ? 1.0f : 0.7071f);
         set (free, 6, 0.0f);
         set (free, 0, 1.0f);
+        set (free, 9, 1.0f);
         select (free);
     }
     void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override
@@ -726,7 +754,7 @@ public:
     {
         if ((k == juce::KeyPress::deleteKey || k == juce::KeyPress::backspaceKey) && selected >= 0)
         {
-            set (selected, 0, 0.0f);
+            set (selected, 9, 0.0f);
             select (-1);
             return true;
         }
@@ -756,11 +784,13 @@ private:
         m.addSubMenu ("Slope", slopes, eqIsCut (band.typeI()));
         m.addSubMenu ("Dynamics", dyn);
         m.addSeparator();
+        m.addItem (2, band.isOn() ? "Bypass band" : "Switch band on", true, ! band.isOn());
         m.addItem (1, "Delete band  (double-click)");
         juce::Component::SafePointer<EqGraph> safe (this);
         m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, b] (int r) {
             if (safe == nullptr || r == 0) return;
-            if (r == 1) { safe->set (b, 0, 0.0f); safe->select (-1); }
+            if (r == 1) { safe->set (b, 9, 0.0f); safe->select (-1); }
+            else if (r == 2) safe->set (b, 0, safe->eq.settings().b[(size_t) b].isOn() ? 0.0f : 1.0f);
             else if (r >= 300) safe->set (b, 6, (float) (r - 300));
             else if (r >= 200) safe->set (b, 5, (float) (r - 200));
             else if (r >= 100) safe->set (b, 1, (float) (r - 100));
@@ -770,7 +800,7 @@ private:
 
     static bool anyOn (const EqAll& s)
     {
-        for (auto& b : s.b) if (b.isOn()) return true;
+        for (auto& b : s.b) if (b.isUsed()) return true;
         return false;
     }
     static juce::String freqText (float f) { return f >= 1000.0f ? juce::String (f / 1000.0f, 2) + " kHz" : juce::String (juce::roundToInt (f)) + " Hz"; }
@@ -854,7 +884,7 @@ private:
         repaint();
     }
 
-    static constexpr float fLo = 20.0f, fHi = 20000.0f, dbRange = 26.0f;
+    static constexpr float fLo = 20.0f, fHi = 20000.0f, dbRange = 32.0f;
     float xFor (float f) const { return (float) getWidth() * std::log (f / fLo) / std::log (fHi / fLo); }
     float freqFor (float x) const { return juce::jlimit (fLo, fHi, fLo * std::pow (fHi / fLo, x / (float) juce::jmax (1, getWidth()))); }
     float yFor (float db) const { return (float) getHeight() * 0.5f - db / dbRange * (float) getHeight() * 0.5f; }
@@ -863,7 +893,8 @@ private:
     {
         const auto& band = s.b[(size_t) b];
         const float x = xFor (juce::jlimit (fLo, fHi, band.freq));
-        return { x, yFor (eqHasGain (band.typeI()) ? band.gain : 0.0f) };
+        const float y = yFor (eqHasGain (band.typeI()) ? band.gain : 0.0f);
+        return { x, juce::jlimit (8.0f, (float) getHeight() - 8.0f, y) };
     }
     int nodeAt (juce::Point<float> p) const
     {
@@ -871,7 +902,7 @@ private:
         int best = -1;
         float bestD = 13.0f;
         for (int b = 0; b < eqBandCount; ++b)
-            if (s.b[(size_t) b].isOn())
+            if (s.b[(size_t) b].isUsed())
                 if (const float d = nodePos (b, s).getDistanceFrom (p); d < bestD) { bestD = d; best = b; }
         return best;
     }
@@ -914,8 +945,7 @@ public:
         addAndMakeVisible (onButton);
         removeButton.onClick = [this] {
             if (graph.selected < 0) return;
-            auto* p = eq.bandParam (graph.selected, 0);
-            p->setValueNotifyingHost (0.0f);
+            eq.bandParam (graph.selected, 9)->setValueNotifyingHost (0.0f);
             graph.select (-1);
         };
         addAndMakeVisible (removeButton);
@@ -945,7 +975,7 @@ public:
         // start on the first band that is on
         const auto s = eq.settings();
         int first = -1;
-        for (int b = 0; b < eqBandCount && first < 0; ++b) if (s.b[(size_t) b].isOn()) first = b;
+        for (int b = 0; b < eqBandCount && first < 0; ++b) if (s.b[(size_t) b].isUsed()) first = b;
         graph.select (first);
         startTimerHz (10);
     }

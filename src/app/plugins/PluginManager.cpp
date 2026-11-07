@@ -160,11 +160,25 @@ private:
 /** Copy / Paste bar above a plugin's own editor. */
 struct PluginManager::EditorWindow final : public juce::DocumentWindow
 {
-    struct Content final : public juce::Component, private juce::ComponentListener
+    struct Content final : public juce::Component, private juce::ComponentListener, private juce::Timer
     {
-        Content (PluginManager& m, juce::AudioPluginInstance& p, juce::AudioProcessorEditor& e) : manager (m), plugin (p), editor (e)
+        Content (PluginManager& m, juce::AudioPluginInstance& p, juce::AudioProcessorEditor& e, BypassControl bp)
+            : manager (m), plugin (p), editor (e), bypassControl (std::move (bp))
         {
-            for (auto* b : { &copy, &paste })
+            presets.setTooltip ("Presets: load one, save the current settings as your own preset, or load a preset file");
+            presets.onClick = [this] {
+                juce::Component::SafePointer<Content> safe (this);
+                manager.showPresetMenu (presets, plugin, [safe] (const juce::String& msg) {
+                    if (safe != nullptr) safe->status.setText (msg, juce::dontSendNotification);
+                });
+            };
+            addAndMakeVisible (presets);
+            bypass.setClickingTogglesState (false);
+            bypass.setColour (juce::TextButton::buttonOnColourId, palette::warn);
+            bypass.setTooltip ("Bypass: the sound passes through untouched while this is lit");
+            bypass.onClick = [this] { if (bypassControl.toggle) bypassControl.toggle(); syncBypass(); };
+            if (bypassControl.isBypassed) { addAndMakeVisible (bypass); syncBypass(); startTimerHz (5); }
+            for (auto* b : { &copy, &paste, &presets, &bypass })
             {
                 b->setWantsKeyboardFocus (false);
                 addAndMakeVisible (*b);
@@ -195,15 +209,26 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             const auto& c = manager.clipboard;
             paste.setEnabled (! c.empty() && c.identifier == plugin.getPluginDescription().createIdentifierString());
         }
-        void fit() { setSize (juce::jmax (editor.getWidth(), 260), editor.getHeight() + bar); }
+        void fit() { setSize (juce::jmax (editor.getWidth(), 460), editor.getHeight() + bar); }
+        void syncBypass()
+        {
+            if (! bypassControl.isBypassed) return;
+            const bool on = bypassControl.isBypassed();
+            bypass.setToggleState (on, juce::dontSendNotification);
+            bypass.setButtonText (on ? "Bypassed" : "Bypass");
+        }
+        void timerCallback() override { syncBypass(); }
         void componentMovedOrResized (juce::Component&, bool, bool wasResized) override { if (wasResized && ! resizing) fit(); }
         void resized() override
         {
             auto r = getLocalBounds();
             auto top = r.removeFromTop (bar).reduced (6, 4);
-            copy.setBounds (top.removeFromLeft (64));
+            presets.setBounds (top.removeFromLeft (74));
             top.removeFromLeft (4);
-            paste.setBounds (top.removeFromLeft (64));
+            if (bypass.isVisible()) { bypass.setBounds (top.removeFromLeft (78)); top.removeFromLeft (10); }
+            copy.setBounds (top.removeFromLeft (56));
+            top.removeFromLeft (4);
+            paste.setBounds (top.removeFromLeft (56));
             top.removeFromLeft (10);
             status.setBounds (top);
             const juce::ScopedValueSetter<bool> svs (resizing, true);
@@ -221,12 +246,14 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         PluginManager& manager;
         juce::AudioPluginInstance& plugin;
         juce::AudioProcessorEditor& editor;
-        juce::TextButton copy { "Copy" }, paste { "Paste" };
+        juce::TextButton copy { "Copy" }, paste { "Paste" }, presets { "Presets" }, bypass { "Bypass" };
+        BypassControl bypassControl;
         juce::Label status;
         bool resizing = false;
     };
 
-    EditorWindow (PluginManager& m, std::shared_ptr<juce::AudioPluginInstance> p, const juce::String& title, std::function<void()> closed)
+    EditorWindow (PluginManager& m, std::shared_ptr<juce::AudioPluginInstance> p, const juce::String& title, std::function<void()> closed,
+                  BypassControl bypass)
         : juce::DocumentWindow (title, palette::bg, juce::DocumentWindow::closeButton | juce::DocumentWindow::minimiseButton),
           plugin (std::move (p)), onClosed (std::move (closed))
     {
@@ -238,7 +265,7 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         }
         if (ed == nullptr) ed = new juce::GenericAudioProcessorEditor (*plugin);
         editor.reset (ed);
-        content = std::make_unique<Content> (m, *plugin, *ed);
+        content = std::make_unique<Content> (m, *plugin, *ed, std::move (bypass));
         setContentNonOwned (content.get(), true);
         setResizable (ed->isResizable(), false);
         setAlwaysOnTop (true);
@@ -588,13 +615,134 @@ void PluginManager::showManager()
     managerWindow->toFront (true);
 }
 
-void PluginManager::showEditor (std::shared_ptr<juce::AudioPluginInstance> p, const juce::String& title)
+void PluginManager::showEditor (std::shared_ptr<juce::AudioPluginInstance> p, const juce::String& title, BypassControl bypass)
 {
     if (p == nullptr) return;
     auto* key = p.get();
     if (auto it = editors.find (key); it != editors.end()) { it->second->setVisible (true); it->second->toFront (true); return; }
     std::weak_ptr<bool> token = alive;
-    editors[key] = std::make_unique<EditorWindow> (*this, p, title, [this, token, key] { if (! token.expired()) closeEditor (key); });
+    editors[key] = std::make_unique<EditorWindow> (*this, p, title, [this, token, key] { if (! token.expired()) closeEditor (key); },
+                                                   std::move (bypass));
+}
+
+// ===================================================================== presets
+
+juce::File PluginManager::presetFolder (const juce::AudioPluginInstance& p)
+{
+    const auto app = juce::JUCEApplicationBase::getInstance() != nullptr ? juce::JUCEApplicationBase::getInstance()->getApplicationName()
+                                                                         : juce::String ("FretForge");
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+        .getChildFile (app).getChildFile ("Presets").getChildFile (juce::File::createLegalFileName (p.getPluginDescription().name));
+}
+
+juce::String PluginManager::savePreset (juce::AudioPluginInstance& p, const juce::File& f)
+{
+    const auto d = p.getPluginDescription();
+    juce::XmlElement x ("FretForgePreset");
+    x.setAttribute ("version", 1);
+    x.setAttribute ("name", f.getFileNameWithoutExtension());
+    x.setAttribute ("pluginName", d.name);
+    x.setAttribute ("pluginId", d.createIdentifierString());
+    x.setAttribute ("format", d.pluginFormatName);
+    x.createNewChildElement ("State")->addTextElement (fx::capturePluginState (p));
+    f.getParentDirectory().createDirectory();
+    if (! x.writeTo (f)) return "Could not write " + f.getFullPathName();
+    return {};
+}
+
+juce::String PluginManager::loadPreset (juce::AudioPluginInstance& p, const juce::File& f)
+{
+    const auto x = juce::XmlDocument::parse (f);
+    if (x == nullptr || ! x->hasTagName ("FretForgePreset")) return f.getFileName() + " is not a preset file";
+    const auto d = p.getPluginDescription();
+    if (x->getStringAttribute ("pluginId") != d.createIdentifierString() && x->getStringAttribute ("pluginName") != d.name)
+        return "That preset is for " + x->getStringAttribute ("pluginName");
+    const auto* st = x->getChildByName ("State");
+    if (st == nullptr) return f.getFileName() + " has no settings in it";
+    fx::restorePluginState (p, st->getAllSubText().trim());
+    return {};
+}
+
+void PluginManager::showPresetMenu (juce::Component& anchor, juce::AudioPluginInstance& plugin, std::function<void (const juce::String&)> status)
+{
+    const auto builtinId = plugin.getPluginDescription().pluginFormatName == fx::builtin::formatName
+                               ? plugin.getPluginDescription().fileOrIdentifier : juce::String();
+    const auto& factory = fx::builtin::factoryPresets (builtinId);
+    const auto folder = presetFolder (plugin);
+    auto files = folder.findChildFiles (juce::File::findFiles, false, "*.ffpreset");
+    files.sort();
+
+    juce::PopupMenu m;
+    if (! factory.empty())
+    {
+        m.addSectionHeader ("Factory presets");
+        std::map<juce::String, juce::PopupMenu> cats;
+        juce::StringArray order;
+        for (int i = 0; i < (int) factory.size(); ++i)
+        {
+            const auto& pr = factory[(size_t) i];
+            if (pr.category.isEmpty()) { m.addItem (1000 + i, pr.name); continue; }
+            if (! order.contains (pr.category)) order.add (pr.category);
+            cats[pr.category].addItem (1000 + i, pr.name);
+        }
+        for (auto& c : order) m.addSubMenu (c, cats[c]);
+    }
+    m.addSectionHeader ("My presets");
+    if (files.isEmpty()) m.addItem (-1, "(none saved yet)", false);
+    for (int i = 0; i < files.size(); ++i) m.addItem (2000 + i, files[i].getFileNameWithoutExtension());
+    m.addSeparator();
+    m.addItem (1, "Save preset...");
+    m.addItem (2, "Load preset file...");
+    m.addItem (3, "Show preset folder");
+
+    juce::Component::SafePointer<juce::Component> safeAnchor (&anchor);
+    auto* pl = &plugin;
+    std::weak_ptr<bool> token = alive;
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&anchor),
+                     [this, token, safeAnchor, pl, factory, files, folder, status] (int r) {
+        if (token.expired() || safeAnchor == nullptr || r == 0) return;
+        if (r >= 2000 && r - 2000 < files.size())
+        {
+            const auto err = loadPreset (*pl, files[r - 2000]);
+            status (err.isEmpty() ? "Loaded " + files[r - 2000].getFileNameWithoutExtension() : err);
+        }
+        else if (r >= 1000 && r - 1000 < (int) factory.size())
+        {
+            fx::builtin::applyPreset (*pl, factory[(size_t) (r - 1000)]);
+            status ("Preset: " + factory[(size_t) (r - 1000)].name);
+        }
+        else if (r == 1)
+        {
+            auto* w = new juce::AlertWindow ("Save preset", "Name for this preset of " + pl->getPluginDescription().name + ":",
+                                             juce::MessageBoxIconType::NoIcon);
+            w->addTextEditor ("name", "My preset");
+            w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            w->setAlwaysOnTop (true);
+            w->enterModalState (true, juce::ModalCallbackFunction::create ([w, pl, folder, status, token] (int res) {
+                const auto name = juce::File::createLegalFileName (w->getTextEditorContents ("name").trim());
+                if (res != 1 || name.isEmpty() || token.expired()) return;
+                const auto f = folder.getChildFile (name + ".ffpreset");
+                const auto err = savePreset (*pl, f);
+                status (err.isEmpty() ? "Saved preset " + name : err);
+            }), true);
+        }
+        else if (r == 2)
+        {
+            presetChooser = std::make_unique<juce::FileChooser> ("Load preset", folder.exists() ? folder : folder.getParentDirectory(), "*.ffpreset");
+            presetChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                        [pl, status, token] (const juce::FileChooser& fc) {
+                if (token.expired() || fc.getResult() == juce::File()) return;
+                const auto err = loadPreset (*pl, fc.getResult());
+                status (err.isEmpty() ? "Loaded " + fc.getResult().getFileNameWithoutExtension() : err);
+            });
+        }
+        else if (r == 3)
+        {
+            folder.createDirectory();
+            folder.startAsProcess();
+        }
+    });
 }
 
 void PluginManager::closeEditor (juce::AudioPluginInstance* p)
