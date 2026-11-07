@@ -104,14 +104,111 @@ public:
         beginTest ("EQ: bell boost and low cut");
         {
             auto p = make ("fretforge:eq");
+            expectEquals (p->getLatencySamples(), 0);
             expectWithinAbsoluteError (peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000), -12.04f, 0.1f);   // flat by default
-            setP (*p, "m1F", 1000.0f);
-            setP (*p, "m1G", 12.0f);
-            setP (*p, "m1Q", 1.0f);
+            setP (*p, "b1on", 1.0f);
+            setP (*p, "b1type", 0.0f);   // bell
+            setP (*p, "b1freq", 1000.0f);
+            setP (*p, "b1gain", 12.0f);
+            setP (*p, "b1q", 1.0f);
             expectWithinAbsoluteError (peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000), -12.04f + 12.0f, 0.3f);
-            setP (*p, "m1G", 0.0f);
-            setP (*p, "hp", 500.0f);
+            setP (*p, "b1on", 0.0f);
+            setP (*p, "b2on", 1.0f);
+            setP (*p, "b2type", 3.0f);   // low cut
+            setP (*p, "b2freq", 500.0f);
             expect (peakDb (run (*p, sine (50.0, 0.25f, 48000)), 24000) < -12.04f - 30.0f, "50 Hz is cut");
+        }
+
+        beginTest ("EQ: cut slopes");
+        {
+            const int dbPerOct[] { 6, 12, 18, 24, 36, 48, 72, 96 };
+            for (int k = 0; k < 8; ++k)
+            {
+                auto p = make ("fretforge:eq");
+                setP (*p, "b1on", 1.0f);
+                setP (*p, "b1type", 4.0f);   // high cut
+                setP (*p, "b1freq", 1000.0f);
+                setP (*p, "b1q", 0.7071f);
+                setP (*p, "b1slope", (float) k);
+                // two octaves above the corner: about 2 x slope down (Butterworth); at the corner -3 dB
+                const float far = peakDb (run (*p, sine (4000.0, 0.25f, 24000)), 12000) + 12.04f;
+                const float corner = peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000) + 12.04f;
+                if (dbPerOct[k] * 2 < 100) expectWithinAbsoluteError (far, -2.0f * (float) dbPerOct[k], 0.25f * (float) dbPerOct[k] + 1.0f);
+                else expect (far < -95.0f, "steepest slopes reach the noise floor");
+                expectWithinAbsoluteError (corner, -3.0f, 0.6f);
+            }
+        }
+
+        beginTest ("EQ: dynamic band turns a loud signal down more than a quiet one");
+        {
+            auto p = make ("fretforge:eq");
+            setP (*p, "b1on", 1.0f);
+            setP (*p, "b1type", 0.0f);
+            setP (*p, "b1freq", 1000.0f);
+            setP (*p, "b1gain", 0.0f);
+            setP (*p, "b1dyn", 1.0f);    // dynamic
+            setP (*p, "b1thr", -30.0f);
+            setP (*p, "b1range", -12.0f);
+            const float loud = peakDb (run (*p, sine (1000.0, 0.5f, 48000)), 36000) - juce::Decibels::gainToDecibels (0.5f);
+            p->prepareToPlay (sr, 256);
+            const float quiet = peakDb (run (*p, sine (1000.0, 0.01f, 48000)), 36000) - juce::Decibels::gainToDecibels (0.01f);
+            expectWithinAbsoluteError (loud, -12.0f, 1.0f);   // far above the threshold: the whole range
+            expectWithinAbsoluteError (quiet, 0.0f, 0.5f);    // below: untouched
+            p->prepareToPlay (sr, 256);
+            const float other = peakDb (run (*p, sine (100.0, 0.5f, 48000)), 36000) - juce::Decibels::gainToDecibels (0.5f);
+            expectWithinAbsoluteError (other, 0.0f, 1.0f);    // outside the band: untouched
+        }
+
+        beginTest ("EQ: spectral dynamics");
+        {
+            auto p = make ("fretforge:eq");
+            setP (*p, "b1on", 1.0f);
+            setP (*p, "b1type", 0.0f);
+            setP (*p, "b1freq", 1000.0f);
+            setP (*p, "b1q", 0.7f);
+            setP (*p, "b1dyn", 2.0f);    // spectral
+            setP (*p, "b1thr", -30.0f);
+            setP (*p, "b1range", -12.0f);
+            p->prepareToPlay (sr, 256);
+            expectEquals (p->getLatencySamples(), 2048);
+            // quiet: passes unchanged (delayed by the latency)
+            const auto in = sine (440.0, 0.01f, 24000);
+            const auto out = run (*p, in);
+            float err = 0.0f;
+            for (int i = 6000; i < 20000; ++i) err = juce::jmax (err, std::abs (out.getSample (0, i) - in.getSample (0, i - 2048)));
+            expect (err < 1.0e-4f, "unity below the threshold, err " + juce::String (err));
+            p->prepareToPlay (sr, 256);
+            const float loud = peakDb (run (*p, sine (1000.0, 0.5f, 48000)), 36000) - juce::Decibels::gainToDecibels (0.5f);
+            expectWithinAbsoluteError (loud, -12.0f, 1.5f);
+            p->prepareToPlay (sr, 256);
+            const float low = peakDb (run (*p, sine (60.0, 0.5f, 48000)), 36000) - juce::Decibels::gainToDecibels (0.5f);
+            expect (low > -1.0f, "far outside the band: untouched");
+            setP (*p, "b1dyn", 0.0f);
+            p->prepareToPlay (sr, 256);
+            expectEquals (p->getLatencySamples(), 0);
+        }
+
+        beginTest ("EQ: projects with the old six-band EQ keep their settings");
+        {
+            juce::ValueTree st ("STATE");
+            auto add = [&st] (const char* id, float v) { juce::ValueTree c ("PARAM"); c.setProperty ("id", id, nullptr); c.setProperty ("value", v, nullptr); st.appendChild (c, nullptr); };
+            add ("hp", 120.0f); add ("lowF", 100.0f); add ("lowG", 0.0f); add ("m1F", 800.0f); add ("m1G", 6.0f); add ("m1Q", 2.0f);
+            add ("m2F", 2500.0f); add ("m2G", 0.0f); add ("m2Q", 1.0f); add ("highF", 8000.0f); add ("highG", -3.0f); add ("lp", 22000.0f); add ("out", 1.5f);
+            juce::MemoryBlock mb;
+            juce::AudioProcessor::copyXmlToBinary (*st.createXml(), mb);
+            auto p = make ("fretforge:eq");
+            p->setStateInformation (mb.getData(), (int) mb.getSize());
+            expectEquals (getP (*p, "b1on"), 1.0f);
+            expectWithinAbsoluteError (getP (*p, "b1freq"), 120.0f, 0.5f);
+            expectEquals (getP (*p, "b2on"), 0.0f);
+            expectEquals (getP (*p, "b3on"), 1.0f);
+            expectWithinAbsoluteError (getP (*p, "b3gain"), 6.0f, 0.01f);
+            expectWithinAbsoluteError (getP (*p, "b3q"), 2.0f, 0.01f);
+            expectEquals (getP (*p, "b5on"), 1.0f);
+            expectEquals (getP (*p, "b6on"), 0.0f);
+            expectWithinAbsoluteError (getP (*p, "out"), 1.5f, 0.01f);
+            p->prepareToPlay (sr, 256);
+            expectWithinAbsoluteError (peakDb (run (*p, sine (800.0, 0.25f, 24000)), 12000), -12.04f + 6.0f + 1.5f, 0.5f);
         }
 
         beginTest ("compressor: 4:1 above the threshold");

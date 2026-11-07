@@ -136,6 +136,18 @@ juce::ValueTree SessionController::primaryTrack()
     return {};
 }
 
+void SessionController::moveTrackVolume (const juce::ValueTree& clicked, double now, double delta)
+{
+    const auto store = [this] (juce::ValueTree t, double db) { doc.set (t, ids::gainDb, db <= -59.95 ? -96.0 : juce::jmin (6.0, db)); };
+    for (auto t : linkedTracks (clicked))
+    {
+        const bool automated = automation::hasVolumeAutomation (t);
+        if (automated) automation::offsetLane (t, automation::volumeParam, (float) delta, -60.0f, 6.0f, &doc.undo());
+        if (t == clicked && ! automated) store (t, now);
+        else if (std::abs (delta) > 1.0e-9) store (t, juce::jmax (-60.0, (double) t[ids::gainDb]) + delta);
+    }
+}
+
 juce::Array<juce::ValueTree> SessionController::linkedTracks (const juce::ValueTree& clicked) const
 {
     auto list = tracksForEdit (clicked);
@@ -218,8 +230,9 @@ void SessionController::setOnTracks (const juce::ValueTree& clicked, const juce:
         doc.set (t, id, value, undoable);
 }
 
-void SessionController::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier&)
+void SessionController::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& prop)
 {
+    if (prop.toString() == "laneHeight" || prop == automation::showLane) return;   // view only
     if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP) || node.hasType (ids::SEND) || node.hasType (rig::ids::RIG)
         || node.hasType (automation::LANE) || node.hasType (midiclip::MIDI))
         triggerAsyncUpdate();

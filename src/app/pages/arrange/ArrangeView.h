@@ -21,7 +21,27 @@ struct ArrangeGeometry
     double pixelsPerSecond = 60.0;
     double scrollX = 0.0;        // seconds at the left edge of the lanes
     int scrollY = 0;             // pixels
-    int trackHeight = 78;
+    int trackHeight = 78;        // default; each track can be taller or shorter (TRACK laneHeight, drag a header's bottom edge)
+    std::vector<int> heights;    // per track, refreshed by the view
+    static constexpr int minTrackHeight = 66, maxTrackHeight = 480;
+    int heightOf (int i) const { return i >= 0 && i < (int) heights.size() ? heights[(size_t) i] : trackHeight; }
+    int topOf (int i) const      // content y (before scrolling)
+    {
+        int y = 0;
+        for (int k = 0; k < i; ++k) y += heightOf (k);
+        return y;
+    }
+    int indexAt (int contentY) const
+    {
+        int y = 0;
+        for (int k = 0; k < (int) heights.size(); ++k)
+        {
+            if (contentY < y + heights[(size_t) k]) return k;
+            y += heights[(size_t) k];
+        }
+        return (int) heights.size() + juce::jmax (0, contentY - y) / trackHeight;
+    }
+    int totalHeight() const { return topOf ((int) heights.size()); }
     double snapBeats = 1.0;      // grid in quarter notes; 0 = off
     double bpm = 120.0;
     int tsNum = 4, tsDen = 4;
@@ -67,7 +87,11 @@ private:
     void beginGroupDrag (const juce::Identifier& id);
     void applyGroupDelta (const juce::Identifier& id, double delta, double lo, double hi);
     float meterLevel = -100.0f;
-    bool updating = false, draggingTrack = false;
+    bool updating = false, draggingTrack = false, resizingTrack = false;
+    int resizeStartH = 0;
+    bool onBottomEdge (int y) const { return y >= getHeight() - 5; }
+    void mouseMove (const juce::MouseEvent&) override;
+    double gainPrev = 0.0;
     void refresh();
     void showMenu();
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { refresh(); }
@@ -189,6 +213,8 @@ public:
 
     juce::ValueTree trackAtIndex (int i) { return doc.tracks().getChild (i); }
     int trackIndexAtY (int canvasY) const;
+    void refreshHeights();
+    static inline const juce::Identifier laneHeightId { "laneHeight" };   // TRACK: height in the arrange view (0 = default)
     int numTracks() { return doc.tracks().getNumChildren(); }
     juce::Colour trackColour (const juce::ValueTree& t) const;
     void select (const juce::ValueTree& clip, bool add);

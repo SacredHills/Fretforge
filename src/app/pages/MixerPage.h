@@ -88,6 +88,7 @@ private:
     float level = -100.0f, hold = -100.0f;
     int holdTicks = 0;
     bool updating = false;
+    double faderPrev = 0.0;
     void refresh();
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { refresh(); resized(); }
     void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { refresh(); resized(); }

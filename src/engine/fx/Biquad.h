@@ -8,7 +8,7 @@ namespace ff::fx
 /** RBJ-cookbook biquad. Coefficients are computed in place (no allocation), so it can be retuned on the audio thread. */
 struct Biquad
 {
-    enum Type { lowPass, highPass, peak, lowShelf, highShelf };
+    enum Type { lowPass, highPass, peak, lowShelf, highShelf, notch, bandPass };
 
     float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
     float z1 = 0, z2 = 0;
@@ -43,10 +43,27 @@ struct Biquad
                 A0 = (A + 1) - (A - 1) * cw + s;       A1 = 2 * ((A - 1) - (A + 1) * cw);      A2 = (A + 1) - (A - 1) * cw - s;
                 break;
             }
+            case notch:    B0 = 1; B1 = -2 * cw; B2 = 1; A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha; break;
+            case bandPass: B0 = alpha; B1 = 0; B2 = -alpha; A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha; break;   // 0 dB peak
         }
         b0 = (float) (B0 / A0); b1 = (float) (B1 / A0); b2 = (float) (B2 / A0);
         a1 = (float) (A1 / A0); a2 = (float) (A2 / A0);
     }
+
+    /** First-order (6 dB/oct) low or high pass (bilinear transform). */
+    void setFirstOrder (bool highPassFilter, double sr, double freq) noexcept
+    {
+        freq = juce::jlimit (1.0, sr * 0.49, freq);
+        const double K = std::tan (juce::MathConstants<double>::pi * freq / sr);
+        const double n = 1.0 / (1.0 + K);
+        b0 = (float) (highPassFilter ? n : K * n);
+        b1 = (float) (highPassFilter ? -n : K * n);
+        b2 = 0.0f;
+        a1 = (float) ((K - 1.0) * n);
+        a2 = 0.0f;
+    }
+    /** Pass-through. */
+    void setIdentity() noexcept { b0 = 1; b1 = b2 = a1 = a2 = 0; }
 
     /** |H| at `freq` (for drawing responses). */
     double magnitude (double freq, double sr) const noexcept

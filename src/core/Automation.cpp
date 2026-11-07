@@ -83,6 +83,30 @@ void setPoints (juce::ValueTree l, const std::vector<Point>& pts, juce::UndoMana
     l.setProperty (points, format (sorted), um);
 }
 
+bool offsetLane (juce::ValueTree track, const juce::String& param, float delta, float lo, float hi, juce::UndoManager* um)
+{
+    auto l = lane (track, param, false, nullptr);
+    if (! l.isValid()) return false;
+    auto pts = pointsOf (l);
+    if (pts.empty()) return false;
+    for (auto& p : pts) p.value = juce::jlimit (lo, hi, p.value + delta);
+    setPoints (l, pts, um);
+    return true;
+}
+
+bool hasVolumeAutomation (const juce::ValueTree& track)
+{
+    auto l = lane (track, volumeParam, false, nullptr);
+    return l.isValid() && l[points].toString().isNotEmpty();
+}
+
+float volumeAt (const juce::ValueTree& track, double time)
+{
+    const float fader = (float) (double) track[timeline::ids::gainDb];
+    auto l = lane (track, volumeParam, false, nullptr);
+    return l.isValid() ? valueAt (pointsOf (l), time, fader) : fader;
+}
+
 juce::Array<juce::ValueTree> activeLanes (const juce::ValueTree& track)
 {
     juce::Array<juce::ValueTree> out;

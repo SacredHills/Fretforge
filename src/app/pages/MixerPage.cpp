@@ -1,4 +1,5 @@
 #include "MixerPage.h"
+#include "core/Automation.h"
 #include "core/Timeline.h"
 #include "core/ProjectFile.h"
 #include "core/MidiClip.h"
@@ -24,19 +25,14 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
     : doc (d), host (h), session (sc), track (t), slot (s)
 {
     setupFader (fader);
-    fader.onDragStart = [this] { doc.undo().beginNewTransaction ("Track volume"); };
+    fader.onDragStart = [this] { doc.undo().beginNewTransaction ("Track volume"); faderPrev = fader.getValue(); };
     fader.onValueChange = [this] {
         if (updating) return;
-        const double before = juce::jmax (-60.0, (double) track[ids::gainDb]);
-        const double now = fader.getValue();
-        doc.set (track, ids::gainDb, now <= -59.95 ? -96.0 : now);
-        for (auto other : session.linkedTracks (track)) // grouped move for a multi-selection / track group
-            if (other != track)
-            {
-                const double v = juce::jlimit (-60.0, 6.0, juce::jmax (-60.0, (double) other[ids::gainDb]) + (now - before));
-                doc.set (other, ids::gainDb, v <= -59.95 ? -96.0 : v);
-            }
+        const double now = fader.getValue(), delta = now - faderPrev;
+        faderPrev = now;
+        session.moveTrackVolume (track, now, delta);   // grouped / multi-selection; shifts volume automation
     };
+    fader.setTooltip ("Volume. With volume automation the fader follows it, and moving the fader raises or lowers the whole automation.");
     addAndMakeVisible (fader);
 
     pan.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
@@ -285,7 +281,8 @@ void RouteList::mouseUp (const juce::MouseEvent& e)
 void ChannelStrip::refresh()
 {
     const juce::ScopedValueSetter<bool> svs (updating, true);
-    fader.setValue (juce::jmax (-60.0, (double) track[ids::gainDb]), juce::dontSendNotification);
+    fader.setValue (juce::jmax (-60.0, (double) automation::volumeAt (track, host.engine.getPositionSeconds())), juce::dontSendNotification);
+    faderPrev = fader.getValue();
     pan.setValue ((double) track[ids::pan], juce::dontSendNotification);
     mute.setToggleState ((bool) track[ids::mute], juce::dontSendNotification);
     solo.setToggleState ((bool) track[ids::solo], juce::dontSendNotification);
@@ -307,6 +304,11 @@ void ChannelStrip::refresh()
 
 void ChannelStrip::tick()
 {
+    if (automation::hasVolumeAutomation (track) && ! fader.isMouseButtonDown())
+    {
+        const double v = juce::jmax (-60.0, (double) automation::volumeAt (track, host.engine.getPositionSeconds()));
+        if (std::abs (v - fader.getValue()) > 0.01) { const juce::ScopedValueSetter<bool> s (updating, true); fader.setValue (v); faderPrev = v; }
+    }
     auto& m = host.engine.trackMeters[(size_t) juce::jlimit (0, maxTracks - 1, slot)];
     m.uiTake();
     const float db = gainToDb (m.uiPeak);

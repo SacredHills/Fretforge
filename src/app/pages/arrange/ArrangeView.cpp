@@ -75,13 +75,14 @@ TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t),
     gain.setDoubleClickReturnValue (true, 0.0);
     gain.setPopupDisplayEnabled (true, true, nullptr);
     gain.setTextValueSuffix (" dB");
-    gain.setTooltip ("Volume (double-click: 0 dB)");
-    gain.onDragStart = [this] { owner.doc.undo().beginNewTransaction ("Track volume"); beginGroupDrag (ids::gainDb); };
+    gain.setTooltip ("Volume (double-click: 0 dB). With volume automation the fader follows it, and moving the fader "
+                     "raises or lowers the whole automation.");
+    gain.onDragStart = [this] { owner.doc.undo().beginNewTransaction ("Track volume"); gainPrev = gain.getValue(); };
     gain.onValueChange = [this] {
         if (updating) return;
-        const double before = (double) track[ids::gainDb];
-        owner.doc.set (track, ids::gainDb, gain.getValue());
-        applyGroupDelta (ids::gainDb, gain.getValue() - before, -60.0, 6.0);
+        const double now = gain.getValue(), delta = now - gainPrev;
+        gainPrev = now;
+        owner.session.moveTrackVolume (track, now, delta);
     };
     addAndMakeVisible (gain);
 
@@ -152,7 +153,8 @@ void TrackHeader::refresh()
     mon.setToggleState ((bool) track[ids::monitor], juce::dontSendNotification);
     mute.setToggleState ((bool) track[ids::mute], juce::dontSendNotification);
     solo.setToggleState ((bool) track[ids::solo], juce::dontSendNotification);
-    gain.setValue (prop (track, ids::gainDb), juce::dontSendNotification);
+    gain.setValue (automation::volumeAt (track, owner.playhead()), juce::dontSendNotification);
+    gainPrev = gain.getValue();
     pan.setValue (prop (track, ids::pan), juce::dontSendNotification);
     const std::pair<int, bool> cur { (int) track[ids::inputChannel], (bool) track[ids::inputStereo] };
     int sel = 0;
@@ -178,6 +180,11 @@ void TrackHeader::applyGroupDelta (const juce::Identifier& id, double delta, dou
 
 void TrackHeader::tickMeter()
 {
+    if (automation::hasVolumeAutomation (track) && ! gain.isMouseButtonDown())   // the fader shows the automated volume
+    {
+        const double v = automation::volumeAt (track, owner.playhead());
+        if (std::abs (v - gain.getValue()) > 0.01) { gain.setValue (v, juce::dontSendNotification); gainPrev = gain.getValue(); }
+    }
     auto& m = owner.host.engine.trackMeters[(size_t) juce::jlimit (0, maxTracks - 1, index)];
     m.uiTake();
     const float db = gainToDb (m.uiPeak);
@@ -240,8 +247,20 @@ void TrackHeader::resized()
     gain.setBounds (row);
 }
 
+void TrackHeader::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (onBottomEdge (e.y) ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+}
+
 void TrackHeader::mouseDown (const juce::MouseEvent& e)
 {
+    resizingTrack = ! e.mods.isPopupMenu() && onBottomEdge (e.y);
+    if (resizingTrack)   // drag the bottom edge: this track gets taller / shorter (double-click: back to normal)
+    {
+        resizeStartH = getHeight();
+        if (e.getNumberOfClicks() == 2) track.setProperty (ArrangeView::laneHeightId, 0, nullptr);
+        return;
+    }
     if (e.mods.isPopupMenu())
     {
         if (! owner.session.isTrackSelected (track))
@@ -256,18 +275,29 @@ void TrackHeader::mouseDown (const juce::MouseEvent& e)
 
 void TrackHeader::mouseDrag (const juce::MouseEvent& e)
 {
+    if (resizingTrack)
+    {
+        const int h = juce::jlimit (ArrangeGeometry::minTrackHeight, ArrangeGeometry::maxTrackHeight, resizeStartH + e.getDistanceFromDragStartY());
+        // with several tracks selected (Studio One style) they all take the new height
+        auto targets = owner.session.isTrackSelected (track) ? owner.session.selectedTracks : juce::Array<juce::ValueTree> { track };
+        for (auto t : targets) t.setProperty (ArrangeView::laneHeightId, h, nullptr);
+        return;
+    }
     // Drag a header up/down to move the track (and any other selected tracks) to a new position.
     if (e.mods.isPopupMenu() || std::abs (e.getDistanceFromDragStartY()) < 5) return;
     draggingTrack = true;
     setMouseCursor (juce::MouseCursor::DraggingHandCursor);
     const int y = e.getEventRelativeTo (getParentComponent()).y;
-    const int idx = juce::jlimit (0, owner.numTracks(), juce::roundToInt ((float) (y + owner.geo.scrollY) / (float) owner.geo.trackHeight));
+    // drop before the track under the mouse, or after it when in its lower half
+    const int cy = y + owner.geo.scrollY, hit = owner.geo.indexAt (cy);
+    const int idx = juce::jlimit (0, owner.numTracks(), cy > owner.geo.topOf (hit) + owner.geo.heightOf (hit) / 2 ? hit + 1 : hit);
     owner.setTrackDropIndex (idx);
 }
 
 void TrackHeader::mouseUp (const juce::MouseEvent&)
 {
     setMouseCursor (juce::MouseCursor::NormalCursor);
+    if (resizingTrack) { resizingTrack = false; return; }
     if (! draggingTrack) return;
     draggingTrack = false;
     const int idx = owner.trackDropIndex();
@@ -713,12 +743,10 @@ void TimelineCanvas::paint (juce::Graphics& g)
     const auto& geo = owner.geo;
     g.fillAll (palette::bg);
     const int n = owner.numTracks();
-    const int th = geo.trackHeight;
-
     // lanes
     for (int i = 0; i < n; ++i)
     {
-        const int y = i * th - geo.scrollY;
+        const int th = geo.heightOf (i), y = geo.topOf (i) - geo.scrollY;
         if (y > getHeight() || y + th < 0) continue;
         auto t = owner.trackAtIndex (i);
         g.setColour (owner.session.isTrackSelected (t) ? palette::panel.brighter (0.09f) : (i % 2 ? palette::bg : palette::bg.brighter (0.02f)));
@@ -755,7 +783,7 @@ void TimelineCanvas::paint (juce::Graphics& g)
     // clips (child order = layering: later children drawn on top)
     for (int i = 0; i < n; ++i)
     {
-        const int y = i * th - geo.scrollY;
+        const int th = geo.heightOf (i), y = geo.topOf (i) - geo.scrollY;
         if (y > getHeight() || y + th < 0) continue;
         auto t = owner.trackAtIndex (i);
         const auto colour = owner.trackColour (t);
@@ -792,7 +820,7 @@ void TimelineCanvas::paint (juce::Graphics& g)
             const int i = owner.doc.tracks().indexOf (owner.session.findTrack (id));
             if (i < 0 || ph <= from) continue;
             const float x0 = geo.xFor (from), x1 = geo.xFor (ph);
-            juce::Rectangle<float> r (x0, (float) (i * th - geo.scrollY) + 3.0f, x1 - x0, (float) th - 7.0f);
+            juce::Rectangle<float> r (x0, (float) (geo.topOf (i) - geo.scrollY) + 3.0f, x1 - x0, (float) geo.heightOf (i) - 7.0f);
             g.setColour (palette::bad.withAlpha (0.35f));
             g.fillRoundedRectangle (r, 4.0f);
             g.setColour (palette::bad);
@@ -844,7 +872,7 @@ TimelineCanvas::Mode TimelineCanvas::modeAt (const juce::ValueTree& clip, juce::
     const float x0 = geo.xFor (prop (clip, ids::start));
     const float x1 = geo.xFor (prop (clip, ids::start) + prop (clip, ids::length));
     const int i = owner.doc.tracks().indexOf (clip.getParent());
-    const float top = (float) (i * geo.trackHeight - geo.scrollY) + 3.0f;
+    const float top = (float) (geo.topOf (i) - geo.scrollY) + 3.0f;
     const float fiX = x0 + (float) (prop (clip, ids::fadeIn) * geo.pixelsPerSecond);
     const float foX = x1 - (float) (prop (clip, ids::fadeOut) * geo.pixelsPerSecond);
     if (p.y < top + 10.0f && std::abs (p.x - fiX) < 6.0f) return Mode::fadeIn;
@@ -1142,7 +1170,7 @@ void TimelineCanvas::mouseMove (const juce::MouseEvent& e)
 juce::Rectangle<float> TimelineCanvas::laneRect (int i) const
 {
     const auto& geo = owner.geo;
-    return { 0.0f, (float) (i * geo.trackHeight - geo.scrollY) + 6.0f, (float) getWidth(), (float) geo.trackHeight - 13.0f };
+    return { 0.0f, (float) (geo.topOf (i) - geo.scrollY) + 6.0f, (float) getWidth(), (float) geo.heightOf (i) - 13.0f };
 }
 
 juce::Point<float> TimelineCanvas::pointPos (const juce::String& prm, const automation::Point& p, juce::Rectangle<float> row) const
@@ -1596,9 +1624,20 @@ juce::Colour ArrangeView::trackColour (const juce::ValueTree& t) const
     return juce::Colour::fromString (t[ids::colour].toString().isNotEmpty() ? t[ids::colour].toString() : juce::String ("ff808080"));
 }
 
+void ArrangeView::refreshHeights()
+{
+    auto tracks = doc.tracks();
+    geo.heights.resize ((size_t) tracks.getNumChildren());
+    for (int i = 0; i < tracks.getNumChildren(); ++i)
+    {
+        const int h = (int) tracks.getChild (i)[laneHeightId];
+        geo.heights[(size_t) i] = h > 0 ? juce::jlimit (ArrangeGeometry::minTrackHeight, ArrangeGeometry::maxTrackHeight, h) : geo.trackHeight;
+    }
+}
+
 int ArrangeView::trackIndexAtY (int y) const
 {
-    return juce::jmax (0, (y + geo.scrollY) / geo.trackHeight);
+    return geo.indexAt (y + geo.scrollY);
 }
 
 void ArrangeView::select (const juce::ValueTree& clip, bool add)
@@ -1655,8 +1694,9 @@ void ArrangeView::rebuildHeaders()
 
 void ArrangeView::layoutHeaders()
 {
+    refreshHeights();
     for (auto* h : headers)
-        h->setBounds (0, h->index * geo.trackHeight - geo.scrollY, headerHolder.getWidth(), geo.trackHeight);
+        h->setBounds (0, geo.topOf (h->index) - geo.scrollY, headerHolder.getWidth(), geo.heightOf (h->index));
 }
 
 void ArrangeView::updateScrollBars()
@@ -1665,7 +1705,8 @@ void ArrangeView::updateScrollBars()
     const double total = juce::jmax (songEnd (doc.tracks()) + 30.0, geo.scrollX + viewSec, 60.0);
     hScroll.setRangeLimits (0.0, total, juce::dontSendNotification);
     hScroll.setCurrentRange (geo.scrollX, viewSec, juce::dontSendNotification);
-    const int contentH = numTracks() * geo.trackHeight + 80;
+    refreshHeights();
+    const int contentH = geo.totalHeight() + 80;
     vScroll.setRangeLimits (0.0, juce::jmax (contentH, canvas.getHeight()), juce::dontSendNotification);
     geo.scrollY = juce::jlimit (0, juce::jmax (0, contentH - canvas.getHeight()), geo.scrollY);
     vScroll.setCurrentRange (geo.scrollY, canvas.getHeight(), juce::dontSendNotification);
@@ -1723,9 +1764,10 @@ void ArrangeView::valueTreeChildOrderChanged (juce::ValueTree& parent, int, int)
     else repaintAll();
 }
 
-void ArrangeView::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier&)
+void ArrangeView::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& prop)
 {
     if (node.hasType (pids::TRANSPORT)) syncGeometry();
+    else if (prop == laneHeightId) { layoutHeaders(); updateScrollBars(); repaintAll(); }
     else repaintAll();
 }
 
@@ -2156,7 +2198,7 @@ void ArrangeView::setTrackDropIndex (int idx)
 void ArrangeView::paintOverChildren (juce::Graphics& g)
 {
     if (dropIndex < 0) return;
-    const int y = headerHolder.getY() + dropIndex * geo.trackHeight - geo.scrollY;
+    const int y = headerHolder.getY() + geo.topOf (dropIndex) - geo.scrollY;
     g.setColour (palette::accent);
     g.fillRect (0, y - 2, getWidth(), 3);
 }

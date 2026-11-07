@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "GlobalKeys.h"
 
 namespace ff
 {
@@ -148,6 +149,9 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
         commandManager.getKeyMappings()->restoreFromXml (*km);
     addKeyListener (commandManager.getKeyMappings());
     setWantsKeyboardFocus (true);
+    // (straight to perform(): from another window the command manager would look for a target in that window)
+    globalkeys::setHandler ([this] (const juce::KeyPress&) { return perform (juce::ApplicationCommandTarget::InvocationInfo (cmdPlayStop)); });
+    globalkeys::install (*this);
 
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (this);
@@ -166,6 +170,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
 MainComponent::~MainComponent()
 {
     stopTimer();
+    globalkeys::uninstall();
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (nullptr);
 #endif

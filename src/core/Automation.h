@@ -30,6 +30,11 @@ std::vector<Point> pointsOf (const juce::ValueTree& lane);
 void setPoints (juce::ValueTree lane, const std::vector<Point>&, juce::UndoManager*);
 /** Lanes that have points. */
 juce::Array<juce::ValueTree> activeLanes (const juce::ValueTree& track);
+/** Shifts every point of the track's `param` lane by `delta` (clamped to lo..hi). Returns false if the lane has no points. */
+bool offsetLane (juce::ValueTree track, const juce::String& param, float delta, float lo, float hi, juce::UndoManager*);
+/** The volume a track plays at `time`: its volume automation if it has any, otherwise its fader. */
+float volumeAt (const juce::ValueTree& track, double time);
+bool hasVolumeAutomation (const juce::ValueTree& track);
 
 // value <-> 0..1 height in a lane (volume uses the fader's curve)
 float toNormal (const juce::String& param, float value);

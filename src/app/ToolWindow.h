@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "StudioLookAndFeel.h"
+#include "GlobalKeys.h"
 
 namespace ff
 {
@@ -36,6 +37,7 @@ public:
         if (onClosed) onClosed();
     }
     std::function<void()> onClosed;
+    bool keyPressed (const juce::KeyPress& k) override { return globalkeys::forward (k) || juce::DocumentWindow::keyPressed (k); }
 
 private:
     juce::PropertiesFile& settings;

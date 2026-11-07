@@ -159,6 +159,7 @@ juce_add_gui_app(FretForgeStudio
 target_sources(FretForgeStudio PRIVATE
     src/app/Main.cpp
     src/app/MainComponent.cpp
+    src/app/GlobalKeys.cpp
     src/app/StudioLookAndFeel.cpp
     src/app/ProjectDocument.cpp
     src/app/EngineHost.cpp

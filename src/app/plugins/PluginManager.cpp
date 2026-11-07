@@ -1,5 +1,6 @@
 #include "PluginManager.h"
 #include "../StudioLookAndFeel.h"
+#include "../GlobalKeys.h"
 #include "engine/fx/BuiltinPlugins.h"
 #include <condition_variable>
 #include <queue>
@@ -252,6 +253,7 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         editor.reset();
     }
     void closeButtonPressed() override { if (onClosed) juce::MessageManager::callAsync (onClosed); }
+    bool keyPressed (const juce::KeyPress& k) override { return globalkeys::forward (k) || juce::DocumentWindow::keyPressed (k); }
     void activeWindowStatusChanged() override { if (content != nullptr) content->refresh(); }
 
     std::shared_ptr<juce::AudioPluginInstance> plugin;   // keeps the plugin alive while its editor is open

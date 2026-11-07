@@ -65,6 +65,9 @@ public:
     juce::ValueTree selectionAnchor;
     /** tracksForEdit plus every track in the same group(s) (hold Alt to edit one track of a group on its own). */
     juce::Array<juce::ValueTree> linkedTracks (const juce::ValueTree& clicked) const;
+    /** A volume fader moved to `now` (by `delta` dB since its last value). Moves the linked tracks by the same amount; on a
+        track with volume automation the whole automation shifts too, so the change is always heard. */
+    void moveTrackVolume (const juce::ValueTree& clicked, double now, double delta);
     juce::StringArray groupNames() const;
     static juce::Colour groupColour (const juce::String& group);
     /** "Group" submenu for a track's menu (ids from baseId) and its handler (returns true if it handled `result`). */
