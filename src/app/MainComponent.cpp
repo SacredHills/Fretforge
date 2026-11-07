@@ -68,6 +68,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     host.initialise (savedDevice.get());
 
     pluginManager = std::make_unique<PluginManager> (settings);
+    pluginManager->getUndoManager = [this]() -> juce::UndoManager* { return doc != nullptr ? &doc->undo() : nullptr; };
     doc = std::make_unique<ProjectDocument> (host, settings);
     session = std::make_unique<SessionController> (host, *doc, settings);
     transport = std::make_unique<TransportBar> (host, *doc, &settings);
@@ -150,7 +151,12 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     addKeyListener (commandManager.getKeyMappings());
     setWantsKeyboardFocus (true);
     // (straight to perform(): from another window the command manager would look for a target in that window)
-    globalkeys::setHandler ([this] (const juce::KeyPress&) { return perform (juce::ApplicationCommandTarget::InvocationInfo (cmdPlayStop)); });
+    globalkeys::setHandler ([this] (const juce::KeyPress& k) {
+        if (k.getKeyCode() == juce::KeyPress::spaceKey) return perform (juce::ApplicationCommandTarget::InvocationInfo (cmdPlayStop));
+        const auto c = juce::CharacterFunctions::toUpperCase ((juce::juce_wchar) k.getKeyCode());
+        const bool redo = c == 'Y' || k.getModifiers().isShiftDown();
+        return perform (juce::ApplicationCommandTarget::InvocationInfo (redo ? cmdRedo : cmdUndo));
+    });
     globalkeys::install (*this);
 
 #if JUCE_MAC
@@ -589,8 +595,8 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdSave: saveThen (nullptr); return true;
         case cmdSaveAs: saveAsThen (nullptr); return true;
         case cmdReveal: if (doc->hasLocation()) doc->getBundle().revealToUser(); return true;
-        case cmdUndo: doc->undo().undo(); return true;
-        case cmdRedo: doc->undo().redo(); return true;
+        case cmdUndo: pluginManager->commitPendingChanges(); doc->undo().undo(); return true;
+        case cmdRedo: pluginManager->commitPendingChanges(); doc->undo().redo(); return true;
         case cmdPlayStop: if (currentSection == 2) tabPage->togglePlay(); else if (currentSection == 3) drumPage->togglePlay(); else host.engine.togglePlay(); return true;
         case cmdReturnToZero: host.engine.returnToZero(); return true;
         case cmdToggleClick: transport->toggleClick(); return true;

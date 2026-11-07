@@ -10,7 +10,7 @@ namespace ff::globalkeys
 {
 /** Set by the main window: handles a key that reached a floating window. Returns true if used. */
 void setHandler (std::function<bool (const juce::KeyPress&)>);
-/** For floating windows: forwards transport keys (Space) to the handler. */
+/** For floating windows: forwards Space (play / stop) and Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z (undo / redo) to the handler. */
 bool forward (const juce::KeyPress&);
 /** Installs the focus rules and (Windows) the keyboard hook. `mainContent` gets the focus back from main-window controls. */
 void install (juce::Component& mainContent);

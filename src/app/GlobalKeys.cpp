@@ -22,7 +22,10 @@ std::function<bool (const juce::KeyPress&)>& handler()
 
 bool isTransportKey (const juce::KeyPress& k)
 {
-    return k.getKeyCode() == juce::KeyPress::spaceKey && ! k.getModifiers().isAnyModifierKeyDown();
+    if (k.getKeyCode() == juce::KeyPress::spaceKey && ! k.getModifiers().isAnyModifierKeyDown()) return true;
+    const auto c = juce::CharacterFunctions::toUpperCase (k.getTextCharacter() != 0 && k.getTextCharacter() > 26 ? k.getTextCharacter()
+                                                                                                                : (juce::juce_wchar) k.getKeyCode());
+    return k.getModifiers().isCommandDown() && ! k.getModifiers().isAltDown() && (c == 'Z' || c == 'Y');   // undo / redo
 }
 
 /** Controls that would otherwise take Space for themselves. Text fields keep their focus. */

@@ -1074,7 +1074,7 @@ juce::String stateWith (const juce::String& id, const std::map<juce::String, flo
 namespace
 {
 /** One EQ band for a preset: type, frequency, gain, Q, slope index (cuts), dynamics (0 off, 1 dynamic, 2 spectral). */
-struct PB { int type; float freq, gain = 0.0f, q = 1.0f; int slope = 1, dyn = 0; float thr = -24.0f, range = -6.0f; };
+struct PB { int type; float freq, gain = 0.0f, q = 1.0f; int slope = 1, dyn = 0; float thr = -24.0f, range = -6.0f, atk = 10.0f, rel = 120.0f; };
 Preset eqPreset (const char* category, const char* name, std::initializer_list<PB> bands, float out = 0.0f)
 {
     Preset p { name, category, {} };
@@ -1092,6 +1092,8 @@ Preset eqPreset (const char* category, const char* name, std::initializer_list<P
         p.values[id ("dyn")] = (float) x.dyn;
         p.values[id ("thr")] = x.thr;
         p.values[id ("range")] = x.range;
+        p.values[id ("atk")] = x.atk;
+        p.values[id ("rel")] = x.rel;
         ++b;
     }
     p.values["out"] = out;
@@ -1111,7 +1113,7 @@ const std::vector<Preset>& factoryPresets (const juce::String& id)
         eqPreset ("Cleanup", "Resonance control (spectral)",
                   { { 0, 2500.0f, 0.0f, 0.4f, 1, 2, -45.0f, -4.0f }, { 0, 220.0f, 0.0f, 0.6f, 1, 2, -35.0f, -3.0f } }),
         eqPreset ("Vocals", "Clarity", { { 3, 100.0f, 0.0f, 0.7071f, 2 }, { 0, 300.0f, -3.0f, 1.2f }, { 0, 3000.0f, 2.5f, 1.0f }, { 2, 10000.0f, 3.0f, 0.7071f } }),
-        eqPreset ("Vocals", "De-esser (dynamic)", { { 3, 90.0f, 0.0f, 0.7071f, 1 }, { 0, 6500.0f, 0.0f, 3.0f, 1, 1, -32.0f, -8.0f } }),
+        eqPreset ("Vocals", "De-esser (dynamic)", { { 3, 90.0f, 0.0f, 0.7071f, 1 }, { 0, 6500.0f, 0.0f, 3.0f, 1, 1, -32.0f, -8.0f, 1.0f, 60.0f } }),
         eqPreset ("Vocals", "Warm & smooth", { { 3, 80.0f, 0.0f, 0.7071f, 1 }, { 1, 200.0f, 1.5f, 0.7071f }, { 0, 3500.0f, 0.0f, 0.8f, 1, 2, -40.0f, -5.0f } }),
         eqPreset ("Guitar", "Tame harshness (spectral)", { { 3, 80.0f, 0.0f, 0.7071f, 1 }, { 0, 3000.0f, 0.0f, 0.7f, 1, 2, -40.0f, -6.0f } }),
         eqPreset ("Guitar", "Remove mud", { { 3, 90.0f, 0.0f, 0.7071f, 3 }, { 0, 250.0f, -3.5f, 1.4f }, { 0, 1800.0f, 1.5f, 1.0f } }),
@@ -1125,7 +1127,7 @@ const std::vector<Preset>& factoryPresets (const juce::String& id)
         eqPreset ("Drums", "Drum bus glue", { { 1, 80.0f, 1.5f, 0.7071f }, { 0, 400.0f, -2.0f, 0.8f }, { 2, 10000.0f, 2.0f, 0.7071f } }),
         eqPreset ("Master", "Gentle air & low cut", { { 3, 25.0f, 0.0f, 0.7071f, 5 }, { 2, 12000.0f, 1.5f, 0.7071f } }),
         eqPreset ("Master", "Smile curve", { { 3, 25.0f, 0.0f, 0.7071f, 5 }, { 1, 90.0f, 2.0f, 0.7071f }, { 0, 800.0f, -1.5f, 0.5f }, { 2, 10000.0f, 2.0f, 0.7071f } }),
-        eqPreset ("Master", "Low end control (dynamic)", { { 3, 25.0f, 0.0f, 0.7071f, 5 }, { 1, 100.0f, 0.0f, 0.7071f, 1, 1, -18.0f, -3.0f } }),
+        eqPreset ("Master", "Low end control (dynamic)", { { 3, 25.0f, 0.0f, 0.7071f, 5 }, { 1, 100.0f, 0.0f, 0.7071f, 1, 1, -18.0f, -3.0f, 30.0f, 250.0f } }),
         eqPreset ("Effects", "Telephone", { { 3, 400.0f, 0.0f, 0.7071f, 3 }, { 4, 3500.0f, 0.0f, 0.7071f, 3 }, { 0, 1500.0f, 4.0f, 1.0f } }),
         eqPreset ("Effects", "AM radio", { { 6, 1200.0f, 0.0f, 0.9f }, { 4, 5000.0f, 0.0f, 0.7071f, 5 } }, 6.0f),
     };

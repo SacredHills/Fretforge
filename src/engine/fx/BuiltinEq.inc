@@ -23,7 +23,7 @@ juce::String eqId (int band, const char* what) { return "b" + juce::String (band
 /** One band's settings. All floats (choices as their index) so a whole set compares with memcmp. */
 struct EqBand
 {
-    float on = 0, type = 0, freq = 1000, gain = 0, q = 1, slope = 1, dyn = 0, range = -6, thr = -24, use = 0;   // use: the band exists (on: not bypassed)
+    float on = 0, type = 0, freq = 1000, gain = 0, q = 1, slope = 1, dyn = 0, range = -6, thr = -24, use = 0, atk = 10, rel = 120;   // use: the band exists (on: not bypassed)
     int typeI() const { return juce::roundToInt (type); }
     int dynI() const { return juce::roundToInt (dyn); }
     bool isUsed() const { return use > 0.5f; }
@@ -123,6 +123,7 @@ struct EqSpectral
     std::vector<float> window = std::vector<float> ((size_t) size), frame[2], inRing[2], outRing[2];
     std::vector<float> env = std::vector<float> ((size_t) bins, -120.0f), gainDb = std::vector<float> ((size_t) bins, 0.0f);
     std::vector<float> weights = std::vector<float> ((size_t) (bins * eqBandCount), 0.0f);
+    std::vector<float> binAtk = std::vector<float> ((size_t) bins, 0.5f), binRel = std::vector<float> ((size_t) bins, 0.1f);   // per-frame coefficients
     std::array<std::atomic<float>, displayPoints> display {};
     float norm = 1.0f;
     int pos = 0, hopCount = 0;
@@ -161,6 +162,18 @@ struct EqSpectral
         for (int b = 0; b < eqBandCount; ++b)
             for (int k = 0; k < bins; ++k)
                 weights[(size_t) (b * bins + k)] = s.b[(size_t) b].spectral() ? eqSpectralWeight (s.b[(size_t) b], (double) k * sr / size) : 0.0f;
+        // each frequency follows the attack / release of the band that acts most there
+        const float frameSec = (float) hop / (float) sr;
+        for (int k = 0; k < bins; ++k)
+        {
+            int best = -1;
+            float bw = 0.0f;
+            for (int b = 0; b < eqBandCount; ++b)
+                if (weights[(size_t) (b * bins + k)] > bw) { bw = weights[(size_t) (b * bins + k)]; best = b; }
+            const float a = best >= 0 ? s.b[(size_t) best].atk : 10.0f, r = best >= 0 ? s.b[(size_t) best].rel : 120.0f;
+            binAtk[(size_t) k] = 1.0f - std::exp (-frameSec / juce::jmax (0.0005f, a * 0.001f));
+            binRel[(size_t) k] = 1.0f - std::exp (-frameSec / juce::jmax (0.005f, r * 0.001f));
+        }
     }
 
     void process (float* L, float* R, int n, const EqAll& s, double sr) noexcept
@@ -191,9 +204,6 @@ private:
             std::fill (f.begin() + size, f.end(), 0.0f);
             fft.performRealOnlyForwardTransform (f.data(), true);
         }
-        const float frameSec = (float) hop / (float) sr;
-        const float atk = 1.0f - std::exp (-frameSec / juce::jmax (0.0005f, s.attack * 0.001f));
-        const float rel = 1.0f - std::exp (-frameSec / juce::jmax (0.005f, s.release * 0.001f));
         for (int k = 0; k < bins; ++k)
         {
             float mag2 = 0.0f;
@@ -204,7 +214,7 @@ private:
             }
             const float lvl = 10.0f * std::log10 (mag2 * norm * norm + 1.0e-12f);
             auto& e = env[(size_t) k];
-            e += (lvl - e) * (lvl > e ? atk : rel);
+            e += (lvl - e) * (lvl > e ? binAtk[(size_t) k] : binRel[(size_t) k]);
             float g = 0.0f;
             for (int b = 0; b < eqBandCount; ++b)
                 if (const float w = weights[(size_t) (b * bins + k)]; w > 0.001f)
@@ -241,8 +251,8 @@ public:
     {
         for (int b = 0; b < eqBandCount; ++b)
         {
-            const char* what[] { "on", "type", "freq", "gain", "q", "slope", "dyn", "range", "thr", "use" };
-            for (int k = 0; k < 10; ++k) bandParams[(size_t) b][(size_t) k] = state.getParameter (eqId (b, what[k]));
+            const char* what[] { "on", "type", "freq", "gain", "q", "slope", "dyn", "range", "thr", "use", "atk", "rel" };
+            for (int k = 0; k < 12; ++k) bandParams[(size_t) b][(size_t) k] = state.getParameter (eqId (b, what[k]));
             bandParams[(size_t) b][6]->addListener (this);
             bandParams[(size_t) b][1]->addListener (this);
             bandParams[(size_t) b][0]->addListener (this);
@@ -294,6 +304,18 @@ public:
         // added later: at the end so automation (by parameter index) of the parameters above keeps working
         for (int b = 0; b < eqBandCount; ++b)
             l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { eqId (b, "use"), 1 }, "Band " + juce::String (b + 1) + " in use", false));
+        for (int b = 0; b < eqBandCount; ++b)   // dynamics timing per band (the global attack / release above are only read from old projects)
+        {
+            const auto name = "Band " + juce::String (b + 1) + " ";
+            juce::NormalisableRange<float> ra (0.5f, 200.0f), rr (5.0f, 2000.0f);
+            ra.setSkewForCentre (15.0f);
+            rr.setSkewForCentre (150.0f);
+            auto ms = [] (float v, int) { return v >= 1000.0f ? juce::String (v / 1000.0f, 2) + " s" : juce::String (v, v < 10.0f ? 1 : 0) + " ms"; };
+            l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { eqId (b, "atk"), 1 }, name + "attack", ra, 10.0f,
+                                                                juce::AudioParameterFloatAttributes().withLabel ("ms").withStringFromValueFunction (ms)));
+            l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { eqId (b, "rel"), 1 }, name + "release", rr, 120.0f,
+                                                                juce::AudioParameterFloatAttributes().withLabel ("ms").withStringFromValueFunction (ms)));
+        }
         return l;
     }
 
@@ -306,7 +328,7 @@ public:
             auto& p = bandParams[(size_t) b];
             auto& x = s.b[(size_t) b];
             x.on = value (p[0]); x.type = value (p[1]); x.freq = value (p[2]); x.gain = value (p[3]); x.q = value (p[4]);
-            x.slope = value (p[5]); x.dyn = value (p[6]); x.range = value (p[7]); x.thr = value (p[8]); x.use = value (p[9]);
+            x.slope = value (p[5]); x.dyn = value (p[6]); x.range = value (p[7]); x.thr = value (p[8]); x.use = value (p[9]); x.atk = value (p[10]); x.rel = value (p[11]);
         }
         s.attack = value (attackP);
         s.release = value (releaseP);
@@ -337,6 +359,21 @@ public:
         if (x == nullptr || ! x->hasTagName (state.state.getType())) return;
         auto tree = juce::ValueTree::fromXml (*x);
         if (tree.getChildWithProperty ("id", "m1G").isValid()) tree = migrateOldState (tree);
+        if (! tree.getChildWithProperty ("id", "b1atk").isValid())   // saved with one attack / release for all bands
+        {
+            const auto g = [&tree] (const char* id, float def) {
+                auto c = tree.getChildWithProperty ("id", id);
+                return c.isValid() ? (float) c["value"] : def;
+            };
+            const float a = g ("attack", 10.0f), r = g ("release", 120.0f);
+            for (int b = 0; b < eqBandCount; ++b)
+                for (auto [w, v] : { std::pair<const char*, float> { "atk", a }, { "rel", r } })
+                {
+                    auto c = tree.getChildWithProperty ("id", eqId (b, w));
+                    if (! c.isValid()) { c = juce::ValueTree ("PARAM"); c.setProperty ("id", eqId (b, w), nullptr); tree.appendChild (c, nullptr); }
+                    c.setProperty ("value", v, nullptr);
+                }
+        }
         else if (! tree.getChildWithProperty ("id", "b1use").isValid())   // saved before bands could be bypassed: on = in use
             for (int b = 0; b < eqBandCount; ++b)
             {
@@ -375,8 +412,6 @@ public:
             spectral.setWeights (s, sr);
             last = s;
         }
-        const float atk = std::exp (-1.0f / (float) (juce::jmax (0.0005f, s.attack * 0.001f) * sr));
-        const float rel = std::exp (-1.0f / (float) (juce::jmax (0.005f, s.release * 0.001f) * sr));
         float* chans[2] = { L, R };
         const int nch = R != nullptr ? 2 : 1;
         constexpr int sub = 32;
@@ -390,6 +425,8 @@ public:
                 // level in the band (before the EQ), RMS-like with the attack / release times
                 auto& det = detectors[(size_t) b];
                 float e = envelopes[(size_t) b];
+                const float atk = std::exp (-1.0f / (float) (juce::jmax (0.0005f, band.atk * 0.001f) * sr));
+                const float rel = std::exp (-1.0f / (float) (juce::jmax (0.005f, band.rel * 0.001f) * sr));
                 for (int i = 0; i < len; ++i)
                 {
                     const float x = R != nullptr ? 0.5f * (L[off + i] + R[off + i]) : L[off + i];
@@ -444,7 +481,7 @@ public:
     std::atomic<bool> spectralOn { false };
 
 private:
-    std::array<std::array<juce::RangedAudioParameter*, 10>, eqBandCount> bandParams {};
+    std::array<std::array<juce::RangedAudioParameter*, 12>, eqBandCount> bandParams {};
     juce::RangedAudioParameter *attackP = nullptr, *releaseP = nullptr, *outP = nullptr;
     std::array<std::array<EqBandFilter, eqBandCount>, 2> filters;
     std::array<Biquad, eqBandCount> detectors;
@@ -950,13 +987,13 @@ public:
         };
         addAndMakeVisible (removeButton);
 
-        const char* names[] { "Frequency", "Gain", "Q", "Threshold", "Range", "Attack", "Release", "Output" };
+        const char* names[] { "Frequency", "Gain", "Q", "Threshold", "Range", "Attack", "Release", "Output" };   // 0..6 band, 7 global
         for (int k = 0; k < 8; ++k)
         {
             auto& kn = knobs[(size_t) k];
             kn.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
             kn.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 76, 18);
-            kn.slider.setColour (juce::Slider::rotarySliderFillColourId, k >= 5 ? col::info : col::accent);
+            kn.slider.setColour (juce::Slider::rotarySliderFillColourId, k >= 3 && k < 7 ? col::info : col::accent);
             kn.label.setText (names[k], juce::dontSendNotification);
             kn.label.setJustificationType (juce::Justification::centred);
             kn.label.setFont (juce::Font (juce::FontOptions (11.5f)));
@@ -966,8 +1003,8 @@ public:
         }
         knobs[3].slider.setTooltip ("Level in the band where the dynamics start to act");
         knobs[4].slider.setTooltip ("How far the dynamics can move the gain: negative turns loud parts down, positive turns them up");
-        attachGlobal (5, eq.state.getParameter ("attack"));
-        attachGlobal (6, eq.state.getParameter ("release"));
+        knobs[5].slider.setTooltip ("How fast the dynamics react when the level rises (this band)");
+        knobs[6].slider.setTooltip ("How fast the dynamics let go when the level falls (this band)");
         attachGlobal (7, eq.state.getParameter ("out"));
         setResizable (true, true);
         setResizeLimits (760, 520, 2400, 1400);
@@ -1010,7 +1047,7 @@ public:
         auto bottom = r.removeFromBottom (128);
         r.removeFromBottom (10);
         graph.setBounds (r);
-        globalPanel = bottom.removeFromRight (236);
+        globalPanel = bottom.removeFromRight (96);
         bottom.removeFromRight (10);
         bandPanel = bottom;
 
@@ -1027,18 +1064,15 @@ public:
         left.removeFromTop (6);
         slopeBox.setBounds (left.removeFromTop (26));
         bp.removeFromLeft (10);
-        const int w = 78;
+        const int w = 74;
         for (int k = 0; k < 3; ++k) placeKnob (k, bp.removeFromLeft (w));
         bp.removeFromLeft (12);
         auto dynCol = bp.removeFromLeft (110);
         dynCol.removeFromTop (18);
         dynLabelArea = dynCol.removeFromTop (16);
         dynBox.setBounds (dynCol.removeFromTop (26));
-        for (int k = 3; k < 5; ++k) placeKnob (k, bp.removeFromLeft (w));
-
-        auto gp = globalPanel.reduced (8, 8);
-        const int gw = gp.getWidth() / 3;
-        for (int k = 5; k < 8; ++k) placeKnob (k, gp.removeFromLeft (gw));
+        for (int k = 3; k < 7; ++k) placeKnob (k, bp.removeFromLeft (w));
+        placeKnob (7, globalPanel.reduced (8, 8));
     }
 
 private:
@@ -1076,12 +1110,12 @@ private:
         slopeAttach.reset();
         dynAttach.reset();
         onAttach.reset();
-        for (int k = 0; k < 5; ++k) knobs[(size_t) k].attach.reset();
+        for (int k = 0; k < 7; ++k) knobs[(size_t) k].attach.reset();
         const bool has = b >= 0;
         for (juce::Component* c : { (juce::Component*) &bandLabel, (juce::Component*) &typeBox, (juce::Component*) &slopeBox,
                                     (juce::Component*) &dynBox, (juce::Component*) &onButton, (juce::Component*) &removeButton })
             c->setVisible (has);
-        for (int k = 0; k < 5; ++k) { knobs[(size_t) k].slider.setVisible (has); knobs[(size_t) k].label.setVisible (has); }
+        for (int k = 0; k < 7; ++k) { knobs[(size_t) k].slider.setVisible (has); knobs[(size_t) k].label.setVisible (has); }
         if (has)
         {
             bandLabel.setText ("Band " + juce::String (b + 1), juce::dontSendNotification);
@@ -1090,8 +1124,8 @@ private:
             typeAttach = std::make_unique<juce::ComboBoxParameterAttachment> (*eq.bandParam (b, 1), typeBox);
             slopeAttach = std::make_unique<juce::ComboBoxParameterAttachment> (*eq.bandParam (b, 5), slopeBox);
             dynAttach = std::make_unique<juce::ComboBoxParameterAttachment> (*eq.bandParam (b, 6), dynBox);
-            const int map[5] { 2, 3, 4, 8, 7 };
-            for (int k = 0; k < 5; ++k)
+            const int map[7] { 2, 3, 4, 8, 7, 10, 11 };
+            for (int k = 0; k < 7; ++k)
             {
                 auto* p = eq.bandParam (b, map[k]);
                 knobs[(size_t) k].attach = std::make_unique<juce::SliderParameterAttachment> (*p, knobs[(size_t) k].slider);
@@ -1112,7 +1146,7 @@ private:
         knobs[1].slider.setEnabled (eqHasGain (t));
         knobs[1].label.setEnabled (eqHasGain (t));
         const bool dyn = band.dynamic() || band.spectral();
-        for (int k = 3; k < 5; ++k) { knobs[(size_t) k].slider.setEnabled (dyn); knobs[(size_t) k].label.setEnabled (dyn); }
+        for (int k = 3; k < 7; ++k) { knobs[(size_t) k].slider.setEnabled (dyn); knobs[(size_t) k].label.setEnabled (dyn); }
         dynBox.setEnabled (! eqIsCut (t));
     }
     void timerCallback() { refreshEnablement(); }

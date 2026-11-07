@@ -155,6 +155,39 @@ private:
 };
 }
 
+// ===================================================================== undo
+
+namespace
+{
+/** One change of a plugin's settings, undone / redone by restoring its whole state. */
+struct PluginStateAction final : public juce::UndoableAction
+{
+    PluginStateAction (std::weak_ptr<juce::AudioPluginInstance> p, juce::String b, juce::String a, std::function<void (juce::AudioPluginInstance*, const juce::String&)> restored)
+        : plugin (std::move (p)), before (std::move (b)), after (std::move (a)), onRestored (std::move (restored)) {}
+    bool perform() override
+    {
+        if (first) { first = false; return true; }   // already happened in the plugin
+        return apply (after);
+    }
+    bool undo() override { return apply (before); }
+    int getSizeInUnits() override { return (int) (before.length() + after.length()) / 64 + 1; }
+    bool apply (const juce::String& st)
+    {
+        if (auto p = plugin.lock())
+        {
+            if (onRestored) onRestored (p.get(), st);   // the window stops listening while the state is put back
+            fx::restorePluginState (*p, st);
+        }
+        return true;
+    }
+    std::weak_ptr<juce::AudioPluginInstance> plugin;
+    juce::String before, after;
+    std::function<void (juce::AudioPluginInstance*, const juce::String&)> onRestored;
+    bool first = true;
+};
+constexpr int maxUndoStateChars = 4 * 1024 * 1024;   // plugins with huge states (samplers) are not tracked
+} // namespace
+
 // ===================================================================== editor windows
 
 /** Copy / Paste bar above a plugin's own editor. */
@@ -162,9 +195,19 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
 {
     struct Content final : public juce::Component, private juce::ComponentListener, private juce::Timer
     {
-        Content (PluginManager& m, juce::AudioPluginInstance& p, juce::AudioProcessorEditor& e, BypassControl bp)
-            : manager (m), plugin (p), editor (e), bypassControl (std::move (bp))
+        Content (PluginManager& m, std::shared_ptr<juce::AudioPluginInstance> sp, juce::AudioProcessorEditor& e, BypassControl bp)
+            : manager (m), plugin (*sp), weakPlugin (sp), editor (e), bypassControl (std::move (bp))
         {
+            undoButton.setTooltip ("Undo (Ctrl+Z): changes in plugin windows are part of the project's undo history");
+            redoButton.setTooltip ("Redo (Ctrl+Y / Ctrl+Shift+Z)");
+            undoButton.onClick = [this] { manager.commitPendingChanges(); if (auto* um = undoManager()) um->undo(); };
+            redoButton.onClick = [this] { manager.commitPendingChanges(); if (auto* um = undoManager()) um->redo(); };
+            addAndMakeVisible (undoButton);
+            addAndMakeVisible (redoButton);
+            baseline = fx::capturePluginState (plugin);
+            tracker.owner = this;
+            plugin.addListener (&tracker);
+            startTimerHz (10);
             presets.setTooltip ("Presets: load one, save the current settings as your own preset, or load a preset file");
             presets.onClick = [this] {
                 juce::Component::SafePointer<Content> safe (this);
@@ -177,8 +220,8 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             bypass.setColour (juce::TextButton::buttonOnColourId, palette::warn);
             bypass.setTooltip ("Bypass: the sound passes through untouched while this is lit");
             bypass.onClick = [this] { if (bypassControl.toggle) bypassControl.toggle(); syncBypass(); };
-            if (bypassControl.isBypassed) { addAndMakeVisible (bypass); syncBypass(); startTimerHz (5); }
-            for (auto* b : { &copy, &paste, &presets, &bypass })
+            if (bypassControl.isBypassed) { addAndMakeVisible (bypass); syncBypass(); }
+            for (auto* b : { &copy, &paste, &presets, &bypass, &undoButton, &redoButton })
             {
                 b->setWantsKeyboardFocus (false);
                 addAndMakeVisible (*b);
@@ -193,7 +236,10 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             };
             paste.onClick = [this] {
                 juce::String err;
-                status.setText (manager.pasteSettings (plugin, err) ? juce::String ("Settings pasted") : err, juce::dontSendNotification);
+                const auto before = fx::capturePluginState (plugin);
+                const bool ok = manager.pasteSettings (plugin, err);
+                if (ok) manager.recordChange (weakPlugin.lock(), before, fx::capturePluginState (plugin), "Paste plugin settings");
+                status.setText (ok ? juce::String ("Settings pasted") : err, juce::dontSendNotification);
             };
             status.setColour (juce::Label::textColourId, palette::textDim);
             status.setFont (uiFont (12.0f));
@@ -203,13 +249,73 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             refresh();
             fit();
         }
-        ~Content() override { editor.removeComponentListener (this); }
+        ~Content() override
+        {
+            commitPending();
+            plugin.removeListener (&tracker);
+            editor.removeComponentListener (this);
+        }
+
+        // ---- undo tracking ----
+        struct Tracker final : public juce::AudioProcessorListener
+        {
+            Content* owner = nullptr;
+            std::atomic<bool> dirty { false }, gestureEnded { false };
+            std::atomic<int> gestures { 0 };
+            std::atomic<juce::uint32> lastChange { 0 }, quietUntil { 0 };
+            void touched()
+            {
+                const auto now = juce::Time::getMillisecondCounter();
+                if (now < quietUntil.load()) return;   // the state is being put back by undo / redo / paste
+                dirty = true;
+                lastChange = now;
+            }
+            void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override { touched(); }
+            void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& d) override
+            {
+                if (d.parameterInfoChanged || d.programChanged || d.nonParameterStateChanged) touched();
+            }
+            void audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*, int) override { ++gestures; }
+            void audioProcessorParameterChangeGestureEnd (juce::AudioProcessor*, int) override
+            {
+                if (--gestures <= 0) { gestures = 0; gestureEnded = true; }
+            }
+        } tracker;
+        juce::String baseline;   // the settings as of the last undo step
+
+        juce::UndoManager* undoManager() const { return manager.getUndoManager ? manager.getUndoManager() : nullptr; }
+        /** Settings were put back (undo / redo / paste / preset): they are the new starting point. */
+        void restored (const juce::String& st)
+        {
+            tracker.quietUntil = juce::Time::getMillisecondCounter() + 400;
+            tracker.dirty = false;
+            baseline = st;
+        }
+        void commitPending()
+        {
+            if (! tracker.dirty.exchange (false)) return;
+            tracker.gestureEnded = false;
+            const auto now = fx::capturePluginState (plugin);
+            if (now == baseline) return;
+            if (auto* um = undoManager(); um != nullptr && now.length() < maxUndoStateChars && baseline.length() < maxUndoStateChars)
+            {
+                um->beginNewTransaction ("Change " + plugin.getName());
+                um->perform (new PluginStateAction (weakPlugin, baseline, now, manager.restoredCallback()));
+            }
+            baseline = now;
+        }
+        void pollUndo()
+        {
+            if (! tracker.dirty.load() || tracker.gestures.load() > 0) return;
+            const auto quiet = juce::Time::getMillisecondCounter() - tracker.lastChange.load();
+            if (tracker.gestureEnded.load() || quiet > 600) commitPending();   // a finished drag, or a click / wheel that has settled
+        }
         void refresh()
         {
             const auto& c = manager.clipboard;
             paste.setEnabled (! c.empty() && c.identifier == plugin.getPluginDescription().createIdentifierString());
         }
-        void fit() { setSize (juce::jmax (editor.getWidth(), 460), editor.getHeight() + bar); }
+        void fit() { setSize (juce::jmax (editor.getWidth(), 580), editor.getHeight() + bar); }
         void syncBypass()
         {
             if (! bypassControl.isBypassed) return;
@@ -217,12 +323,16 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             bypass.setToggleState (on, juce::dontSendNotification);
             bypass.setButtonText (on ? "Bypassed" : "Bypass");
         }
-        void timerCallback() override { syncBypass(); }
+        void timerCallback() override { syncBypass(); pollUndo(); }
         void componentMovedOrResized (juce::Component&, bool, bool wasResized) override { if (wasResized && ! resizing) fit(); }
         void resized() override
         {
             auto r = getLocalBounds();
             auto top = r.removeFromTop (bar).reduced (6, 4);
+            undoButton.setBounds (top.removeFromLeft (52));
+            top.removeFromLeft (2);
+            redoButton.setBounds (top.removeFromLeft (52));
+            top.removeFromLeft (10);
             presets.setBounds (top.removeFromLeft (74));
             top.removeFromLeft (4);
             if (bypass.isVisible()) { bypass.setBounds (top.removeFromLeft (78)); top.removeFromLeft (10); }
@@ -246,7 +356,8 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         PluginManager& manager;
         juce::AudioPluginInstance& plugin;
         juce::AudioProcessorEditor& editor;
-        juce::TextButton copy { "Copy" }, paste { "Paste" }, presets { "Presets" }, bypass { "Bypass" };
+        juce::TextButton copy { "Copy" }, paste { "Paste" }, presets { "Presets" }, bypass { "Bypass" }, undoButton { "Undo" }, redoButton { "Redo" };
+        std::weak_ptr<juce::AudioPluginInstance> weakPlugin;
         BypassControl bypassControl;
         juce::Label status;
         bool resizing = false;
@@ -265,7 +376,7 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         }
         if (ed == nullptr) ed = new juce::GenericAudioProcessorEditor (*plugin);
         editor.reset (ed);
-        content = std::make_unique<Content> (m, *plugin, *ed, std::move (bypass));
+        content = std::make_unique<Content> (m, plugin, *ed, std::move (bypass));
         setContentNonOwned (content.get(), true);
         setResizable (ed->isResizable(), false);
         setAlwaysOnTop (true);
@@ -625,6 +736,38 @@ void PluginManager::showEditor (std::shared_ptr<juce::AudioPluginInstance> p, co
                                                    std::move (bypass));
 }
 
+std::shared_ptr<juce::AudioPluginInstance> PluginManager::sharedFor (juce::AudioPluginInstance* p)
+{
+    if (auto it = editors.find (p); it != editors.end()) return it->second->plugin;
+    return {};
+}
+
+void PluginManager::commitPendingChanges()
+{
+    for (auto& [p, w] : editors)
+        if (w->content != nullptr) w->content->commitPending();
+}
+
+std::function<void (juce::AudioPluginInstance*, const juce::String&)> PluginManager::restoredCallback()
+{
+    std::weak_ptr<bool> token = alive;
+    return [this, token] (juce::AudioPluginInstance* p, const juce::String& st) {
+        if (token.expired()) return;
+        if (auto it = editors.find (p); it != editors.end() && it->second->content != nullptr) it->second->content->restored (st);
+    };
+}
+
+void PluginManager::recordChange (std::shared_ptr<juce::AudioPluginInstance> p, const juce::String& before, const juce::String& after,
+                                  const juce::String& name)
+{
+    if (p == nullptr || before == after) return;
+    if (auto it = editors.find (p.get()); it != editors.end() && it->second->content != nullptr) it->second->content->restored (after);
+    auto* um = getUndoManager ? getUndoManager() : nullptr;
+    if (um == nullptr || before.length() >= maxUndoStateChars || after.length() >= maxUndoStateChars) return;
+    um->beginNewTransaction (name);
+    um->perform (new PluginStateAction (p, before, after, restoredCallback()));
+}
+
 // ===================================================================== presets
 
 juce::File PluginManager::presetFolder (const juce::AudioPluginInstance& p)
@@ -703,12 +846,16 @@ void PluginManager::showPresetMenu (juce::Component& anchor, juce::AudioPluginIn
         if (token.expired() || safeAnchor == nullptr || r == 0) return;
         if (r >= 2000 && r - 2000 < files.size())
         {
+            const auto before = fx::capturePluginState (*pl);
             const auto err = loadPreset (*pl, files[r - 2000]);
+            if (err.isEmpty()) recordChange (sharedFor (pl), before, fx::capturePluginState (*pl), "Load preset");
             status (err.isEmpty() ? "Loaded " + files[r - 2000].getFileNameWithoutExtension() : err);
         }
         else if (r >= 1000 && r - 1000 < (int) factory.size())
         {
+            const auto before = fx::capturePluginState (*pl);
             fx::builtin::applyPreset (*pl, factory[(size_t) (r - 1000)]);
+            recordChange (sharedFor (pl), before, fx::capturePluginState (*pl), "Load preset");
             status ("Preset: " + factory[(size_t) (r - 1000)].name);
         }
         else if (r == 1)
@@ -731,9 +878,11 @@ void PluginManager::showPresetMenu (juce::Component& anchor, juce::AudioPluginIn
         {
             presetChooser = std::make_unique<juce::FileChooser> ("Load preset", folder.exists() ? folder : folder.getParentDirectory(), "*.ffpreset");
             presetChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                                        [pl, status, token] (const juce::FileChooser& fc) {
+                                        [this, pl, status, token] (const juce::FileChooser& fc) {
                 if (token.expired() || fc.getResult() == juce::File()) return;
+                const auto before = fx::capturePluginState (*pl);
                 const auto err = loadPreset (*pl, fc.getResult());
+                if (err.isEmpty()) recordChange (sharedFor (pl), before, fx::capturePluginState (*pl), "Load preset");
                 status (err.isEmpty() ? "Loaded " + fc.getResult().getFileNameWithoutExtension() : err);
             });
         }

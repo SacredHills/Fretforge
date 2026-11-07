@@ -80,6 +80,13 @@ public:
     /** Loads a .ffpreset file saved from the same plugin. Returns an error message, empty on success. */
     static juce::String loadPreset (juce::AudioPluginInstance&, const juce::File&);
     void showPresetMenu (juce::Component& anchor, juce::AudioPluginInstance&, std::function<void (const juce::String&)> status);
+
+    // ---- undo: changes made in a plugin window are steps in the project's undo history ----
+    std::function<juce::UndoManager*()> getUndoManager;
+    /** Turns changes still settling in open plugin windows into undo steps now (before an undo / redo). */
+    void commitPendingChanges();
+    /** Records a settings change of `plugin` (e.g. a preset load) as one undo step. */
+    void recordChange (std::shared_ptr<juce::AudioPluginInstance>, const juce::String& before, const juce::String& after, const juce::String& name);
     void closeEditor (juce::AudioPluginInstance*);
     void closeAllEditors();
 
@@ -99,6 +106,8 @@ private:
     struct EditorWindow;
     std::map<juce::AudioPluginInstance*, std::unique_ptr<EditorWindow>> editors;
     std::unique_ptr<juce::FileChooser> presetChooser;
+    std::function<void (juce::AudioPluginInstance*, const juce::String&)> restoredCallback();
+    std::shared_ptr<juce::AudioPluginInstance> sharedFor (juce::AudioPluginInstance*);
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 };
