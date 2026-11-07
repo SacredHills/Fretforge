@@ -392,6 +392,7 @@ void SessionController::rebuildGraphNow()
     GraphBuildOptions opt;
     opt.sampleRate = host.engine.getSampleRate() > 0 ? host.engine.getSampleRate() : 48000.0;
     opt.recorders = &recorders;
+    opt.midiRecorders = &midiRecorders;
     opt.rigFor = [this] (const juce::ValueTree& t) -> std::shared_ptr<fx::AmpRig> {
         if ((bool) rig::find (t)[rig::ids::bypass]) return nullptr;   // amp switched off from the mixer
         return rigBank->rigForTrack (t[ids::id].toString());
@@ -819,6 +820,8 @@ juce::StringArray SessionController::recordingTrackIds() const
     juce::StringArray ids_;
     for (auto& [id, r] : recorders)
         ids_.add (id);
+    for (auto& [id, r] : midiRecorders)
+        ids_.add (id);
     return ids_;
 }
 
@@ -838,14 +841,17 @@ void SessionController::toggleRecord()
         return;
     }
 
-    juce::Array<juce::ValueTree> armed;
+    juce::Array<juce::ValueTree> armed, armedMidi;
     for (auto t : doc.tracks())
-        if ((bool) t[ids::armed] && isAudioTrack (t))
-            armed.add (t);
-    if (armed.isEmpty())
+        if ((bool) t[ids::armed])
+        {
+            if (isAudioTrack (t)) armed.add (t);
+            else if (isInstrumentTrack (t)) armedMidi.add (t);
+        }
+    if (armed.isEmpty() && armedMidi.isEmpty())
     {
-        if (onError) onError ("No track armed", "Arm at least one track for recording (the R button in its header), "
-                                                "and choose its input.");
+        if (onError) onError ("No track armed", "Arm at least one track for recording (the R button in its header): "
+                                                "an audio track records its input, an instrument track records your MIDI keyboard.");
         return;
     }
 
@@ -882,10 +888,17 @@ void SessionController::toggleRecord()
     recorders = std::move (created);
     for (auto& [id, r] : recorders)
         diskWriter.add (r);
+    midiRecorders.clear();
+    for (auto& t : armedMidi)
+        midiRecorders[t[ids::id].toString()] = std::make_shared<MidiRecorder>();
     rebuildGraphNow(); // the graph now carries the recorders
 
     if (auto* dev = host.deviceManager.getCurrentAudioDevice())
+    {
         latencySamples = dev->getInputLatencyInSamples() + dev->getOutputLatencyInSamples();
+        // a key is played in time with what is heard: one output latency (plus the block it waits for) late
+        midiLatencySamples = dev->getOutputLatencyInSamples() + dev->getCurrentBufferSizeSamples() / 2;
+    }
 
     juce::int64 countIn = 0;
     if (! e.isPlaying())
@@ -896,7 +909,7 @@ void SessionController::toggleRecord()
     recordStartSec = e.getPositionSeconds();
     sessionActive = true;
     e.setRecording (true, countIn);
-    juce::Logger::writeToLog ("Recording started on " + juce::String ((int) recorders.size()) + " track(s), latency compensation "
+    juce::Logger::writeToLog ("Recording started on " + juce::String ((int) (recorders.size() + midiRecorders.size())) + " track(s), latency compensation "
                               + juce::String (latencySamples) + " samples");
     if (onArrangementChanged) onArrangementChanged();
 }
@@ -909,7 +922,10 @@ void SessionController::timerCallback()
     auto& e = host.engine;
     if (! e.isRecordRequested() && (! e.isRecordingActive() || ! host.hasDevice()))
         finishRecording();
-    else if (diskWriter.diskErrorFlag.exchange (false))
+    else
+        for (auto& [id, m] : midiRecorders) m->drain();
+    if (! sessionActive) return;
+    if (diskWriter.diskErrorFlag.exchange (false))
         if (onError) onError ("Disk problem", "Writing the recording to disk failed. Check free space.");
 }
 
@@ -918,6 +934,8 @@ void SessionController::finishRecording()
     sessionActive = false;
     auto finished = std::move (recorders);
     recorders.clear();
+    auto finishedMidi = std::move (midiRecorders);
+    midiRecorders.clear();
     rebuildGraphNow();
 
     juce::StringArray problems;
@@ -957,6 +975,36 @@ void SessionController::finishRecording()
         }
         cache.invalidate (rec->file);
         cache.get (rec->file);
+    }
+    // MIDI takes: one clip per armed instrument track, from the bar before the first note to the bar after the last
+    for (auto& [trackId, mr] : finishedMidi)
+    {
+        mr->drain();
+        auto track = findTrack (trackId);
+        if (! track.isValid() || mr->getEvents().empty()) continue;
+        const double shift = (double) midiLatencySamples / recordRate;
+        const double endSec = (double) juce::jmax ((juce::int64) 0, mr->lastPos.load()) / recordRate - shift;
+        std::vector<MidiRecorder::Note> rec;
+        std::vector<MidiRecorder::Pedal> recPedal;
+        MidiRecorder::toNotes (mr->getEvents(), recordRate, shift, endSec, rec, recPedal);
+        if (rec.empty()) continue;
+        const double bar = 60.0 / juce::jmax (1.0, doc.tempo()) * 4.0 / juce::jmax (1, doc.tsDen()) * juce::jmax (1, doc.tsNum());
+        double first = rec.front().start, last = 0.0;
+        for (auto& n : rec) last = juce::jmax (last, n.start + n.length);
+        const double clipStart = juce::jmax (0.0, std::floor (first / bar + 1.0e-6) * bar);
+        const double clipEndT = juce::jmax (clipStart + bar, std::ceil (last / bar - 1.0e-6) * bar);
+        std::vector<midiclip::Note> notes;
+        for (auto& n : rec)
+            notes.push_back ({ juce::jmax (0.0, n.start - clipStart), n.length, n.pitch, n.velocity });
+        std::vector<midiclip::Pedal> pedal;
+        for (auto& p : recPedal)
+            if (p.time >= clipStart) pedal.push_back ({ p.time - clipStart, p.down });
+        int take = 1;
+        for (auto c : track) take += midiclip::isMidiClip (c) ? 1 : 0;
+        auto clip = midiclip::createMidiClip (track[ids::name].toString() + " take " + juce::String (take), clipStart, notes, pedal);
+        clip.setProperty (ids::length, clipEndT - clipStart, nullptr);
+        track.appendChild (clip, &doc.undo());
+        ++clipsMade;
     }
     juce::Logger::writeToLog ("Recording finished: " + juce::String (clipsMade) + " clip(s)");
     if (! problems.isEmpty() && onError)

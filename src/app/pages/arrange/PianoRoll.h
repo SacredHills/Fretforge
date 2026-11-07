@@ -12,7 +12,7 @@ namespace ff
     Mouse: drag notes to move them (Alt: no snap), drag a note's right edge to change its length, drag on empty grid to
     select with a box, double-click empty grid to add a note, double-click a note to delete it. With Draw on, a single
     click adds a note and dragging sets its length. Keys: Delete, Ctrl+A, arrows (Shift+Up / Down: octave), Ctrl+Z / Y,
-    Q quantise. The keyboard plays the track's instrument. Every edit is one undo step in the project. */
+    Q quantise, Ctrl+C / X / V copy, cut and paste (at the playhead), Ctrl+D duplicate. The keyboard plays the track's instrument. Every edit is one undo step in the project. */
 class PianoRoll : public juce::Component, private juce::Timer, private juce::ValueTree::Listener, private juce::ScrollBar::Listener
 {
 public:
@@ -98,6 +98,9 @@ private:
     void quantize();
     void fit();
     void deleteSelected();
+    void copySelected();
+    void pasteAt (double timelineSec);     // the clipboard's first note lands here
+    void duplicateSelected();             // a copy right after the selection
     void transpose (int semitones);
     void nudge (int steps);
     int numSelected() const;

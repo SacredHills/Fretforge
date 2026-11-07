@@ -30,11 +30,13 @@ struct PlayTrack
     int inputLeft = -1, inputRight = -1;     // indices into the device's active input channels
     int meterSlot = 0;
     std::shared_ptr<TrackRecorder> recorder; // only while recording
+    std::shared_ptr<MidiRecorder> midiRecorder;   // instrument tracks, only while recording
     std::shared_ptr<fx::AmpRig> rig;         // amp rig insert (Effects & Amps), applied before fader / pan
     std::shared_ptr<fx::InsertChain> inserts; // plugin inserts, after the rig
 
     // routing
     timeline::TrackKind kind = timeline::TrackKind::audio;
+    juce::int64 key = 0;                      // hash of the track id: carries audio-thread state into the next snapshot
     int output = -1;                          // index of the bus track this one plays into, -1 = master
     struct Send { int target = -1; float gain = 0.0f; bool pre = false; };
     std::vector<Send> sends;                  // into FX / bus tracks
@@ -64,6 +66,11 @@ struct PlayTrack
     juce::int64 midiNextPos = -1;             // where the last rolling block ended (a jump silences held notes)
     bool midiWasRolling = false;
     float prevGainL = -1.0f, prevGainR = -1.0f;   // fader ramp across blocks (automation)
+    /** Same track in the previous snapshot: keep playing where it left off (held notes, fader ramps). */
+    void takeStateFrom (const PlayTrack& o) noexcept
+    {
+        idle = o.idle; midiNextPos = o.midiNextPos; midiWasRolling = o.midiWasRolling; prevGainL = o.prevGainL; prevGainR = o.prevGainR;
+    }
     void resetState() noexcept { idle = {}; midiNextPos = -1; midiWasRolling = false; prevGainL = prevGainR = -1.0f; for (auto& l : lanes) l.last = -1.0f; }
 };
 
@@ -83,6 +90,7 @@ struct GraphBuildOptions
     double sampleRate = 48000.0;
     bool waitForAudio = false;   // export: load synchronously instead of skipping unloaded clips
     const std::map<juce::String, std::shared_ptr<TrackRecorder>>* recorders = nullptr; // by track id
+    const std::map<juce::String, std::shared_ptr<MidiRecorder>>* midiRecorders = nullptr; // by track id
     std::function<std::shared_ptr<fx::AmpRig> (const juce::ValueTree& track)> rigFor;    // amp rig per track (optional)
     std::function<std::shared_ptr<fx::InsertChain> (const juce::ValueTree& track)> insertsFor;
     std::shared_ptr<fx::InsertChain> masterInserts;

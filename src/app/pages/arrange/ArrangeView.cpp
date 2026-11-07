@@ -299,6 +299,8 @@ void TrackHeader::showMenu()
     {
         m.addItem (14, "Choose instrument  (now: " + owner.session.instrumentName (track) + ")...");
         m.addItem (15, "Open instrument");
+        m.addItem (16, "New MIDI clip at playhead");
+        m.addItem (17, "Export MIDI file...");
     }
     for (int i = 0; i < rig::numInserts (track); ++i)
         m.addItem (200 + i, "Plugin: " + rig::insertNode (track, i)[rig::ids::name].toString()
@@ -326,6 +328,8 @@ void TrackHeader::showMenu()
         else if (r == 13) o.session.showRoutingMenu (t, safe.getComponent());
         else if (r == 14) o.session.showInstrumentMenu (t, safe.getComponent());
         else if (r == 15) o.session.openInstrument (t);
+        else if (r == 16) o.newMidiClip (t, o.playhead());
+        else if (r == 17) o.exportMidi (t);
         else if (r >= 200 && r < 200 + rig::maxInserts) o.session.showInsertMenu (t, r - 200, safe.getComponent());
         else if (r >= 100) { o.doc.undo().beginNewTransaction ("Track colour"); o.doc.set (t, ids::colour, trackPalette()[r - 100]); }
         else if (r == 2) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx - 1, &o.doc.undo()); }
@@ -567,10 +571,25 @@ void TimelineCanvas::drawClip (juce::Graphics& g, const juce::ValueTree& clip, j
 {
     const bool muted = (bool) clip[ids::muted];
     const float alpha = muted ? 0.45f : 1.0f;
-    g.setColour (palette::bg.interpolatedWith (colour, 0.28f).withAlpha (alpha));
+    g.setColour (palette::bg.interpolatedWith (colour, selected ? 0.5f : 0.28f).withAlpha (alpha));
     g.fillRoundedRectangle (r, 4.0f);
+    // outline last: a dark edge between neighbouring clips (so slices show), white when selected
+    const auto outline = [&g, r, colour, selected] {
+        g.setColour (juce::Colours::black.withAlpha (0.8f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
+        if (selected)
+        {
+            g.setColour (palette::text);
+            g.drawRoundedRectangle (r.reduced (1.5f), 3.5f, 2.0f);
+        }
+        else
+        {
+            g.setColour (colour.brighter (0.2f).withAlpha (0.6f));
+            g.drawRoundedRectangle (r.reduced (1.5f), 3.5f, 1.0f);
+        }
+    };
     auto header = r.withHeight (15.0f);
-    g.setColour (colour.withAlpha (0.85f * alpha));
+    g.setColour ((selected ? colour.brighter (0.35f) : colour).withAlpha (0.85f * alpha));
     g.fillRoundedRectangle (header, 4.0f);
     g.fillRect (header.withTrimmedTop (8.0f));
 
@@ -590,7 +609,7 @@ void TimelineCanvas::drawClip (juce::Graphics& g, const juce::ValueTree& clip, j
         {
             lo = juce::jmin (lo, hi - 11);   // at least an octave tall
             const float rowH = wave.getHeight() / (float) (hi - lo + 1);
-            g.setColour (colour.brighter (0.5f).withAlpha (0.95f * alpha));
+            g.setColour ((selected ? juce::Colours::white : colour.brighter (0.5f)).withAlpha (0.95f * alpha));
             for (const auto& n : notes)
             {
                 const double t0 = start + (n.start - offset), t1 = t0 + n.length;
@@ -608,7 +627,7 @@ void TimelineCanvas::drawClip (juce::Graphics& g, const juce::ValueTree& clip, j
             g.setFont (uiFont (11.0f));
             g.drawText ("Empty MIDI clip", wave.toNearestInt(), juce::Justification::centred, true);
         }
-        juce::ignoreUnused (selected);
+        outline();
         return;
     }
     auto audio = owner.session.audioFor (clip);
@@ -686,8 +705,7 @@ void TimelineCanvas::drawClip (juce::Graphics& g, const juce::ValueTree& clip, j
         g.fillRect (juce::Rectangle<float> (r.getRight() - foW - 3.0f, r.getY() + 1.0f, 6.0f, 6.0f));
     }
 
-    g.setColour (selected ? palette::text : colour.darker (0.3f));
-    g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, selected ? 2.0f : 1.0f);
+    outline();
 }
 
 void TimelineCanvas::paint (juce::Graphics& g)
@@ -703,7 +721,7 @@ void TimelineCanvas::paint (juce::Graphics& g)
         const int y = i * th - geo.scrollY;
         if (y > getHeight() || y + th < 0) continue;
         auto t = owner.trackAtIndex (i);
-        g.setColour (owner.session.isTrackSelected (t) ? palette::panel.brighter (0.04f) : (i % 2 ? palette::bg : palette::bg.brighter (0.02f)));
+        g.setColour (owner.session.isTrackSelected (t) ? palette::panel.brighter (0.09f) : (i % 2 ? palette::bg : palette::bg.brighter (0.02f)));
         g.fillRect (0, y, getWidth(), th);
         g.setColour (palette::outline.withAlpha (0.6f));
         g.drawHorizontalLine (y + th - 1, 0.0f, (float) getWidth());
@@ -1310,8 +1328,10 @@ void TimelineCanvas::mouseDoubleClick (const juce::MouseEvent& e)
         }), true);
         return;
     }
-    if (owner.trackIndexAtY (e.y) >= owner.numTracks())
-        owner.addTrack();
+    const int ti = owner.trackIndexAtY (e.y);
+    if (ti >= owner.numTracks()) { owner.addTrack(); return; }
+    if (auto t = owner.trackAtIndex (ti); isInstrumentTrack (t) && ! owner.sliceMode() && ! clipAt (owner, e.position).isValid())
+        owner.newMidiClip (t, owner.geo.timeFor ((float) e.x));
 }
 
 void TimelineCanvas::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
@@ -1365,7 +1385,11 @@ void TimelineCanvas::showClipMenu (juce::ValueTree clip)
     m.addItem (5, "Normalize clip gain");
     m.addItem (6, "Reset clip gain", ! juce::exactlyEqual (prop (clip, ids::gainDb), 0.0));
     m.addItem (7, "Rename...");
-    if (midiclip::isMidiClip (clip)) m.addItem (8, "Edit MIDI...  (double-click)");
+    if (midiclip::isMidiClip (clip))
+    {
+        m.addItem (8, "Edit MIDI...  (double-click)");
+        m.addItem (9, "Export as MIDI file...");
+    }
 
     // takes: other clips on this track overlapping this one
     juce::PopupMenu takes;
@@ -1389,6 +1413,7 @@ void TimelineCanvas::showClipMenu (juce::ValueTree clip)
         else if (r == 3) o.deleteSelection();
         else if (r == 4) { um.beginNewTransaction ("Mute clip"); o.doc.set (clip, ids::muted, ! (bool) clip[ids::muted]); }
         else if (r == 8) o.openMidiEditor (clip);
+        else if (r == 9) o.exportMidi (clip);
         else if (r == 5)
         {
             if (auto a = o.session.audioFor (clip))
@@ -1425,6 +1450,8 @@ void TimelineCanvas::showLaneMenu (int trackIndex, double time)
     m.addItem (1, "Paste at playhead (Ctrl+V)", true);
     m.addItem (2, "Import audio here...");
     m.addItem (3, "Add marker here");
+    const auto laneTrack = owner.trackAtIndex (trackIndex);
+    if (isInstrumentTrack (laneTrack)) m.addItem (7, "New MIDI clip here  (double-click)");
     m.addSeparator();
     m.addItem (4, "Add track");
     m.addItem (5, "Add bus track");
@@ -1444,7 +1471,7 @@ void TimelineCanvas::showLaneMenu (int trackIndex, double time)
         else if (r == 4) o.addTrack();
         else if (r == 5) o.session.addTrack ({}, -1, TrackKind::bus);
         else if (r == 6) o.session.addTrack ({}, -1, TrackKind::fx);
-        juce::ignoreUnused (trackIndex);
+        else if (r == 7) o.newMidiClip (o.trackAtIndex (trackIndex), time);
     });
 }
 
@@ -1919,6 +1946,63 @@ void ArrangeView::showLaneChooser (juce::ValueTree track, juce::Component* targe
         for (auto* h : safe->headers) h->refreshAutomation();
         safe->repaintAll();
     });
+}
+
+void ArrangeView::newMidiClip (juce::ValueTree track, double time)
+{
+    if (! isInstrumentTrack (track)) return;
+    const double bar = geo.barSec();
+    const double start = juce::jmax (0.0, std::floor (time / bar + 1.0e-9) * bar);
+    int n = 1;
+    for (auto c : track) n += midiclip::isMidiClip (c) ? 1 : 0;
+    auto clip = midiclip::createMidiClip (track[ids::name].toString() + " " + juce::String (n), start, {});
+    clip.setProperty (ids::length, bar, nullptr);
+    doc.undo().beginNewTransaction ("New MIDI clip");
+    track.appendChild (clip, &doc.undo());
+    session.setSelectedTracks ({ track });
+    openMidiEditor (clip);
+}
+
+void ArrangeView::exportMidi (juce::ValueTree item)
+{
+    const bool isClip = item.hasType (ids::CLIP);
+    auto track = isClip ? item.getParent() : item;
+    std::vector<midiclip::Note> notes;
+    std::vector<midiclip::Pedal> pedal;
+    if (isClip) midiclip::clipContent (item, notes, pedal);
+    else
+        for (auto c : track)
+            if (midiclip::isMidiClip (c) && ! (bool) c[ids::muted])
+            {
+                std::vector<midiclip::Note> cn;
+                std::vector<midiclip::Pedal> cp;
+                midiclip::clipContent (c, cn, cp);
+                const double at = prop (c, ids::start);
+                for (auto& x : cn) { x.start += at; notes.push_back (x); }
+                for (auto& x : cp) { x.time += at; pedal.push_back (x); }
+            }
+    if (notes.empty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Export MIDI",
+                                                isClip ? "This clip has no notes yet." : "This track has no MIDI notes yet.");
+        return;
+    }
+    const auto name = (isClip ? item : track)[ids::name].toString();
+    const auto start = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                           .getChildFile (juce::File::createLegalFileName (name.isNotEmpty() ? name : juce::String ("MIDI")) + ".mid");
+    chooser = std::make_unique<juce::FileChooser> ("Export MIDI file", start, "*.mid");
+    juce::Component::SafePointer<ArrangeView> safe (this);
+    const auto trackName = track[ids::name].toString();
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [safe, notes, pedal, trackName] (const juce::FileChooser& fc) {
+                              if (safe == nullptr || fc.getResult() == juce::File()) return;
+                              auto f = fc.getResult().withFileExtension ("mid");
+                              const auto err = midiclip::writeMidiFile (f, trackName, notes, pedal, safe->doc.tempo(), safe->doc.tsNum(),
+                                                                        safe->doc.tsDen());
+                              if (err.isNotEmpty())
+                                  juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export MIDI", err);
+                          });
 }
 
 void ArrangeView::importAudioDialog()

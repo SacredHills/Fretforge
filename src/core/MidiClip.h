@@ -46,6 +46,13 @@ struct ImportedFile
 /** Reads a Standard MIDI File (type 0 or 1). Type 0 files are split by channel. */
 ImportedFile readMidiFile (const juce::File&);
 
+/** Writes a Standard MIDI File (type 1: a tempo track, then one track of notes). Note / pedal times are seconds from the
+    start of the file, at a constant tempo. Returns an error message, or empty on success. */
+juce::String writeMidiFile (const juce::File&, const juce::String& trackName, const std::vector<Note>&, const std::vector<Pedal>&,
+                            double bpm, int tsNum, int tsDen, int channel = 1);
+/** The notes and pedal a MIDI clip plays (inside its trimmed range), in seconds from the clip's start. */
+void clipContent (const juce::ValueTree& clip, std::vector<Note>&, std::vector<Pedal>&);
+
 /** General MIDI program name ("Acoustic Grand Piano"...). */
 juce::String gmProgramName (int program);
 } // namespace ff::midiclip

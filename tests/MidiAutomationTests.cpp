@@ -7,6 +7,7 @@
 #include "engine/AudioCache.h"
 #include "engine/GraphMixer.h"
 #include "engine/Exporter.h"
+#include "engine/Recorder.h"
 #include "engine/fx/BuiltinPlugins.h"
 #include "engine/fx/InsertChain.h"
 #include "engine/fx/PluginHost.h"
@@ -167,6 +168,100 @@ public:
                 expectEquals (r.tracks[1].channel, 10);
             }
             f.deleteFile();
+        }
+
+        beginTest ("MIDI file export round-trips, and a clip exports only what it plays");
+        {
+            auto clip = mc::createMidiClip ("c", 4.0, { { 0.25, 0.5, 60, 100 }, { 1.0, 0.75, 67, 80 }, { 3.0, 0.5, 72, 90 } },
+                                            { { 1.0, true }, { 1.5, false } });
+            clip.setProperty (tl::ids::offset, 0.5, nullptr);   // trimmed: the first note is cut off
+            clip.setProperty (tl::ids::length, 2.0, nullptr);   // ... and the last
+            std::vector<mc::Note> ns;
+            std::vector<mc::Pedal> ps;
+            mc::clipContent (clip, ns, ps);
+            expectEquals ((int) ns.size(), 1);
+            if (ns.size() == 1) expectWithinAbsoluteError (ns[0].start, 0.5, 1.0e-9);
+            expectEquals ((int) ps.size(), 2);
+
+            auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ff_export_test.mid");
+            const std::vector<mc::Note> src { { 0.0, 0.5, 60, 100 }, { 0.75, 0.25, 64, 70 }, { 1.5, 1.0, 67, 127 } };
+            const auto err = mc::writeMidiFile (f, "Keys", src, { { 0.0, true }, { 2.0, false } }, 90.0, 3, 4, 1);
+            expect (err.isEmpty(), err);
+            const auto r = mc::readMidiFile (f);
+            expect (r.error.isEmpty(), r.error);
+            expectWithinAbsoluteError (r.firstTempo, 90.0, 0.01);
+            expectEquals (r.tsNum, 3);
+            expectEquals ((int) r.tracks.size(), 1);
+            if (r.tracks.size() == 1)
+            {
+                expectEquals (r.tracks[0].name, juce::String ("Keys"));
+                expectEquals ((int) r.tracks[0].notes.size(), 3);
+                for (size_t i = 0; i < juce::jmin ((size_t) 3, r.tracks[0].notes.size()); ++i)
+                {
+                    expectWithinAbsoluteError (r.tracks[0].notes[i].start, src[i].start, 1.0e-3);
+                    expectWithinAbsoluteError (r.tracks[0].notes[i].length, src[i].length, 1.0e-3);
+                    expectEquals (r.tracks[0].notes[i].pitch, src[i].pitch);
+                    expectEquals (r.tracks[0].notes[i].velocity, src[i].velocity);
+                }
+                expectEquals ((int) r.tracks[0].pedal.size(), 2);
+            }
+            f.deleteFile();
+        }
+
+        beginTest ("MIDI recording turns key presses into notes");
+        {
+            MidiRecorder rec;
+            const juce::uint8 on60[] { 0x90, 60, 100 }, off60[] { 0x80, 60, 0 }, on64[] { 0x90, 64, 80 }, off64z[] { 0x90, 64, 0 },
+                              ped[] { 0xB0, 64, 127 }, on67[] { 0x90, 67, 90 };
+            rec.push (48000, on60, 3);
+            rec.push (52000, ped, 3);
+            rec.push (72000, on64, 3);
+            rec.push (96000, off60, 3);
+            rec.push (100000, off64z, 3);   // note-on with velocity 0 = note-off
+            rec.push (120000, on67, 3);     // still held when recording stops
+            rec.drain();
+            expectEquals ((int) rec.getEvents().size(), 6);
+            std::vector<MidiRecorder::Note> ns;
+            std::vector<MidiRecorder::Pedal> ps;
+            MidiRecorder::toNotes (rec.getEvents(), 48000.0, 0.1, 3.0, ns, ps);
+            expectEquals ((int) ns.size(), 3);
+            if (ns.size() == 3)
+            {
+                expectEquals (ns[0].pitch, 60);
+                expectWithinAbsoluteError (ns[0].start, 0.9, 1.0e-9);   // shifted back by the latency
+                expectWithinAbsoluteError (ns[0].length, 1.0, 1.0e-9);
+                expectEquals (ns[0].velocity, 100);
+                expectEquals (ns[1].pitch, 64);
+                expectWithinAbsoluteError (ns[1].length, 28000.0 / 48000.0, 1.0e-9);
+                expectEquals (ns[2].pitch, 67);
+                expectWithinAbsoluteError (ns[2].start + ns[2].length, 3.0, 1.0e-9);   // held notes end where recording stopped
+            }
+            expectEquals ((int) ps.size(), 1);
+        }
+
+        beginTest ("a rebuilt graph carries on: held notes are not played again");
+        {
+            juce::ValueTree tracks ("TRACKS");
+            auto t = tl::createBusTrack ("Keys", 0, tl::TrackKind::instrument);
+            tracks.appendChild (t, nullptr);
+            t.appendChild (mc::createMidiClip ("c", 0.0, { { 0.0, 2.0, 60, 120 } }), nullptr);
+            GraphBuildOptions o;
+            o.sampleRate = sr;
+            o.instrumentFor = [&] (const juce::ValueTree&) { return builtinInstrument ("fretforge:synth"); };
+            auto g1 = buildPlaybackGraph (tracks, noBundle, cache, o);
+            auto g2 = buildPlaybackGraph (tracks, noBundle, cache, o);
+            auto& a = g1->tracks[0];
+            a.midiWasRolling = true;
+            a.midiNextPos = 24000;
+            a.prevGainL = 0.5f;
+            g2->tracks[0].takeStateFrom (a);
+            expect (g2->tracks[0].key == a.key && a.key != 0, "tracks are matched by id");
+            expect (g2->tracks[0].midiWasRolling && g2->tracks[0].midiNextPos == 24000 && juce::exactlyEqual (g2->tracks[0].prevGainL, 0.5f));
+            BlockTiming bt;
+            bt.from = 24000;
+            bt.rolling = true;
+            prepareTrackBlock (g2->tracks[0], bt, 256);
+            expect (g2->tracks[0].midiBuffer.isEmpty(), "no re-triggered note");
         }
 
         beginTest ("instrument track plays its MIDI clip (synth and GM drums), in time");

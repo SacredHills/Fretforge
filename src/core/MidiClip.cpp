@@ -88,6 +88,66 @@ bool pitchRange (const std::vector<Note>& ns, int& lo, int& hi)
     return true;
 }
 
+juce::String writeMidiFile (const juce::File& f, const juce::String& trackName, const std::vector<Note>& ns, const std::vector<Pedal>& ped,
+                            double bpm, int tsNum, int tsDen, int channel)
+{
+    constexpr int ppq = 960;
+    bpm = bpm > 0.0 ? bpm : 120.0;
+    const auto ticks = [&] (double sec) { return std::round (juce::jmax (0.0, sec) * bpm / 60.0 * ppq); };
+    channel = juce::jlimit (1, 16, channel);
+
+    juce::MidiMessageSequence tempo;
+    tempo.addEvent (juce::MidiMessage::tempoMetaEvent ((int) std::round (60.0e6 / bpm)), 0.0);
+    int denPow = 0;
+    while ((1 << denPow) < juce::jmax (1, tsDen)) ++denPow;
+    tempo.addEvent (juce::MidiMessage::timeSignatureMetaEvent (juce::jmax (1, tsNum), 1 << denPow), 0.0);
+
+    juce::MidiMessageSequence seq;
+    auto name = juce::MidiMessage::textMetaEvent (3, trackName.isNotEmpty() ? trackName : juce::String ("MIDI"));
+    seq.addEvent (name, 0.0);
+    for (auto& p : ped)
+        seq.addEvent (juce::MidiMessage::controllerEvent (channel, 64, p.down ? 127 : 0), ticks (p.time));
+    for (auto& n : ns)
+    {
+        const double on = ticks (n.start), off = juce::jmax (on + 1.0, ticks (n.start + n.length));
+        seq.addEvent (juce::MidiMessage::noteOn (channel, juce::jlimit (0, 127, n.pitch), (juce::uint8) juce::jlimit (1, 127, n.velocity)), on);
+        seq.addEvent (juce::MidiMessage::noteOff (channel, juce::jlimit (0, 127, n.pitch)), off);
+    }
+    seq.sort();
+    seq.updateMatchedPairs();
+    double endTick = 0.0;
+    for (auto* e : seq) endTick = juce::jmax (endTick, e->message.getTimeStamp());
+    tempo.addEvent (juce::MidiMessage::endOfTrack(), 0.0);
+    seq.addEvent (juce::MidiMessage::endOfTrack(), endTick);
+
+    juce::MidiFile mf;
+    mf.setTicksPerQuarterNote (ppq);
+    mf.addTrack (tempo);
+    mf.addTrack (seq);
+    f.getParentDirectory().createDirectory();
+    juce::TemporaryFile tmp (f);
+    {
+        juce::FileOutputStream out (tmp.getFile());
+        if (! out.openedOk() || ! mf.writeTo (out, 1)) return "Could not write \"" + f.getFullPathName() + "\".";
+    }
+    if (! tmp.overwriteTargetFileWithTemporary()) return "Could not write \"" + f.getFullPathName() + "\".";
+    return {};
+}
+
+void clipContent (const juce::ValueTree& clip, std::vector<Note>& outNotes, std::vector<Pedal>& outPedal)
+{
+    const double off = (double) clip.getProperty (tl::ids::offset, 0.0), len = (double) clip.getProperty (tl::ids::length, 0.0);
+    for (auto n : notesOf (clip))
+    {
+        if (n.start < off - 1.0e-9 || n.start >= off + len) continue;
+        n.start -= off;
+        n.length = juce::jmin (n.length, len - n.start);
+        outNotes.push_back (n);
+    }
+    for (auto p : pedalOf (clip))
+        if (p.time >= off - 1.0e-9 && p.time < off + len) { p.time -= off; outPedal.push_back (p); }
+}
+
 ImportedFile readMidiFile (const juce::File& f)
 {
     ImportedFile r;

@@ -1,4 +1,5 @@
 #include "Recorder.h"
+#include <algorithm>
 
 namespace ff
 {
@@ -156,5 +157,45 @@ void DiskWriter::run()
                 diskErrorFlag = true;
         wait (20);
     }
+}
+
+void MidiRecorder::drain()
+{
+    Event buf[256];
+    int n;
+    while ((n = fifo.pop (buf, 256)) > 0)
+        events.insert (events.end(), buf, buf + n);
+}
+
+void MidiRecorder::toNotes (const std::vector<Event>& evs, double sr, double shiftSec, double endSec,
+                            std::vector<Note>& notes, std::vector<Pedal>& pedal)
+{
+    if (sr <= 0.0) return;
+    struct Held { double start = -1.0; int velocity = 0; };
+    Held held[16][128];
+    auto toSec = [&] (juce::int64 p) { return (double) p / sr - shiftSec; };
+    auto close = [&] (int ch, int pitch, double t) {
+        auto& h = held[ch][pitch];
+        if (h.start < 0.0) return;
+        notes.push_back ({ h.start, juce::jmax (0.01, t - h.start), pitch, h.velocity, ch + 1 });
+        h.start = -1.0;
+    };
+    for (const auto& e : evs)
+    {
+        if (e.size < 3) continue;
+        const int status = e.b[0] & 0xF0, ch = e.b[0] & 0x0F, d1 = e.b[1] & 0x7F, d2 = e.b[2] & 0x7F;
+        const double t = toSec (e.pos);
+        if (status == 0x90 && d2 > 0)
+        {
+            close (ch, d1, t);   // re-struck while held
+            held[ch][d1] = { t, d2 };
+        }
+        else if (status == 0x80 || (status == 0x90 && d2 == 0)) close (ch, d1, t);
+        else if (status == 0xB0 && d1 == 64) pedal.push_back ({ t, d2 >= 64 });
+    }
+    for (int ch = 0; ch < 16; ++ch)
+        for (int p = 0; p < 128; ++p)
+            close (ch, p, endSec);
+    std::sort (notes.begin(), notes.end(), [] (const Note& a, const Note& b) { return a.start < b.start; });
 }
 } // namespace ff

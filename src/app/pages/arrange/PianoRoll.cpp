@@ -247,6 +247,58 @@ void PianoRoll::quantize()
     flash ("Quantized " + juce::String (moved) + " of " + juce::String (count) + " notes to " + gridName);
 }
 
+namespace
+{
+    std::vector<midiclip::Note> noteClipboard;   // shared by all MIDI editors; starts relative to the first note
+}
+
+void PianoRoll::copySelected()
+{
+    if (numSelected() == 0) { flash ("Select notes to copy"); return; }
+    double first = 1.0e12;
+    for (size_t i = 0; i < notes.size(); ++i) if (selected[i]) first = juce::jmin (first, absStart (notes[i]));
+    noteClipboard.clear();
+    for (size_t i = 0; i < notes.size(); ++i)
+        if (selected[i])
+        {
+            auto n = notes[i];
+            n.start = absStart (n) - first;
+            noteClipboard.push_back (n);
+        }
+    flash ("Copied " + juce::String ((int) noteClipboard.size()) + (noteClipboard.size() == 1 ? " note" : " notes"));
+}
+
+void PianoRoll::pasteAt (double t)
+{
+    if (noteClipboard.empty()) { flash ("Nothing to paste: copy some notes first (Ctrl+C)"); return; }
+    const double base = juce::jmax (clipStart(), t);
+    selected.assign (notes.size(), 0);
+    for (auto n : noteClipboard)
+    {
+        n.start = base + n.start - clipStart() + offset();
+        notes.push_back (n);
+        selected.push_back (1);
+    }
+    commit ("Paste notes");
+    flash ("Pasted " + juce::String ((int) noteClipboard.size()) + (noteClipboard.size() == 1 ? " note" : " notes"));
+}
+
+void PianoRoll::duplicateSelected()
+{
+    if (numSelected() == 0) { flash ("Select notes to duplicate"); return; }
+    const auto saved = noteClipboard;
+    double first = 1.0e12, last = 0.0;
+    for (size_t i = 0; i < notes.size(); ++i)
+        if (selected[i]) { first = juce::jmin (first, absStart (notes[i])); last = juce::jmax (last, absStart (notes[i]) + notes[i].length); }
+    copySelected();
+    const double gs = gridSec();
+    const double span = gs > 0.0 ? std::ceil ((last - first) / gs - 1.0e-6) * gs : last - first;
+    pasteAt (first + juce::jmax (span, gs > 0.0 ? gs : 0.01));
+    noteClipboard = saved;   // duplicating leaves the clipboard alone
+    flashTicks = 0;
+    updateInfo();
+}
+
 void PianoRoll::deleteSelected()
 {
     if (numSelected() == 0) return;
@@ -542,13 +594,25 @@ void PianoRoll::mouseDown (const juce::MouseEvent& e)
     if (e.mods.isPopupMenu())
     {
         juce::PopupMenu m;
-        m.addItem (1, "Delete", numSelected() > 0 || hit >= 0);
+        if (hit >= 0 && ! selected[(size_t) hit]) { selected.assign (notes.size(), 0); selected[(size_t) hit] = 1; updateInfo(); repaint(); }
+        const bool any = numSelected() > 0;
+        m.addItem (4, "Cut  (Ctrl+X)", any);
+        m.addItem (5, "Copy  (Ctrl+C)", any);
+        m.addItem (6, "Paste here  (Ctrl+V pastes at the playhead)", ! noteClipboard.empty());
+        m.addItem (7, "Duplicate  (Ctrl+D)", any);
+        m.addItem (1, "Delete", any);
+        m.addSeparator();
         m.addItem (2, "Quantize");
         m.addItem (3, "Select all");
         juce::Component::SafePointer<PianoRoll> safe (this);
-        m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, hit] (int r) {
+        const double at = snap (timeFor (e.position.x), ! e.mods.isAltDown());
+        m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, at] (int r) {
             if (safe == nullptr) return;
-            if (r == 1) { if (hit >= 0 && safe->numSelected() == 0) safe->selected[(size_t) hit] = 1; safe->deleteSelected(); }
+            if (r == 1) safe->deleteSelected();
+            else if (r == 4) { safe->copySelected(); safe->deleteSelected(); }
+            else if (r == 5) safe->copySelected();
+            else if (r == 6) safe->pasteAt (at);
+            else if (r == 7) safe->duplicateSelected();
             else if (r == 2) safe->quantize();
             else if (r == 3) { std::fill (safe->selected.begin(), safe->selected.end(), 1); safe->updateInfo(); safe->repaint(); }
         });
@@ -742,6 +806,10 @@ bool PianoRoll::keyPressed (const juce::KeyPress& k)
         return true;
     }
     if (k.getModifiers().isCommandDown() && (c == 'Y' || c == 'y')) { doc.undo().redo(); return true; }
+    if (k.getModifiers().isCommandDown() && (c == 'C' || c == 'c')) { copySelected(); return true; }
+    if (k.getModifiers().isCommandDown() && (c == 'X' || c == 'x')) { if (numSelected() > 0) { copySelected(); deleteSelected(); } return true; }
+    if (k.getModifiers().isCommandDown() && (c == 'V' || c == 'v')) { pasteAt (snap (host.engine.getPositionSeconds(), true)); return true; }
+    if (k.getModifiers().isCommandDown() && (c == 'D' || c == 'd')) { duplicateSelected(); return true; }
     if (c == juce::KeyPress::upKey) { transpose (k.getModifiers().isShiftDown() ? 12 : 1); return true; }
     if (c == juce::KeyPress::downKey) { transpose (k.getModifiers().isShiftDown() ? -12 : -1); return true; }
     if (c == juce::KeyPress::leftKey) { nudge (-1); return true; }

@@ -319,7 +319,11 @@ struct AudioEngine::Segment final : GraphMixer::Source
                     const auto& lm = e.liveMidiBlock[(size_t) i];
                     if (lm.target == t.meterSlot || (lm.target < 0 && (t.armed || t.monitor)))
                         t.midiBuffer.addEvent (lm.b, lm.size, 0);
+                    if (lm.target < 0 && t.armed && rolling && recordingNow && t.midiRecorder != nullptr)
+                        t.midiRecorder->push (e.pos, lm.b, lm.size);
                 }
+            if (t.midiRecorder != nullptr && rolling && recordingNow)
+                t.midiRecorder->lastPos.store (e.pos + len, std::memory_order_relaxed);
             if (! t.audible) meter.rms.store (0.0f, std::memory_order_relaxed);
             return t.audible;
         }
@@ -396,6 +400,11 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
     // ---- pick up a new arrangement snapshot ----
     if (auto* g = pendingGraph.exchange (nullptr))
     {
+        // a rebuilt snapshot (e.g. while a fader moves) continues seamlessly: no re-triggered notes, no gain jumps
+        if (graph != nullptr)
+            for (auto& nt : g->tracks)
+                for (const auto& ot : graph->tracks)
+                    if (ot.key == nt.key && ot.instrument == nt.instrument) { nt.takeStateFrom (ot); break; }
         if (graph != nullptr && retired.push (&graph, 1) == 0)
         {
             // FIFO full (message thread stalled): leaking is safer than freeing here.

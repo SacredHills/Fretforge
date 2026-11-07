@@ -128,6 +128,8 @@ private:
     std::unique_ptr<fx::RigBank> rigBank;
     DiskWriter diskWriter;
     std::map<juce::String, std::shared_ptr<TrackRecorder>> recorders;
+    std::map<juce::String, std::shared_ptr<MidiRecorder>> midiRecorders;
+    juce::int64 midiLatencySamples = 0;
     bool sessionActive = false;
     double recordStartSec = 0.0;
     juce::int64 latencySamples = 0;

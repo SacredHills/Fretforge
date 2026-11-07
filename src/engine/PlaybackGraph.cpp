@@ -153,6 +153,7 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
         const float gain = juce::Decibels::decibelsToGain ((float) (double) t[ids::gainDb], -96.0f);
         panGains ((float) (double) t[ids::pan], gain, pt.gainL, pt.gainR);
         pt.kind = kindOf (t);
+        pt.key = t[ids::id].toString().hashCode64();
         // buses and FX returns stay audible when other tracks are soloed (the soloed track plays through them)
         pt.audible = ! (bool) t[ids::mute];   // solo is applied below, once the routing is known
         pt.monitor = (bool) t[ids::monitor];
@@ -163,6 +164,9 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
         if (opt.recorders != nullptr)
             if (auto it = opt.recorders->find (t[ids::id].toString()); it != opt.recorders->end())
                 pt.recorder = it->second;
+        if (opt.midiRecorders != nullptr)
+            if (auto it = opt.midiRecorders->find (t[ids::id].toString()); it != opt.midiRecorders->end())
+                pt.midiRecorder = it->second;
         if (opt.rigFor && pt.kind == TrackKind::audio) pt.rig = opt.rigFor (t);   // NAM amps live on audio tracks
         if (opt.insertsFor) pt.inserts = opt.insertsFor (t);
         pt.baseGainDb = (float) (double) t[ids::gainDb];

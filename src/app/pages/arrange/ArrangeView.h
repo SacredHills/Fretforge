@@ -220,6 +220,10 @@ public:
     void showLaneChooser (juce::ValueTree track, juce::Component* target);
     /** Opens (or brings forward) the MIDI editor of a MIDI clip. */
     void openMidiEditor (juce::ValueTree clip);
+    /** A new empty one-bar MIDI clip on an instrument track, at the bar containing `time`; opens it in the MIDI editor. */
+    void newMidiClip (juce::ValueTree track, double time);
+    /** Save a MIDI clip (or all of a track's MIDI clips, at their song positions) as a .mid file. */
+    void exportMidi (juce::ValueTree clipOrTrack);
     juce::AudioProcessorParameter* laneParameter (const juce::ValueTree& track, const juce::String& param) const;
     juce::String laneValueText (const juce::ValueTree& track, const juce::String& param, float value) const;
     bool laneValueFromText (const juce::ValueTree& track, const juce::String& param, const juce::String& text, float& value) const;

@@ -78,4 +78,38 @@ private:
     std::vector<std::shared_ptr<TrackRecorder>> active;
     void run() override;
 };
+
+/** Records what an armed instrument track receives from MIDI keyboards. The audio thread pushes each event with its
+    timeline position; the message thread drains them while recording and turns them into notes afterwards. */
+class MidiRecorder
+{
+public:
+    struct Event { juce::int64 pos = 0; juce::uint8 b[3] {}; juce::uint8 size = 0; };
+    MidiRecorder() { fifo.prepare (16384); }
+
+    // audio thread
+    void push (juce::int64 pos, const juce::uint8* bytes, int size) noexcept
+    {
+        Event e;
+        e.pos = pos;
+        e.size = (juce::uint8) juce::jlimit (0, 3, size);
+        for (int i = 0; i < e.size; ++i) e.b[i] = bytes[i];
+        fifo.push (&e, 1);
+    }
+    std::atomic<juce::int64> lastPos { -1 };   // end of the last recorded block
+
+    // message thread
+    void drain();
+    const std::vector<Event>& getEvents() const noexcept { return events; }
+
+    struct Note { double start, length; int pitch, velocity, channel; };
+    struct Pedal { double time; bool down; };
+    /** Pairs note-ons with note-offs (notes still held end at `endSec`). Times in seconds = pos / sampleRate - shiftSec. */
+    static void toNotes (const std::vector<Event>&, double sampleRate, double shiftSec, double endSec,
+                         std::vector<Note>& notes, std::vector<Pedal>& pedal);
+
+private:
+    SpscFifo<Event> fifo;
+    std::vector<Event> events;
+};
 } // namespace ff
