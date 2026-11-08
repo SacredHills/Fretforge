@@ -9,7 +9,7 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
 {
     auto r = getLocalBounds().toFloat().reduced (0.5f);
     const bool on = getToggleState();
-    auto base = on ? (icon == Icon::metronome || icon == Icon::loop ? palette::accent : (icon == Icon::record ? palette::bad : palette::good))
+    auto base = on ? (icon == Icon::metronome || icon == Icon::loop ? palette::accent : (icon == Icon::record ? palette::bad : palette::accent))
                    : palette::panelHi;
     if (down) base = base.darker (0.2f);
     else if (highlighted) base = base.brighter (0.1f);

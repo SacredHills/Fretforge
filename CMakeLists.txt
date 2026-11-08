@@ -243,15 +243,15 @@ set(CPACK_PACKAGE_NAME "Ravenyr")
 set(CPACK_PACKAGE_VENDOR "Sacred Hills Studio")
 set(CPACK_PACKAGE_CONTACT "Sacred Hills Studio")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RAVENYR Studio - guitar workstation: recording, mixing, amps, tabs, drums and training")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RAVENYR STUDIO - guitar workstation: recording, mixing, amps, tabs, drums and training")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/SacredHills/Fretforge")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "RAVENYR")
-set(CPACK_PACKAGE_EXECUTABLES "RAVENYR" "RAVENYR")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "RAVENYR STUDIO")
+set(CPACK_PACKAGE_EXECUTABLES "RAVENYR" "RAVENYR STUDIO")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/LICENSE.txt")
 if(WIN32)
     set(CPACK_GENERATOR "NSIS;ZIP")
-    set(CPACK_NSIS_PACKAGE_NAME "RAVENYR Studio")
-    set(CPACK_NSIS_DISPLAY_NAME "RAVENYR Studio")
+    set(CPACK_NSIS_PACKAGE_NAME "RAVENYR STUDIO")
+    set(CPACK_NSIS_DISPLAY_NAME "RAVENYR STUDIO")
     set(CPACK_NSIS_PUBLISHER "Sacred Hills Studio")
     set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/SacredHills/Fretforge")
     set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ravenyr.ico")
@@ -272,7 +272,7 @@ if(WIN32)
     set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
-    set(CPACK_DMG_VOLUME_NAME "RAVENYR")
+    set(CPACK_DMG_VOLUME_NAME "RAVENYR STUDIO")
     set(CPACK_DMG_FORMAT "UDZO")
     set(CPACK_DMG_SLA_USE_RESOURCE_FILE_LICENSE OFF)   # no license prompt when the .dmg opens
 else()
@@ -296,6 +296,7 @@ if(FF_BUILD_TEST_PLUGIN)
     juce_add_plugin(ff_test_plugin
         PRODUCT_NAME "FF Test Gain"
         COMPANY_NAME "Sacred Hills Studio"
+        BUNDLE_ID "com.ravenyr.fftestgain"
         PLUGIN_MANUFACTURER_CODE Frfg
         PLUGIN_CODE Fftg
         FORMATS VST3

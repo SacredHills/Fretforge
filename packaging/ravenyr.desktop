@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=RAVENYR
+Name=RAVENYR STUDIO
 GenericName=Guitar Workstation
 Comment=Record, mix, write tabs and practise guitar
 Exec=RAVENYR %f

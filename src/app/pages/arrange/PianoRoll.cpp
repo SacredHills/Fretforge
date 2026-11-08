@@ -397,7 +397,7 @@ void PianoRoll::paint (juce::Graphics& g)
         }
 
         // notes
-        const auto colour = palette::accent;
+        const auto colour = palette::graph;
         for (size_t i = 0; i < notes.size(); ++i)
         {
             const auto& n = notes[i];
@@ -408,7 +408,7 @@ void PianoRoll::paint (juce::Graphics& g)
             if (! inside) c = c.withAlpha (0.35f);
             g.setColour (selected[i] ? juce::Colours::white : c);
             g.fillRoundedRectangle (r, 2.0f);
-            g.setColour (selected[i] ? palette::accent : c.darker (0.5f));
+            g.setColour (selected[i] ? palette::text : c.darker (0.5f));
             g.drawRoundedRectangle (r, 2.0f, 1.0f);
         }
         if (! marquee.isEmpty())
@@ -469,7 +469,7 @@ void PianoRoll::paint (juce::Graphics& g)
             if (p > 0 && isBlackKey (p - 1)) bottom += keyH * 0.5f;
             if (top > (float) keys.getBottom() || bottom < (float) keys.getY()) continue;
             auto r = juce::Rectangle<float> ((float) keys.getX(), std::round (top), (float) keys.getWidth() - 1.0f, std::round (bottom) - std::round (top) - 1.0f);
-            g.setColour (p == keyboardNote ? palette::accent : juce::Colour (0xffe4e7eb));
+            g.setColour (p == keyboardNote ? palette::graph : juce::Colour (0xffe4e7eb));
             g.fillRect (r);
             if (p % 12 == 0 && keyH >= 7.0f)
             {
@@ -484,7 +484,7 @@ void PianoRoll::paint (juce::Graphics& g)
             const float y = yFor (p);
             if (y > (float) keys.getBottom() || y + keyH < (float) keys.getY()) continue;
             const auto r = juce::Rectangle<float> ((float) keys.getX(), y + 0.5f, (float) keys.getWidth() * 0.62f, keyH - 1.0f);
-            g.setColour (p == keyboardNote ? palette::accent : juce::Colour (0xff1d2024));
+            g.setColour (p == keyboardNote ? palette::graph : juce::Colour (0xff1d2024));
             g.fillRoundedRectangle (r, 1.5f);
         }
     }
@@ -505,7 +505,7 @@ void PianoRoll::paint (juce::Graphics& g)
             const float x = xFor (absStart (notes[i]));
             if (x < (float) vel.getX() - 4.0f || x > (float) vel.getRight()) continue;
             const float h = (float) (vel.getHeight() - 6) * (float) notes[i].velocity / 127.0f;
-            g.setColour (selected[i] ? juce::Colours::white : palette::accent.withAlpha (0.85f));
+            g.setColour (selected[i] ? juce::Colours::white : palette::graph.withAlpha (0.85f));
             g.fillRect (x, (float) vel.getBottom() - h, 3.0f, h);
             g.fillEllipse (x - 2.0f, (float) vel.getBottom() - h - 3.0f, 7.0f, 7.0f);
         }

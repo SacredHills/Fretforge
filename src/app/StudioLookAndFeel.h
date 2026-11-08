@@ -6,19 +6,20 @@ namespace ff
 namespace palette
 {
     // gothic: near-black with a violet cast, bone-white text, blood-red accent, cold steel for information
-    inline const juce::Colour bg        { 0xff0b0a0d };
-    inline const juce::Colour panel     { 0xff131116 };
-    inline const juce::Colour panelHi   { 0xff1e1a22 };
-    inline const juce::Colour well      { 0xff070609 };
-    inline const juce::Colour outline   { 0xff2f2834 };
-    inline const juce::Colour text      { 0xffe8e1d6 };  // bone
-    inline const juce::Colour textDim   { 0xff8f8693 };
-    inline const juce::Colour accent    { 0xffc32f3d };  // blood red
-    inline const juce::Colour accentDim { 0xff5c1820 };
-    inline const juce::Colour onAccent  { 0xfff4ece2 };  // text on accent-coloured buttons
+    inline const juce::Colour bg        { 0xff0a0a0a };
+    inline const juce::Colour panel     { 0xff141414 };
+    inline const juce::Colour panelHi   { 0xff222222 };
+    inline const juce::Colour well      { 0xff050505 };
+    inline const juce::Colour outline   { 0xff353535 };
+    inline const juce::Colour text      { 0xffeeeeee };  // white
+    inline const juce::Colour textDim   { 0xff8a8a8a };
+    inline const juce::Colour accent    { 0xfff2f2f2 };  // white: selection, focus, active controls
+    inline const juce::Colour accentDim { 0xff3c3c3c };
+    inline const juce::Colour onAccent  { 0xff0a0a0a };  // text on accent-coloured (white) buttons
     inline const juce::Colour good      { 0xff4fae80 };
     inline const juce::Colour warn      { 0xffd8b04a };
     inline const juce::Colour bad       { 0xffff4655 };
+    inline const juce::Colour graph     { 0xffc32f3d };  // curves, charts and note data keep their colour
     inline const juce::Colour info      { 0xff8c97d8 };  // cold steel
 }
 

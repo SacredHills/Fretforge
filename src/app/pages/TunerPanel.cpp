@@ -288,7 +288,7 @@ void TunerPanel::paint (juce::Graphics& g)
         {
             auto cell = row.removeFromLeft (w).reduced (3, 0).toFloat();
             const bool active = live && i == targetString;
-            g.setColour (active ? (inTune ? palette::good : palette::accent) : palette::panelHi);
+            g.setColour (active ? (inTune ? palette::good : palette::graph) : palette::panelHi);
             g.fillRoundedRectangle (cell, 4.0f);
             g.setColour (active ? juce::Colours::black : palette::text);
             g.setFont (uiFont (14.0f, true));

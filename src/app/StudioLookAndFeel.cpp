@@ -88,7 +88,13 @@ void StudioLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton&
     if (b.getToggleState())
     {
         g.setColour (palette::accent);
-        g.fillRoundedRectangle (box.reduced (3.5f), 2.0f);
+        g.fillRoundedRectangle (box, 3.0f);
+        juce::Path tick;
+        tick.startNewSubPath (box.getX() + box.getWidth() * 0.22f, box.getCentreY());
+        tick.lineTo (box.getX() + box.getWidth() * 0.42f, box.getY() + box.getHeight() * 0.72f);
+        tick.lineTo (box.getX() + box.getWidth() * 0.78f, box.getY() + box.getHeight() * 0.28f);
+        g.setColour (palette::onAccent);
+        g.strokePath (tick, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
     g.setColour (b.isEnabled() ? palette::text : palette::textDim);
     g.setFont (uiFont (14.0f));

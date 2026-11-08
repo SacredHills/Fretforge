@@ -14,8 +14,8 @@ namespace
 namespace col
 {
     // the app's gothic palette (see StudioLookAndFeel.h)
-    const juce::Colour bg { 0xff0b0a0d }, panel { 0xff131116 }, well { 0xff070609 }, outline { 0xff2f2834 }, text { 0xffe8e1d6 },
-        dim { 0xff8f8693 }, accent { 0xffc32f3d }, good { 0xff4fae80 }, info { 0xff8c97d8 }, bad { 0xffff4655 };
+    const juce::Colour bg { 0xff0a0a0a }, panel { 0xff141414 }, well { 0xff050505 }, outline { 0xff353535 }, text { 0xffeeeeee },
+        dim { 0xff8a8a8a }, accent { 0xfff2f2f2 }, graph { 0xffc32f3d }, good { 0xff4fae80 }, info { 0xff8c97d8 }, bad { 0xffff4655 };
 }
 
 using Layout = juce::AudioProcessorValueTreeState::ParameterLayout;
@@ -314,7 +314,7 @@ public:
             const float y = curveArea.getBottom() - juce::jlimit (0.0f, 1.0f, (out + 60.0f) / 60.0f) * curveArea.getHeight();
             if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
         }
-        g.setColour (col::accent);
+        g.setColour (col::graph);
         g.strokePath (p, juce::PathStrokeType (2.0f));
         auto meter = r.reduced (16.0f, 18.0f);
         g.setColour (col::dim);

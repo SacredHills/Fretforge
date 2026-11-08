@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "AppInfo.h"
 #include "GlobalKeys.h"
 
 namespace ff
@@ -27,12 +28,12 @@ void SectionNav::paint (juce::Graphics& g)
         }
         auto text = row.reduced (16, 0);
         g.setColour (sel ? palette::text : palette::textDim);
-        g.setFont (titleFont (15.5f));
+        g.setFont (titleFont (18.5f));
         g.drawText (names[i], text, juce::Justification::centredLeft);
 
         g.setFont (uiFont (10.5f));
         g.setColour (palette::textDim.withAlpha (0.7f));
-        auto right = text.removeFromRight (40);
+        auto right = text.removeFromRight (38);
         g.drawText (i < 9 ? "Ctrl " + juce::String (i + 1) : juce::String(), right, juce::Justification::centredRight);
         if (! implemented[i])
         {
@@ -87,8 +88,8 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
         if (ed != nullptr) openTone3000 (*ed, cab);
     });
 
-    const juce::StringArray names { "Editor", "Mixer", "Guitar Tabs", "Drum Studio", "Training", "Effects & Amps", "Settings" };
-    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), trainingPage.get(), effectsPage.get(), settingsPage.get() };
+    const juce::StringArray names { "Editor", "Mixer", "Drum Studio", "Guitar Tabs", "Training", "Effects & Amps", "Settings" };
+    pages = { studioPage.get(), mixerPage.get(), drumPage.get(), tabPage.get(), trainingPage.get(), effectsPage.get(), settingsPage.get() };
     nav.names = names;
     nav.implemented = { true, true, true, true, true, true, true };
     nav.onSelect = [this] (int i) { showSection (i); };
@@ -218,11 +219,11 @@ MainComponent::~MainComponent()
 void MainComponent::showSection (int index)
 {
     // the tab and drum sections drive the engine in score mode; switch the old one off first
-    if (tabPage != nullptr && index != 2) tabPage->setActive (false);
-    if (drumPage != nullptr && index != 3) drumPage->setActive (false);
-    if (tabPage != nullptr && index == 2) tabPage->setActive (true);
-    if (drumPage != nullptr && index == 3) drumPage->setActive (true);
-    if (trainingPage != nullptr) trainingPage->setActive (index == 4);
+    if (tabPage != nullptr && index != tabsSection) tabPage->setActive (false);
+    if (drumPage != nullptr && index != drumSection) drumPage->setActive (false);
+    if (tabPage != nullptr && index == tabsSection) tabPage->setActive (true);
+    if (drumPage != nullptr && index == drumSection) drumPage->setActive (true);
+    if (trainingPage != nullptr) trainingPage->setActive (index == trainingSection);
     if (effectsPage != nullptr) effectsPage->setActive (index == effectsSection);
     currentSection = index;
     nav.selected = index;
@@ -235,7 +236,7 @@ void MainComponent::showSection (int index)
 void MainComponent::updateTitleAndStatus()
 {
     if (onTitleChanged)
-        onTitleChanged ("RAVENYR - " + doc->displayName());
+        onTitleChanged (juce::String (FF_DISPLAY_NAME) + " - " + doc->displayName());
 
     juce::String left = doc->displayName() + "   ";
     left << (doc->hasLocation() ? doc->getBundle().getFullPathName() : juce::String ("(not saved)"));
@@ -280,13 +281,13 @@ void MainComponent::resized()
     if (menuBar)
         menuBar->setBounds (r.removeFromTop (24));
     auto top = r.removeFromTop (64);
-    logoArea = top.removeFromLeft (200);   // the logo, right under the menus, above the section list
+    logoArea = top.removeFromLeft (220);   // the logo, right under the menus, above the section list
     transport->setBounds (top);
     auto status = r.removeFromBottom (26).reduced (10, 0);
     statusRight.setBounds (status.removeFromRight (status.getWidth() / 2));
     statusLeft.setBounds (status);
 
-    nav.setBounds (r.removeFromLeft (200));
+    nav.setBounds (r.removeFromLeft (220));
     for (auto* p : pages)
         p->setBounds (r);
 }
@@ -567,7 +568,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdMetronomeWindow: info.setInfo ("Metronome...", "Open the metronome window (practice metronome, tempo trainer)", "Transport", 0); info.addDefaultKeypress ('m', cmd | shift); break;
         case cmdPracticeMetronome: info.setInfo ("Practice Metronome", "Start/stop the free-running metronome", "Transport", 0); info.setTicked (host.engine.practiceMetronome.load()); info.addDefaultKeypress ('m', 0); break;
         case cmdShortcuts: info.setInfo ("Keyboard Shortcuts...", "View and customise shortcuts", "Help", 0); info.addDefaultKeypress ('/', cmd); break;
-        case cmdAbout: info.setInfo ("About RAVENYR", "Version information", "Help", 0); break;
+        case cmdAbout: info.setInfo ("About " FF_DISPLAY_NAME, "Version information", "Help", 0); break;
         case cmdRecord: info.setInfo ("Record", "Record on armed tracks / punch out", "Transport", 0); info.setTicked (host.engine.isRecordRequested()); info.addDefaultKeypress ('r', 0); break;
         case cmdLoop: info.setInfo ("Loop", "Toggle the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::loopEnabled]); info.addDefaultKeypress ('l', 0); break;
         case cmdPunch: info.setInfo ("Punch In/Out", "Record only inside the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::punchEnabled]); info.addDefaultKeypress ('p', 0); break;
@@ -608,7 +609,7 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdReveal: if (doc->hasLocation()) doc->getBundle().revealToUser(); return true;
         case cmdUndo: pluginManager->commitPendingChanges(); doc->undo().undo(); return true;
         case cmdRedo: pluginManager->commitPendingChanges(); doc->undo().redo(); return true;
-        case cmdPlayStop: if (currentSection == 2) tabPage->togglePlay(); else if (currentSection == 3) drumPage->togglePlay(); else if (currentSection == 4) trainingPage->togglePlay(); else host.engine.togglePlay(); return true;
+        case cmdPlayStop: if (currentSection == tabsSection) tabPage->togglePlay(); else if (currentSection == drumSection) drumPage->togglePlay(); else if (currentSection == trainingSection) trainingPage->togglePlay(); else host.engine.togglePlay(); return true;
         case cmdReturnToZero: host.engine.returnToZero(); return true;
         case cmdToggleClick: transport->toggleClick(); return true;
         case cmdTapTempo: transport->tapTempo(); return true;
@@ -637,8 +638,8 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdAbout:
             juce::AlertWindow::showAsync (juce::MessageBoxOptions()
                                               .withIconType (juce::MessageBoxIconType::InfoIcon)
-                                              .withTitle ("RAVENYR")
-                                              .withMessage (juce::String ("RAVENYR Studio\nVersion ") + FF_VERSION_STRING
+                                              .withTitle (FF_DISPLAY_NAME)
+                                              .withMessage (juce::String (FF_DISPLAY_NAME "\nVersion ") + FF_VERSION_STRING
                                                             + "\n\n" + juce::String::fromUTF8 ("\xc2\xa9 ") + juce::String (juce::Time::getCurrentTime().getYear())
                                                             + " Sacred Hills Studio. All rights reserved."
                                                             + "\n\nBuilt with JUCE " + juce::SystemStats::getJUCEVersion().fromLastOccurrenceOf (" ", false, false)

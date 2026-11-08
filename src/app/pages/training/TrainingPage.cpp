@@ -517,7 +517,7 @@ void TrainingPage::TabView::paint (juce::Graphics& g)
                 auto box = juce::Rectangle<float> (x - cellW * 0.5f, y - lineGap * 0.4f, cellW, lineGap * 0.8f);
                 g.setColour (palette::well);
                 g.fillRect (box.withSizeKeepingCentre (juce::GlyphArrangement::getStringWidth (noteFont, txt) + 4.0f, box.getHeight()));
-                g.setColour ((bool) note[tids::accent] ? palette::accent.brighter (0.3f) : palette::text);
+                g.setColour ((bool) note[tids::accent] ? palette::graph.brighter (0.3f) : palette::text);
                 g.drawText (txt, box, juce::Justification::centred);
                 juce::String mark;
                 if ((bool) note[tids::hammer]) mark = "h";
@@ -585,7 +585,7 @@ void TrainingPage::drawStats (juce::Graphics& g)
     for (int i = 0; i < 14; ++i)
     {
         const float hgt = (float) (days[i] / mx) * chart.getHeight();
-        g.setColour (i == 13 ? palette::accent : palette::accent.withAlpha (0.45f));
+        g.setColour (i == 13 ? palette::graph : palette::graph.withAlpha (0.45f));
         g.fillRect (juce::Rectangle<float> (chart.getX() + (float) i * bw + 1.0f, chart.getBottom() - hgt, bw - 2.0f, juce::jmax (1.0f, hgt)));
     }
 

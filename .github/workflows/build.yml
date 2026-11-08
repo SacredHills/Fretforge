@@ -213,7 +213,7 @@ jobs:
           mv dist/Ravenyr-Windows out/Ravenyr/Windows
           mv dist/Ravenyr-Linux   out/Ravenyr/Linux
           cat > out/Ravenyr/README.txt <<'TXT'
-          RAVENYR Studio installers - (c) Sacred Hills Studio
+          RAVENYR STUDIO installers - (c) Sacred Hills Studio
           macOS:   open the .dmg and drag RAVENYR to Applications. First launch: right-click > Open > Open.
           Windows: run Ravenyr-x.y.z-win64.exe (setup with Start menu and desktop shortcuts, uninstall from Settings > Apps).
                    If SmartScreen warns: More info > Run anyway. The .zip is a portable copy: unzip and run "bin\RAVENYR.exe".

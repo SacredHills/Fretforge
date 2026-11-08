@@ -1,4 +1,4 @@
-RAVENYR Studio 1.0.0
+RAVENYR STUDIO 1.0.0
 Copyright (c) Sacred Hills Studio. All rights reserved.
 
 This software is provided "as is", without warranty of any kind, express or implied. In no event shall

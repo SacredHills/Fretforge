@@ -49,7 +49,7 @@ private:
     juce::TextButton addTrackButton { "+ Track" }, tuningButton { "Tuning..." }, trackMenuButton { "Track..." };
     juce::Slider tempoSlider;
     juce::Label tempoLabel, speedLabel;
-    PagePlayButton playButton { "Play tab", juce::Colour (0xff3a7bd5) };
+    PagePlayButton playButton { "Play tab", palette::accent };
     juce::TextButton loopButton { "Loop" }, loopSongButton { "Loop song" }, clickButton { "Click" }, countButton { "Count-in" };
     juce::TextButton importButton { "Import..." }, exportButton { "Export..." };
     juce::TextButton notationButton { "Notation" }, midiButton { "MIDI In" }, drumsButton { "Drums" };

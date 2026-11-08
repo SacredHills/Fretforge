@@ -697,7 +697,7 @@ public:
         fill.lineTo ((float) getWidth(), yFor (0.0f));
         fill.lineTo (0.0f, yFor (0.0f));
         fill.closeSubPath();
-        g.setColour (col::accent.withAlpha (0.10f));
+        g.setColour (col::graph.withAlpha (0.10f));
         g.fillPath (fill);
         g.setColour (col::text);
         g.strokePath (total, juce::PathStrokeType (2.0f));

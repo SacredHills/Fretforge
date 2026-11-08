@@ -21,7 +21,7 @@ public:
     {
         auto r = getLocalBounds().toFloat().reduced (0.5f);
         const bool on = getToggleState();
-        auto c = on ? colour : colour.withMultipliedBrightness (0.55f);
+        auto c = on ? colour : colour.withMultipliedBrightness (0.3f);
         if (over) c = c.brighter (0.15f);
         if (down) c = c.darker (0.2f);
         g.setColour (c);
@@ -29,7 +29,7 @@ public:
         g.setColour (colour.brighter (0.3f));
         g.drawRoundedRectangle (r, 4.0f, 1.0f);
         auto icon = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.3f);
-        g.setColour (juce::Colours::white);
+        g.setColour (c.getPerceivedBrightness() > 0.6f ? palette::onAccent : juce::Colours::white);
         if (on) g.fillRect (icon.reduced (1.0f));
         else
         {

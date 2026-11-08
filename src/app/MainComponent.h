@@ -34,7 +34,7 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
-    static constexpr int rowHeight = 40;
+    static constexpr int rowHeight = 48;
 private:
     int hover = -1;
     int rowAt (int y) const { return (y - 12) / rowHeight; }
@@ -119,7 +119,7 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
     juce::TooltipWindow tooltips { this, 600 };
     int currentSection = 0;
-    static constexpr int numSections = 7, effectsSection = 5, settingsSection = 6;
+    static constexpr int numSections = 7, drumSection = 2, tabsSection = 3, trainingSection = 4, effectsSection = 5, settingsSection = 6;
 
     void showSection (int index);
     void updateTitleAndStatus();

@@ -9,7 +9,7 @@ class MainWindow : public juce::DocumentWindow
 {
 public:
     MainWindow (juce::PropertiesFile& settings)
-        : DocumentWindow (FF_APP_NAME, palette::bg, DocumentWindow::allButtons)
+        : DocumentWindow (FF_DISPLAY_NAME, palette::bg, DocumentWindow::allButtons)
     {
         setUsingNativeTitleBar (true);
         auto* mc = new MainComponent (settings);
@@ -36,7 +36,7 @@ public:
 class Application : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return FF_APP_NAME; }
+    const juce::String getApplicationName() override { return FF_DISPLAY_NAME; }
     const juce::String getApplicationVersion() override { return FF_VERSION_STRING; }
     // the plugin scanner runs as a second copy of the app
     bool moreThanOneInstanceAllowed() override { return getCommandLineParameters().contains (pluginScannerProcessId); }
