@@ -264,6 +264,34 @@ void SessionController::removeTrackRig (juce::ValueTree track)
     track.removeChild (r, &doc.undo());
 }
 
+void SessionController::toggleAmpBypass (juce::ValueTree track)
+{
+    auto r = rig::find (track);
+    if (! r.isValid()) return;
+    doc.undo().beginNewTransaction ("NAM amp on / off");
+    r.setProperty (rig::ids::bypass, ! (bool) r[rig::ids::bypass], &doc.undo());
+}
+
+bool SessionController::ampBypassed (const juce::ValueTree& track) const
+{
+    return (bool) rig::find (track)[rig::ids::bypass];
+}
+
+void SessionController::showAmpMenu (juce::ValueTree track, juce::Component* target)
+{
+    if (! trackHasRig (track)) return;
+    juce::PopupMenu m;
+    m.addSectionHeader ("NAM Amp (Neural Amp Modeler)");
+    m.addItem (1, "Open amp window");
+    m.addItem (2, "Bypass", true, ampBypassed (track));
+    m.addItem (3, "Remove");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track] (int r) {
+        if (r == 1 && onOpenRig) onOpenRig (track);
+        else if (r == 2) toggleAmpBypass (track);
+        else if (r == 3) removeTrackRig (track);
+    });
+}
+
 void SessionController::showAddInsertMenu (juce::ValueTree track, juce::Component* target)
 {
     if (plugins == nullptr || ! track.isValid()) return;
@@ -273,6 +301,11 @@ void SessionController::showAddInsertMenu (juce::ValueTree track, juce::Componen
         return;
     }
     juce::PopupMenu m;
+    if (isAudioTrack (track) && ! trackHasRig (track))   // the amp is a plugin like the others (it always runs first)
+    {
+        m.addItem (-4, "NAM Amp (Neural Amp Modeler)");
+        m.addSeparator();
+    }
     if (! plugins->clipboard.empty() && plugins->clipboard.descXml.isNotEmpty())
     {
         m.addItem (-3, "Paste plugin: " + plugins->clipboard.name);
@@ -285,6 +318,7 @@ void SessionController::showAddInsertMenu (juce::ValueTree track, juce::Componen
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, safeTarget] (int r) {
         if (r == 0) return;
         if (r == -2) { plugins->showManager(); return; }
+        if (r == -4) { addTrackRig (track); return; }
         if (r == -3)
         {
             const auto c = plugins->clipboard;

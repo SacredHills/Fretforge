@@ -38,6 +38,9 @@ const std::vector<Preset>& factoryPresets (const juce::String& id);
 /** Applies a preset to a built-in plugin instance (false if it is not one). */
 bool applyPreset (juce::AudioPluginInstance&, const Preset&);
 
+/** The EQ's band listen (the editor's Listen button): only that band's part of the sound is heard. -1: off. */
+bool setEqListenBand (juce::AudioPluginInstance&, int band);
+
 /** Plugin format for the AudioPluginFormatManager, so the built-ins are created like any other plugin. */
 class Format final : public juce::AudioPluginFormat
 {

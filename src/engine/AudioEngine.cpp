@@ -3,7 +3,7 @@
 
 namespace ff
 {
-void LevelMeter::update (const float* data, int n) noexcept
+void LevelMeter::update (const float* data, int n, float gain) noexcept
 {
     if (data == nullptr || n <= 0)
         return;
@@ -11,15 +11,18 @@ void LevelMeter::update (const float* data, int n) noexcept
     double sum = 0.0;
     for (int i = 0; i < n; ++i)
     {
-        const float a = std::abs (data[i]);
+        const float a = std::abs (data[i]) * gain;
         pk = juce::jmax (pk, a);
-        sum += (double) data[i] * data[i];
+        sum += (double) a * a;
     }
     if (pk > peak.load (std::memory_order_relaxed))
         peak.store (pk, std::memory_order_relaxed);
     rms.store ((float) std::sqrt (sum / n), std::memory_order_relaxed);
     if (pk >= 0.999f)
+    {
         clipped.store (true, std::memory_order_relaxed);
+        clipCount.fetch_add (1, std::memory_order_relaxed);
+    }
 }
 
 AudioEngine::AudioEngine()
@@ -355,6 +358,11 @@ struct AudioEngine::Segment final : GraphMixer::Source
             juce::FloatVectorOperations::add (sL, inL, len);
             juce::FloatVectorOperations::add (sR, inR != nullptr ? inR : inL, len);
         }
+        if (t.armed && ! t.monitor && inL != nullptr)   // an armed track's meter shows its input even when it is not heard
+        {
+            meter.update (inL, len);
+            if (inR != nullptr && inR != inL) meter.update (inR, len);
+        }
         if (recordingNow && t.recorder != nullptr && inL != nullptr)
             t.recorder->push (inL, t.recorder->numChannels > 1 ? inR : nullptr, len, e.pos);
 
@@ -496,6 +504,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         {
             len = (int) juce::jmin ((juce::int64) len, countInRemaining);
             renderSegment (inputs, numInputs, bus, numBus, done, len, false, false); // live monitoring only
+            meterMix (bus, numBus, done, len);
             if (numBus > 0)
                 metronome.process (clickOut, numBus, len);
             countInRemaining -= len;
@@ -530,6 +539,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         renderSegment (inputs, numInputs, bus, numBus, done, len, playing && ! tab, recordingNow && ! tab);
         if (tab)
             renderTab (bus, numBus, done, len);
+        meterMix (bus, numBus, done, len);   // the mix (after the master plugins), before the click is added
 
         if (numBus > 0 && ((playing && clickWhilePlaying.load() && ! tab) || (! playing && practice)))
             metronome.process (clickOut, numBus, len);
@@ -592,9 +602,6 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
             juce::FloatVectorOperations::multiply (bus[c], g, numSamples);
     }
 
-    if (numBus > 0) outputMeterL.update (bus[0], numSamples);
-    if (numBus > 1) outputMeterR.update (bus[1], numSamples);
-    else if (numBus > 0) outputMeterR.update (bus[0], numSamples);
 
     positionSamples.store (pos, std::memory_order_relaxed);
     if (sr > 0.0)
@@ -603,6 +610,16 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         positionPpq.store ((double) pos / sr * tempo / 60.0, std::memory_order_relaxed);
     }
     callbackCounter.fetch_add (1, std::memory_order_release);
+}
+
+void AudioEngine::meterMix (float* const* bus, int numBus, int offset, int len) noexcept
+{
+    // OUT / MAIN OUT meters: what the master bus sends out (the master plugins, e.g. a limiter, included; the click and
+    // the live amp page are not part of it), at the main output level
+    const float g = juce::jlimit (0.0f, 2.0f, masterGain.load (std::memory_order_relaxed));
+    if (numBus > 0) outputMeterL.update (bus[0] + offset, len, g);
+    if (numBus > 1) outputMeterR.update (bus[1] + offset, len, g);
+    else if (numBus > 0) outputMeterR.update (bus[0] + offset, len, g);
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs, float* const* outputs,

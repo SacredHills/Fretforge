@@ -20,7 +20,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     // drag a plugin onto another track (copies it with its settings) or up / down in this list (moves it)
     bool isInterestedInDragSource (const SourceDetails&) override;
-    void itemDragMove (const SourceDetails& d) override { dropRow = juce::jlimit (0, rig::numInserts (track), (d.localPosition.y + rowHeight / 2) / rowHeight); repaint(); }
+    void itemDragMove (const SourceDetails& d) override { dropRow = juce::jlimit (0, rig::numInserts (track), (d.localPosition.y + rowHeight / 2) / rowHeight - ampRows()); repaint(); }
     void itemDragExit (const SourceDetails&) override { dropRow = -1; repaint(); }
     void itemDropped (const SourceDetails&) override;
     juce::ValueTree getTrack() const { return track; }
@@ -30,6 +30,7 @@ private:
     bool dragging = false;
     int dropRow = -1;
     bool onBypassButton (int x) const { return x > getWidth() - 18; }
+    int ampRows() const;   // 1 when the track has a NAM amp (shown first)
 };
 
 /** A strip's sends (drag up / down for the level, click for options) and its output (click to route). */
@@ -80,6 +81,7 @@ private:
     int slot;
     juce::Slider fader, pan;
     juce::TextButton mute { "M" }, solo { "S" }, arm { "R" }, ampButton { "NAM AMP" };
+    MonitorButton mon;
     PowerButton ampPower;
     juce::Label nameLabel;
     InsertList insertList { session, track };
@@ -87,7 +89,9 @@ private:
     RouteList routeList { session, doc, track };
     void showMenu();
     float level = -100.0f, hold = -100.0f;
-    int holdTicks = 0;
+    int holdTicks = 0, clipTicks = 0;
+    juce::uint32 clipSeen = 0;
+    juce::Rectangle<int> meterArea() const;
     bool updating = false;
     double faderPrev = 0.0;
     void refresh();

@@ -6,13 +6,16 @@ struct AudioEngineTests : juce::UnitTest
 {
     AudioEngineTests() : juce::UnitTest ("Audio engine", "engine") {}
 
+    float lastPeak = 0.0f;   // largest output sample of the last runBlocks call
     void runBlocks (ff::AudioEngine& e, int blocks, int n, std::vector<float>& inBuf, std::vector<float>& l, std::vector<float>& r)
     {
+        lastPeak = 0.0f;
         for (int b = 0; b < blocks; ++b)
         {
             const float* ins[1] = { inBuf.data() };
             float* outs[2] = { l.data(), r.data() };
             e.process (ins, 1, outs, 2, n);
+            for (int i = 0; i < n; ++i) lastPeak = juce::jmax (lastPeak, std::abs (l[(size_t) i]));
         }
     }
 
@@ -62,7 +65,7 @@ struct AudioEngineTests : juce::UnitTest
             e.prepare (48000.0, n);
             e.play();
             runBlocks (e, 20, n, in, l, r);
-            expectEquals (e.outputMeterL.takePeak(), 0.0f, "click disabled -> silence");
+            expectEquals (lastPeak, 0.0f, "click disabled -> silence");
 
             e.returnToZero();
             e.clickWhilePlaying = true;
@@ -72,7 +75,8 @@ struct AudioEngineTests : juce::UnitTest
             e.outputMeterL.takePeak();
             e.returnToZero();
             runBlocks (e, 4, n, in, l, r);       // beat 1 accent at gain 0.5 * volume 0.8
-            const float pk = e.outputMeterL.takePeak();
+            const float pk = lastPeak;
+            expect (e.outputMeterL.takePeak() < 0.001f, "the OUT meter shows the mix, not the click");
             expect (pk > 0.3f && pk < 0.45f, "peak " + juce::String (pk));
 
             std::vector<float> hot ((size_t) n, 1.0f);
@@ -86,7 +90,7 @@ struct AudioEngineTests : juce::UnitTest
             e.prepare (44100.0, n);
             e.practiceMetronome = true;
             runBlocks (e, 4, n, in, l, r);
-            expect (e.outputMeterL.takePeak() > 0.1f);
+            expect (lastPeak > 0.1f);
             expectEquals (e.getPositionSamples(), (juce::int64) 0);
         }
 

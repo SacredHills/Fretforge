@@ -337,8 +337,11 @@ public:
     }
     juce::RangedAudioParameter* bandParam (int band, int k) const { return bandParams[(size_t) band][(size_t) k]; }
 
-    void prepareToPlay (double, int) override
+    void prepareToPlay (double, int block) override
     {
+        for (auto& v : listenIn) v.assign ((size_t) juce::jmax (block, 512) * 2, 0.0f);
+        for (auto& c : listenFilters) for (auto& f : c) f.reset();
+        listenDesigned = -2;
         for (auto& c : filters) for (auto& f : c) for (auto& s : f.sec) s.reset();
         for (auto& d : detectors) d.reset();
         std::fill (envelopes.begin(), envelopes.end(), 0.0f);
@@ -390,6 +393,15 @@ public:
     {
         const auto s = settings();
         const double sr = sampleRate();
+        // listening to a band: keep the input (the band region is taken from what comes in)
+        const int listen = listenBand.load (std::memory_order_relaxed);
+        const bool listening = juce::isPositiveAndBelow (listen, eqBandCount) && s.b[(size_t) listen].isUsed()
+                               && (size_t) n <= listenIn[0].size();
+        if (listening)
+        {
+            std::copy (L, L + n, listenIn[0].begin());
+            std::copy (R != nullptr ? R : L, (R != nullptr ? R : L) + n, listenIn[1].begin());
+        }
         if (! (s == last))
         {
             for (int b = 0; b < eqBandCount; ++b)
@@ -448,6 +460,32 @@ public:
                     if (active[(size_t) b]) filters[(size_t) c][(size_t) b].process (chans[c] + off, len);
         }
 
+        if (listening)   // output only the part of the sound the band works on (what it adds or takes away)
+        {
+            const auto& band = s.b[(size_t) listen];
+            const int key = listen * 1000 + band.typeI();
+            if (key != listenDesigned || std::abs (band.freq - listenFreq) > 0.01f || std::abs (band.q - listenQ) > 0.001f)
+            {
+                const int t = band.typeI();
+                const auto type = t == eqLowShelf || t == eqHighCut ? Biquad::lowPass       // a high cut takes away the highs:
+                                : t == eqHighShelf || t == eqLowCut ? Biquad::highPass      //  hear them (and the lows of a low cut)
+                                : Biquad::bandPass;
+                const auto ty = t == eqHighCut ? Biquad::highPass : t == eqLowCut ? Biquad::lowPass : type;
+                const double q = ty == Biquad::bandPass ? juce::jmax (0.3, (double) band.q) : 0.7071;
+                for (auto& c : listenFilters)
+                    for (auto& f : c) f.set (ty, sr, band.freq, q);
+                listenDesigned = key;
+                listenFreq = band.freq;
+                listenQ = band.q;
+            }
+            float* outs[2] = { L, R };
+            for (int c = 0; c < nch; ++c)
+            {
+                std::copy (listenIn[(size_t) c].begin(), listenIn[(size_t) c].begin() + n, outs[c]);
+                for (auto& f : listenFilters[(size_t) c]) f.process (outs[c], n);
+            }
+        }
+
         const bool specOn = spectralOn.load (std::memory_order_acquire);
         if (specOn != spectralWasOn) { spectral.reset(); spectralWasOn = specOn; }
         if (specOn) spectral.process (L, R, n, s, sr);
@@ -479,6 +517,7 @@ public:
     std::array<std::atomic<float>, eqBandCount> dynNow {};   // live dynamic gain change per band (dB)
     EqSpectral spectral;
     std::atomic<bool> spectralOn { false };
+    std::atomic<int> listenBand { -1 };   // band being listened to (the editor's Listen button / Alt-drag), -1: none
 
 private:
     std::array<std::array<juce::RangedAudioParameter*, 12>, eqBandCount> bandParams {};
@@ -487,6 +526,10 @@ private:
     std::array<Biquad, eqBandCount> detectors;
     std::array<float, eqBandCount> envelopes {}, applied {};
     std::array<bool, eqBandCount> active {};
+    std::array<std::vector<float>, 2> listenIn;
+    std::array<std::array<Biquad, 2>, 2> listenFilters;   // per channel, two sections: a steeper slice
+    int listenDesigned = -2;
+    float listenFreq = 0.0f, listenQ = 0.0f;
     EqAll last {};
     bool spectralWasOn = false;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> outGain;
@@ -551,7 +594,9 @@ public:
     ~EqGraph() override { eq.analyserWanted = false; }
 
     std::function<void (int)> onSelect;
+    std::function<void()> onListenChanged;
     int selected = -1;
+    bool altListening = false;
     void select (int b)
     {
         selected = b;
@@ -737,6 +782,7 @@ public:
         select (b);
         dragging = b;
         if (b < 0) return;
+        if (e.mods.isAltDown()) { eq.listenBand = b; altListening = true; }   // Alt-drag: hear the band while moving it
         for (int k : { 2, 3 }) eq.bandParam (b, k)->beginChangeGesture();
     }
     void mouseDrag (const juce::MouseEvent& e) override
@@ -755,6 +801,7 @@ public:
     {
         if (dragging >= 0) for (int k : { 2, 3 }) eq.bandParam (dragging, k)->endChangeGesture();
         dragging = -1;
+        if (altListening) { altListening = false; eq.listenBand = -1; if (onListenChanged) onListenChanged(); }
     }
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
@@ -950,6 +997,7 @@ private:
 class EqEditor final : public juce::AudioProcessorEditor
 {
 public:
+    ~EqEditor() override { eq.listenBand = -1; }
     explicit EqEditor (Eq& e) : juce::AudioProcessorEditor (e), eq (e), graph (e)
     {
         addAndMakeVisible (graph);
@@ -986,6 +1034,17 @@ public:
             graph.select (-1);
         };
         addAndMakeVisible (removeButton);
+        listenButton.setClickingTogglesState (false);
+        listenButton.setColour (juce::TextButton::buttonOnColourId, col::info);
+        listenButton.setTooltip ("Listen: hear only the part of the sound this band works on (what it boosts, cuts or removes). "
+                                 "Tip: hold Alt while dragging a band to listen while you move it.");
+        listenButton.onClick = [this] {
+            const int b = graph.selected;
+            eq.listenBand = eq.listenBand.load() == b ? -1 : b;
+            syncListen();
+        };
+        addAndMakeVisible (listenButton);
+        graph.onListenChanged = [this] { syncListen(); };
 
         const char* names[] { "Frequency", "Gain", "Q", "Threshold", "Range", "Attack", "Release", "Output" };   // 0..6 band, 7 global
         for (int k = 0; k < 8; ++k)
@@ -1053,7 +1112,11 @@ public:
 
         auto bp = bandPanel.reduced (10, 8);
         auto left = bp.removeFromLeft (150);
-        bandLabel.setBounds (left.removeFromTop (24));
+        {
+            auto lr = left.removeFromTop (24);
+            listenButton.setBounds (lr.removeFromRight (64));
+            bandLabel.setBounds (lr);
+        }
         left.removeFromTop (4);
         auto row = left.removeFromTop (26);
         onButton.setBounds (row.removeFromLeft (70));
@@ -1086,7 +1149,11 @@ private:
     EqGraph graph;
     juce::Label title, hint, bandLabel;
     juce::ComboBox typeBox, slopeBox, dynBox;
-    juce::TextButton onButton { "On" }, removeButton { "Remove" };
+    juce::TextButton onButton { "On" }, removeButton { "Remove" }, listenButton { "Listen" };
+    void syncListen()
+    {
+        listenButton.setToggleState (eq.listenBand.load() >= 0 && eq.listenBand.load() == graph.selected, juce::dontSendNotification);
+    }
     std::array<Knob, 8> knobs;
     std::unique_ptr<juce::ComboBoxParameterAttachment> typeAttach, slopeAttach, dynAttach;
     std::unique_ptr<juce::ButtonParameterAttachment> onAttach;
@@ -1106,6 +1173,7 @@ private:
     }
     void showBand (int b)
     {
+        if (eq.listenBand.load() >= 0) eq.listenBand = b;   // listening follows the selected band
         typeAttach.reset();
         slopeAttach.reset();
         dynAttach.reset();
@@ -1113,7 +1181,8 @@ private:
         for (int k = 0; k < 7; ++k) knobs[(size_t) k].attach.reset();
         const bool has = b >= 0;
         for (juce::Component* c : { (juce::Component*) &bandLabel, (juce::Component*) &typeBox, (juce::Component*) &slopeBox,
-                                    (juce::Component*) &dynBox, (juce::Component*) &onButton, (juce::Component*) &removeButton })
+                                    (juce::Component*) &dynBox, (juce::Component*) &onButton, (juce::Component*) &removeButton,
+                                    (juce::Component*) &listenButton })
             c->setVisible (has);
         for (int k = 0; k < 7; ++k) { knobs[(size_t) k].slider.setVisible (has); knobs[(size_t) k].label.setVisible (has); }
         if (has)
@@ -1149,7 +1218,7 @@ private:
         for (int k = 3; k < 7; ++k) { knobs[(size_t) k].slider.setEnabled (dyn); knobs[(size_t) k].label.setEnabled (dyn); }
         dynBox.setEnabled (! eqIsCut (t));
     }
-    void timerCallback() { refreshEnablement(); }
+    void timerCallback() { refreshEnablement(); syncListen(); }
     struct Ticker final : public juce::Timer
     {
         EqEditor& e;

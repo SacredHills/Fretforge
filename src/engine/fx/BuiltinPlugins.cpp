@@ -1134,6 +1134,14 @@ const std::vector<Preset>& factoryPresets (const juce::String& id)
     return id == "fretforge:eq" ? eq : none;
 }
 
+bool setEqListenBand (juce::AudioPluginInstance& inst, int band)
+{
+    auto* e = dynamic_cast<Eq*> (&inst);
+    if (e == nullptr) return false;
+    e->listenBand = band;
+    return true;
+}
+
 bool applyPreset (juce::AudioPluginInstance& inst, const Preset& preset)
 {
     auto* b = dynamic_cast<Base*> (&inst);

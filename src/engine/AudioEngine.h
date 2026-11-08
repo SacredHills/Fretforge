@@ -20,8 +20,9 @@ struct LevelMeter
     std::atomic<float> peak { 0.0f };   // max |x| since the UI last took it
     std::atomic<float> rms { 0.0f };    // RMS of the latest block
     std::atomic<bool> clipped { false }; // sticky until cleared by the UI
+    std::atomic<juce::uint32> clipCount { 0 };   // +1 for every block that clipped (meters light their clip LED for a while)
 
-    void update (const float* data, int n) noexcept;
+    void update (const float* data, int n, float gain = 1.0f) noexcept;
     void clear() noexcept { peak = 0.0f; rms = 0.0f; }
     float takePeak() noexcept { return peak.exchange (0.0f); }
 
@@ -197,6 +198,7 @@ private:
     juce::int64 segLoopStart = 0, segLoopEnd = 0;   // loop range of the segment being rendered (latency read-ahead wraps)
     bool segLooping = false;
     void closeRecordSegments() noexcept;
+    void meterMix (float* const* bus, int numBus, int offset, int len) noexcept;
     void renderSegment (const float* const* inputs, int numInputs, float* const* bus, int numBus,
                         int offset, int len, bool rolling, bool recordingNow) noexcept;
     GraphMixer mixer;

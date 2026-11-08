@@ -106,8 +106,25 @@ bool TrackRecorder::drain()
         if (! writer->writeFromAudioSampleBuffer (planar, 0, frames))
             diskError = true;
         written.fetch_add (frames);
+        {
+            const juce::ScopedLock pl (peaksLock);
+            for (int i = 0; i < frames; ++i)
+            {
+                for (int c = 0; c < numChannels; ++c) peakAcc = juce::jmax (peakAcc, std::abs (interleaved[(size_t) (i * numChannels + c)]));
+                if (++peakFill == peakBlock) { peaks.push_back (peakAcc); peakAcc = 0.0f; peakFill = 0; }
+            }
+        }
     }
     return ! diskError;
+}
+
+int TrackRecorder::copyPeaks (juce::int64 fromFrame, juce::int64 numFrames, std::vector<float>& out) const
+{
+    const juce::ScopedLock pl (peaksLock);
+    const auto a = juce::jlimit ((juce::int64) 0, (juce::int64) peaks.size(), fromFrame / peakBlock);
+    const auto b = juce::jlimit (a, (juce::int64) peaks.size(), (fromFrame + numFrames + peakBlock - 1) / peakBlock);
+    out.assign (peaks.begin() + a, peaks.begin() + b);
+    return (int) out.size();
 }
 
 juce::Result TrackRecorder::finish()

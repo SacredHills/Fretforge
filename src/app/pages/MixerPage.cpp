@@ -62,6 +62,8 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
     setup (mute, palette::accent, ids::mute);
     setup (solo, palette::warn, ids::solo);
     setup (arm, palette::bad, ids::armed);
+    mon.onClick = [this] { session.setOnTracks (track, ids::monitor, ! (bool) track[ids::monitor], false); };
+    addAndMakeVisible (mon);
 
     ampButton.setColour (juce::TextButton::buttonOnColourId, palette::accent);
     ampButton.setWantsKeyboardFocus (false);
@@ -113,18 +115,36 @@ ChannelStrip::~ChannelStrip()
     track.removeListener (this);
 }
 
+int InsertList::ampRows() const { return session.trackHasRig (track) ? 1 : 0; }
+
 int InsertList::rowsWanted() const
 {
     const int n = rig::numInserts (track);
-    return n + (n < rig::maxInserts && session.plugins != nullptr ? 1 : 0);
+    return ampRows() + n + (n < rig::maxInserts && session.plugins != nullptr ? 1 : 0);
 }
 
 void InsertList::paint (juce::Graphics& g)
 {
-    const int n = rig::numInserts (track);
-    for (int i = 0; i < rowsWanted(); ++i)
+    const int n = rig::numInserts (track), amp = ampRows();
+    if (amp > 0)   // the NAM amp: always the first plugin
     {
-        auto r = juce::Rectangle<int> (0, i * rowHeight, getWidth(), rowHeight - 2).toFloat();
+        auto r = juce::Rectangle<int> (0, 0, getWidth(), rowHeight - 2).toFloat();
+        const bool bypassed = session.ampBypassed (track);
+        g.setColour (palette::accent.withAlpha (bypassed ? 0.08f : 0.25f));
+        g.fillRoundedRectangle (r, 3.0f);
+        auto lamp = r.removeFromRight (18.0f).withSizeKeepingCentre (10.0f, 10.0f);
+        g.setColour (bypassed ? palette::well : palette::good);
+        g.fillEllipse (lamp);
+        g.setColour (bypassed ? palette::textDim : palette::good.brighter (0.3f));
+        g.drawEllipse (lamp, 1.0f);
+        g.setColour (bypassed ? palette::textDim : palette::text);
+        g.setFont (uiFont (11.0f, ! bypassed));
+        g.drawText ("NAM Amp", r.reduced (5.0f, 0.0f), juce::Justification::centredLeft, true);
+    }
+    for (int row = amp; row < rowsWanted(); ++row)
+    {
+        const int i = row - amp;
+        auto r = juce::Rectangle<int> (0, row * rowHeight, getWidth(), rowHeight - 2).toFloat();
         if (i < n)
         {
             const auto node = rig::insertNode (track, i);
@@ -154,7 +174,7 @@ void InsertList::paint (juce::Graphics& g)
     if (dropRow >= 0)
     {
         g.setColour (palette::accent);
-        g.fillRect (0, juce::jmax (0, dropRow * rowHeight - 2), getWidth(), 2);
+        g.fillRect (0, juce::jmax (0, (dropRow + amp) * rowHeight - 2), getWidth(), 2);
     }
 }
 
@@ -162,12 +182,12 @@ void InsertList::mouseDown (const juce::MouseEvent&) { dragging = false; }
 
 void InsertList::mouseDrag (const juce::MouseEvent& e)
 {
-    const int row = e.getMouseDownY() / rowHeight;
-    if (dragging || row >= rig::numInserts (track) || e.getDistanceFromDragStart() < 5) return;
+    const int row = e.getMouseDownY() / rowHeight - ampRows();
+    if (dragging || row < 0 || row >= rig::numInserts (track) || e.getDistanceFromDragStart() < 5) return;
     if (auto* c = juce::DragAndDropContainer::findParentDragContainerFor (this))
     {
         dragging = true;
-        const auto rowArea = juce::Rectangle<int> (0, row * rowHeight, getWidth(), rowHeight - 2);
+        const auto rowArea = juce::Rectangle<int> (0, (row + ampRows()) * rowHeight, getWidth(), rowHeight - 2);
         const juce::Point<int> offset (-e.getMouseDownX(), -(e.getMouseDownY() - rowArea.getY()));
         c->startDragging ("ffinsert|" + track[ids::id].toString() + "|" + juce::String (row), this,
                           juce::ScaledImage (createComponentSnapshot (rowArea, true, 2.0f), 2.0), false, &offset);
@@ -177,14 +197,21 @@ void InsertList::mouseDrag (const juce::MouseEvent& e)
 void InsertList::mouseUp (const juce::MouseEvent& e)
 {
     if (dragging || ! e.mouseWasClicked()) return;
-    const int row = e.y / rowHeight, n = rig::numInserts (track);
+    const int amp = ampRows(), row = e.y / rowHeight - amp, n = rig::numInserts (track);
+    if (row < 0)
+    {
+        if (e.mods.isPopupMenu()) session.showAmpMenu (track, this);
+        else if (onBypassButton (e.x)) session.toggleAmpBypass (track);
+        else if (session.onOpenRig) session.onOpenRig (track);
+        return;
+    }
     if (row < n)
     {
         if (e.mods.isPopupMenu()) session.showInsertMenu (track, row, this);
         else if (onBypassButton (e.x)) session.toggleInsertBypass (track, row);
         else session.openInsert (track, row);
     }
-    else if (row < rowsWanted()) session.showAddInsertMenu (track, this);
+    else if (row + amp < rowsWanted()) session.showAddInsertMenu (track, this);
 }
 
 bool InsertList::isInterestedInDragSource (const SourceDetails& d)
@@ -292,13 +319,15 @@ void ChannelStrip::refresh()
     arm.setToggleState ((bool) track[ids::armed], juce::dontSendNotification);
     ampButton.setToggleState (session.trackHasRig (track), juce::dontSendNotification);
     arm.setVisible (isSourceTrack (track));
-    ampButton.setVisible (isSourceTrack (track));
+    mon.setVisible (isSourceTrack (track));
+    mon.setToggleState ((bool) track[ids::monitor], juce::dontSendNotification);
+    ampButton.setVisible (isInstrumentTrack (track));
     if (isInstrumentTrack (track))
     {
         ampButton.setButtonText (session.instrumentName (track));
         ampButton.setTooltip ("Instrument: click to open it, right-click to choose another");
     }
-    ampPower.setVisible (isAudioTrack (track) && session.trackHasRig (track));
+    ampPower.setVisible (false);
     ampPower.setToggleState (! (bool) rig::find (track)[rig::ids::bypass], juce::dontSendNotification);
     routeList.repaint();
     if (! nameLabel.isBeingEdited()) nameLabel.setText (track[ids::name].toString(), juce::dontSendNotification);
@@ -318,7 +347,17 @@ void ChannelStrip::tick()
     level = db > level ? db : juce::jmax (db, level - 1.6f);
     if (db >= hold) { hold = db; holdTicks = 45; }
     else if (--holdTicks <= 0) hold = juce::jmax (-100.0f, hold - 1.5f);
-    repaint();
+    if (const auto c = m.clipCount.load(); c != clipSeen) { clipSeen = c; clipTicks = 90; }
+    else if (clipTicks > 0) --clipTicks;
+    repaint (meterArea());
+}
+
+juce::Rectangle<int> ChannelStrip::meterArea() const
+{
+    // the meter runs exactly along the fader's travel, so its dB marks line up with the fader's
+    const int top = fader.getY() + juce::roundToInt (fader.getPositionOfValue (6.0)) - 7;
+    const int bottom = fader.getY() + juce::roundToInt (fader.getPositionOfValue (-60.0));
+    return { getWidth() - 3 - 16, top, 10, juce::jmax (10, bottom - top) };
 }
 
 void ChannelStrip::mouseDown (const juce::MouseEvent& e)
@@ -385,17 +424,7 @@ void ChannelStrip::paint (juce::Graphics& g)
     g.setColour (colour);
     g.fillRoundedRectangle (r.removeFromTop (6).toFloat(), 3.0f);
 
-    auto meter = getLocalBounds().reduced (3, 0).withTrimmedTop (fader.getY()).withTrimmedBottom (34).removeFromRight (16).reduced (3, 0);
-    g.setColour (palette::well);
-    g.fillRect (meter);
-    auto norm = [] (float db) { return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f); };
-    g.setColour (level > -0.5f ? palette::bad : (level > -9.0f ? palette::warn : palette::good));
-    g.fillRect (meter.withTop (meter.getBottom() - juce::roundToInt (norm (level) * meter.getHeight())));
-    if (hold > -60.0f)
-    {
-        g.setColour (palette::text);
-        g.fillRect (meter.getX(), meter.getBottom() - juce::roundToInt (norm (hold) * meter.getHeight()), meter.getWidth(), 1);
-    }
+    drawLevelMeter (g, meterArea(), level, hold, clipTicks > 0, true);
     g.setColour (palette::textDim);
     g.setFont (uiFont (10.0f));
     g.drawText ("PAN", getLocalBounds().withTrimmedTop (30).withHeight (14), juce::Justification::centred);
@@ -423,14 +452,14 @@ void ChannelStrip::resized()
     pan.setBounds (r.removeFromTop (40).withSizeKeepingCentre (40, 40));
     r.removeFromTop (6);
     auto buttons = r.removeFromTop (24);
-    const int w = buttons.getWidth() / (isSourceTrack (track) ? 3 : 2);
+    const int w = buttons.getWidth() / (isSourceTrack (track) ? 4 : 2);
     if (isSourceTrack (track)) arm.setBounds (buttons.removeFromLeft (w).reduced (1));
+    if (isSourceTrack (track)) mon.setBounds (buttons.removeFromLeft (w).reduced (1));
     mute.setBounds (buttons.removeFromLeft (w).reduced (1));
     solo.setBounds (buttons.reduced (1));
-    if (isSourceTrack (track))
+    if (isInstrumentTrack (track))   // the instrument (an audio track's NAM amp is in its plugin list)
     {
         auto row = r.removeFromTop (30).reduced (1, 4);
-        if (session.trackHasRig (track)) ampPower.setBounds (row.removeFromRight (18));
         ampButton.setBounds (row);
     }
     else r.removeFromTop (6);
@@ -479,7 +508,7 @@ void MixerPage::FaderDivider::paint (juce::Graphics& g)
 int ChannelStrip::wantedFaderTop() const
 {
     const int ins = insertList.rowsWanted(), routes = routeList.rowsWanted();
-    return 44 + 40 + 6 + 24 + (isSourceTrack (track) ? 30 : 6) + ins * InsertList::rowHeight + (ins > 0 ? 6 : 0)
+    return 44 + 40 + 6 + 24 + (isInstrumentTrack (track) ? 30 : 6) + ins * InsertList::rowHeight + (ins > 0 ? 6 : 0)
            + routes * RouteList::rowHeight + 6;
 }
 
@@ -573,12 +602,11 @@ void MixerPage::paint (juce::Graphics& g)
     g.fillAll (palette::bg);
     drawSectionPanel (g, masterBox, "Main out");
     g.setFont (uiFont (10.0f));
-    for (int db : { 0, -6, -12, -18, -24, -36, -48, -60 })
+    for (int db : { 6, 0, -6, -12, -18, -24, -36, -60 })   // at the fader's own positions
     {
-        const float n = (db + 60.0f) / 60.0f;
-        const int y = scale.getBottom() - juce::roundToInt (n * scale.getHeight());
-        g.setColour (palette::textDim);
-        g.drawText (juce::String (db), scale.getX(), y - 6, scale.getWidth(), 12, juce::Justification::centredRight);
+        const int y = fader.getY() + juce::roundToInt (fader.getPositionOfValue ((double) db));
+        g.setColour (db == 0 ? palette::text : palette::textDim);
+        g.drawText (db > 0 ? "+" + juce::String (db) : juce::String (db), scale.getX(), y - 6, scale.getWidth(), 12, juce::Justification::centredRight);
     }
 }
 
@@ -616,10 +644,12 @@ void MixerPage::resized()
         s.removeFromTop (8);
     }
     auto meters = s.removeFromRight (34);
-    meterL.setBounds (meters.removeFromLeft (15).withTrimmedBottom (28));
-    meters.removeFromLeft (4);
-    meterR.setBounds (meters.removeFromLeft (15).withTrimmedBottom (28));
-    scale = s.removeFromRight (28).withTrimmedTop (8).withTrimmedBottom (28);
+    scale = s.removeFromRight (28);
     fader.setBounds (s);
+    // meters along the fader's travel (+6 at the top, -60 at the bottom), 7 px above for the clip LED
+    const int mTop = fader.getY() + juce::roundToInt (fader.getPositionOfValue (6.0)) - 7;
+    const int mBottom = fader.getY() + juce::roundToInt (fader.getPositionOfValue (-60.0));
+    meterL.setBounds (meters.getX(), mTop, 15, mBottom - mTop);
+    meterR.setBounds (meters.getX() + 19, mTop, 15, mBottom - mTop);
 }
 } // namespace ff

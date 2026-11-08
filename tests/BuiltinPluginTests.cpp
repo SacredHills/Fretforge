@@ -215,6 +215,26 @@ public:
             expectWithinAbsoluteError (peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000), -12.04f, 0.1f);
         }
 
+        beginTest ("EQ: listening to a band plays only its part of the sound");
+        {
+            auto p = make ("fretforge:eq");
+            setP (*p, "b1use", 1.0f);
+            setP (*p, "b1on", 1.0f);
+            setP (*p, "b1type", 0.0f);
+            setP (*p, "b1freq", 1000.0f);
+            setP (*p, "b1gain", 6.0f);
+            setP (*p, "b1q", 2.0f);
+            expect (bi::setEqListenBand (*p, 0));
+            const float centre = peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000) + 12.04f;
+            p->prepareToPlay (sr, 256);
+            const float away = peakDb (run (*p, sine (100.0, 0.25f, 24000)), 12000) + 12.04f;
+            expectWithinAbsoluteError (centre, 0.0f, 0.5f);
+            expect (away < -20.0f, "far from the band: quiet (" + juce::String (away) + " dB)");
+            bi::setEqListenBand (*p, -1);
+            p->prepareToPlay (sr, 256);
+            expectWithinAbsoluteError (peakDb (run (*p, sine (1000.0, 0.25f, 24000)), 12000) + 12.04f, 6.0f, 0.4f);
+        }
+
         beginTest ("EQ: projects with the old six-band EQ keep their settings");
         {
             juce::ValueTree st ("STATE");

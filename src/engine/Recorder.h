@@ -46,6 +46,11 @@ public:
 
     juce::String trackIdentifier; // set by creator
 
+    /** Waveform of what has been written so far (one peak per `peakBlock` frames), for drawing the take while it records. */
+    static constexpr int peakBlock = 256;
+    /** Copies the peaks covering file frames [from, from + n) into `out` (message thread). Returns how many were copied. */
+    int copyPeaks (juce::int64 fromFrame, juce::int64 numFrames, std::vector<float>& out) const;
+
 private:
     TrackRecorder() = default;
     SpscFifo<float> fifo;
@@ -60,6 +65,10 @@ private:
     juce::int64 pushed = 0;      // audio thread
     bool segmentOpen = false;    // audio thread
     bool diskError = false;
+    std::vector<float> peaks;              // disk thread appends, under peaksLock
+    mutable juce::CriticalSection peaksLock;
+    float peakAcc = 0.0f;
+    int peakFill = 0;
 };
 
 /** Background thread that drains all active recorders to disk every ~20 ms. */

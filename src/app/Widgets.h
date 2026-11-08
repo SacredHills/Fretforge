@@ -103,10 +103,100 @@ public:
     }
 };
 
+/** Input monitoring switch: a speaker in a button-shaped box, lit blue while you hear the input through the track. */
+class MonitorButton : public juce::Button
+{
+public:
+    MonitorButton() : juce::Button ("monitor")
+    {
+        setClickingTogglesState (false);
+        setWantsKeyboardFocus (false);
+        setTooltip ("Monitor: hear what comes into this track's input (your guitar / mic) through the track and its plugins");
+    }
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        const bool on = getToggleState();
+        g.setColour (on ? palette::info : (over ? palette::panelHi.brighter (0.15f) : palette::panelHi));
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (on ? palette::info.brighter (0.3f) : palette::outline.brighter (0.25f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+        // speaker: box + cone, and sound waves when on
+        auto c = r.withSizeKeepingCentre (14.0f, 12.0f).translated (down ? 0.5f : 0.0f, down ? 0.5f : 0.0f);
+        juce::Path p;
+        p.startNewSubPath (c.getX(), c.getCentreY() - 2.5f);
+        p.lineTo (c.getX() + 3.0f, c.getCentreY() - 2.5f);
+        p.lineTo (c.getX() + 7.0f, c.getY());
+        p.lineTo (c.getX() + 7.0f, c.getBottom());
+        p.lineTo (c.getX() + 3.0f, c.getCentreY() + 2.5f);
+        p.lineTo (c.getX(), c.getCentreY() + 2.5f);
+        p.closeSubPath();
+        const auto ink = on ? juce::Colours::black : (over ? palette::text : palette::textDim);
+        g.setColour (ink);
+        g.fillPath (p);
+        for (int k = 0; k < 2; ++k)
+        {
+            juce::Path arc;
+            const float rad = 3.0f + 3.0f * (float) k;
+            arc.addCentredArc (c.getX() + 7.5f, c.getCentreY(), rad, rad, 0.0f, 0.7f, 2.45f, true);
+            g.strokePath (arc, juce::PathStrokeType (1.3f));
+        }
+    }
+};
+
+/** Level meters and volume faders share one dB scale (-60 .. +6 dB, 0 dB about three quarters of the way up), so a
+    meter next to a fader reads against the fader's own marks. */
+inline float levelToProportion (float db)
+{
+    static const juce::NormalisableRange<float> range = [] {
+        juce::NormalisableRange<float> r (-60.0f, 6.0f);
+        r.setSkewForCentre (-12.0f);
+        return r;
+    }();
+    return db <= -60.0f ? 0.0f : range.convertTo0to1 (juce::jlimit (-60.0f, 6.0f, db));
+}
+
+/** Draws a meter bar (green, then yellow from -12 dB, red from -3 dB), its peak-hold line and the clip LED. */
+inline void drawLevelMeter (juce::Graphics& g, juce::Rectangle<int> r, float levelDb, float holdDb, bool clipped, bool vertical)
+{
+    auto led = vertical ? r.removeFromTop (5) : r.removeFromRight (5);
+    r = vertical ? r.withTrimmedTop (2) : r.withTrimmedRight (2);
+    g.setColour (clipped ? palette::bad : palette::well.brighter (0.08f));
+    g.fillRect (led);
+    g.setColour (palette::well);
+    g.fillRect (r);
+    const float n = levelToProportion (levelDb);
+    auto filled = vertical ? r.withTop (r.getBottom() - juce::roundToInt (n * (float) r.getHeight()))
+                           : r.withWidth (juce::roundToInt (n * (float) r.getWidth()));
+    juce::ColourGradient grad = vertical
+        ? juce::ColourGradient (palette::good, 0.0f, (float) r.getBottom(), palette::bad, 0.0f, (float) r.getY(), false)
+        : juce::ColourGradient (palette::good, (float) r.getX(), 0.0f, palette::bad, (float) r.getRight(), 0.0f, false);
+    grad.addColour (levelToProportion (-12.0f), palette::good);
+    grad.addColour (levelToProportion (-6.0f), palette::warn);
+    grad.addColour (levelToProportion (-3.0f), palette::warn);
+    grad.addColour (levelToProportion (-0.5f), palette::bad);
+    g.setGradientFill (grad);
+    g.fillRect (filled);
+    // a faint 0 dB mark
+    g.setColour (palette::text.withAlpha (0.25f));
+    const float z = levelToProportion (0.0f);
+    if (vertical) g.fillRect (r.getX(), r.getBottom() - juce::roundToInt (z * (float) r.getHeight()), r.getWidth(), 1);
+    else          g.fillRect (r.getX() + juce::roundToInt (z * (float) r.getWidth()), r.getY(), 1, r.getHeight());
+    if (holdDb > -59.0f)
+    {
+        g.setColour (holdDb > -0.5f ? palette::bad : palette::text);
+        const float h = levelToProportion (holdDb);
+        if (vertical) g.fillRect (r.getX(), r.getBottom() - juce::roundToInt (h * (float) r.getHeight()), r.getWidth(), 1);
+        else          g.fillRect (r.getX() + juce::roundToInt (h * (float) r.getWidth()), r.getY(), 1, r.getHeight());
+    }
+}
+
+/** Peak level of a LevelMeter with falling bar, peak hold and a clip LED that stays lit for 3 s after the last clip
+    (click to clear it). */
 class MeterView : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    MeterView (LevelMeter& m, bool isVertical = true) : meter (m), vertical (isVertical) {}
+    MeterView (LevelMeter& m, bool isVertical = true) : meter (m), vertical (isVertical) { clipSeen = m.clipCount.load(); }
 
     void tick()
     {
@@ -115,44 +205,14 @@ public:
         level = db > level ? db : juce::jmax (db, level - 1.6f); // ~50 dB/s at 30 Hz
         if (db >= hold) { hold = db; holdTicks = 45; }
         else if (--holdTicks <= 0) hold = juce::jmax (-60.0f, hold - 1.5f);
-        clipped = meter.clipped.load();
+        if (const auto c = meter.clipCount.load(); c != clipSeen) { clipSeen = c; clipTicks = 90; }
+        else if (clipTicks > 0) --clipTicks;
         repaint();
     }
 
-    void mouseDown (const juce::MouseEvent&) override { meter.clipped = false; hold = -60.0f; }
+    void mouseDown (const juce::MouseEvent&) override { clipTicks = 0; meter.clipped = false; hold = -60.0f; }
 
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds();
-        auto led = vertical ? r.removeFromTop (6) : r.removeFromRight (6);
-        r = vertical ? r.withTrimmedTop (2) : r.withTrimmedRight (2);
-
-        g.setColour (clipped ? palette::bad : palette::well);
-        g.fillRect (led);
-
-        g.setColour (palette::well);
-        g.fillRect (r);
-
-        auto norm = [] (float db) { return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f); };
-        const float n = norm (level);
-        auto filled = vertical ? r.withTop (r.getBottom() - juce::roundToInt (n * r.getHeight()))
-                               : r.withWidth (juce::roundToInt (n * r.getWidth()));
-        juce::ColourGradient grad = vertical
-            ? juce::ColourGradient (palette::good, 0.0f, (float) r.getBottom(), palette::bad, 0.0f, (float) r.getY(), false)
-            : juce::ColourGradient (palette::good, (float) r.getX(), 0.0f, palette::bad, (float) r.getRight(), 0.0f, false);
-        grad.addColour (0.75, palette::good);
-        grad.addColour (0.9, palette::warn);
-        g.setGradientFill (grad);
-        g.fillRect (filled);
-
-        if (hold > -59.0f)
-        {
-            g.setColour (palette::text);
-            const float h = norm (hold);
-            if (vertical) g.fillRect (r.getX(), r.getBottom() - juce::roundToInt (h * r.getHeight()), r.getWidth(), 1);
-            else          g.fillRect (r.getX() + juce::roundToInt (h * r.getWidth()), r.getY(), 1, r.getHeight());
-        }
-    }
+    void paint (juce::Graphics& g) override { drawLevelMeter (g, getLocalBounds(), level, hold, clipTicks > 0, vertical); }
 
     float levelDb() const { return level; }
 
@@ -160,8 +220,8 @@ private:
     LevelMeter& meter;
     bool vertical;
     float level = -120.0f, hold = -60.0f;
-    int holdTicks = 0;
-    bool clipped = false;
+    int holdTicks = 0, clipTicks = 0;
+    juce::uint32 clipSeen = 0;
 };
 
 /** Small label helper with consistent styling. */

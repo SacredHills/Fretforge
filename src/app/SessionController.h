@@ -82,6 +82,10 @@ public:
     void addTrackRig (juce::ValueTree track);
     void removeTrackRig (juce::ValueTree track);
     bool trackHasRig (const juce::ValueTree& track) const;
+    /** The NAM amp shows up as the first plugin of an audio track: open / on-off / remove. */
+    void showAmpMenu (juce::ValueTree track, juce::Component* target);
+    void toggleAmpBypass (juce::ValueTree track);
+    bool ampBypassed (const juce::ValueTree& track) const;
     std::function<void (juce::ValueTree track)> onOpenRig;   // set by the app: shows the track's NAM window
 
     // ---- track insert plugins ----
@@ -118,6 +122,12 @@ public:
     bool isRecordingSession() const { return sessionActive; }
     double recordingStartSec() const { return recordStartSec; }
     juce::StringArray recordingTrackIds() const;
+    /** The audio recorder of a track while it records (for drawing the take as it comes in), or nullptr. */
+    std::shared_ptr<TrackRecorder> recorderFor (const juce::String& trackId) const
+    {
+        auto it = recorders.find (trackId);
+        return it != recorders.end() ? it->second : nullptr;
+    }
 
     std::function<void (const juce::String& title, const juce::String& message)> onError;
     std::function<void()> onArrangementChanged; // repaint request (audio loaded, recording state)

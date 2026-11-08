@@ -99,7 +99,8 @@ public:
 private:
     ArrangeView& owner;
     juce::Label name;
-    juce::TextButton arm { "R" }, mon { "I" }, mute { "M" }, solo { "S" };
+    juce::TextButton arm { "R" }, mute { "M" }, solo { "S" };
+    MonitorButton mon;
     juce::ComboBox input;
     juce::TextButton route, laneButton;   // laneButton: automation mode, which lane the track shows
     juce::Slider gain, pan;

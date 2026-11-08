@@ -37,57 +37,65 @@ class PluginListPanel final : public juce::Component
 public:
     PluginListPanel (ArrangeView& o, juce::ValueTree t, juce::Component& a) : owner (o), track (t), anchor (&a)
     {
-        const int n = rig::numInserts (track);
-        setSize (230, (n + 1) * rowH + 8);
+        setSize (240, rows() * rowH + 8);
     }
     void paint (juce::Graphics& g) override
     {
-        const int n = rig::numInserts (track);
+        const int n = rig::numInserts (track), amp = ampRows();
         g.setFont (uiFont (12.5f, true));
-        for (int i = 0; i <= n; ++i)
+        for (int row = 0; row < rows(); ++row)
         {
-            auto r = rowRect (i);
-            if (i == hover) { g.setColour (palette::panelHi.brighter (0.1f)); g.fillRoundedRectangle (r.toFloat(), 4.0f); }
-            if (i == n)
+            auto r = rowRect (row);
+            if (row == hover) { g.setColour (palette::panelHi.brighter (0.1f)); g.fillRoundedRectangle (r.toFloat(), 4.0f); }
+            if (row == rows() - 1)
             {
                 g.setColour (palette::textDim);
                 g.drawText ("+ Add plugin", r.reduced (10, 0), juce::Justification::centredLeft);
                 continue;
             }
-            const auto node = rig::insertNode (track, i);
-            const bool bypassed = (bool) node[rig::ids::bypass];
+            const int i = row - amp;
+            const bool bypassed = i < 0 ? owner.session.ampBypassed (track) : (bool) rig::insertNode (track, i)[rig::ids::bypass];
+            const auto name = i < 0 ? juce::String ("NAM Amp") : rig::insertNode (track, i)[rig::ids::name].toString();
             auto dot = r.removeFromLeft (26).toFloat().withSizeKeepingCentre (10.0f, 10.0f);
             g.setColour (bypassed ? palette::outline : palette::accent);
             g.fillEllipse (dot);
             g.setColour (bypassed ? palette::textDim.withAlpha (0.6f) : palette::text);
-            g.drawText (juce::String (i + 1) + "  " + node[rig::ids::name].toString() + (bypassed ? "  (bypassed)" : ""),
-                        r.reduced (2, 0), juce::Justification::centredLeft, true);
+            g.drawText (juce::String (row + 1) + "  " + name + (bypassed ? "  (bypassed)" : ""), r.reduced (2, 0),
+                        juce::Justification::centredLeft, true);
         }
+        juce::ignoreUnused (n);
     }
     void mouseMove (const juce::MouseEvent& e) override { const int h = rowAt (e.y); if (h != hover) { hover = h; repaint(); } }
     void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
     void mouseUp (const juce::MouseEvent& e) override
     {
-        const int row = rowAt (e.y), n = rig::numInserts (track);
+        const int row = rowAt (e.y);
         if (row < 0) return;
         auto& session = owner.session;
         auto t = track;
         juce::Component::SafePointer<juce::Component> a (anchor);
-        if (row == n)
+        if (row == rows() - 1)
         {
             dismiss();
             if (a != nullptr) session.showAddInsertMenu (t, a.getComponent());
             return;
         }
+        const int i = row - ampRows();
         if (! e.mods.isPopupMenu() && e.x < 28)   // the dot: bypass on / off, the list stays open
         {
-            session.toggleInsertBypass (t, row);
+            if (i < 0) session.toggleAmpBypass (t); else session.toggleInsertBypass (t, i);
             repaint();
             return;
         }
         dismiss();
-        if (e.mods.isPopupMenu()) { if (a != nullptr) session.showInsertMenu (t, row, a.getComponent()); }
-        else session.openInsert (t, row);
+        if (i < 0)
+        {
+            if (e.mods.isPopupMenu()) { if (a != nullptr) session.showAmpMenu (t, a.getComponent()); }
+            else if (session.onOpenRig) session.onOpenRig (t);
+            return;
+        }
+        if (e.mods.isPopupMenu()) { if (a != nullptr) session.showInsertMenu (t, i, a.getComponent()); }
+        else session.openInsert (t, i);
     }
 private:
     static constexpr int rowH = 26;
@@ -95,11 +103,13 @@ private:
     juce::ValueTree track;
     juce::Component::SafePointer<juce::Component> anchor;
     int hover = -1;
+    int ampRows() const { return owner.session.trackHasRig (track) ? 1 : 0; }
+    int rows() const { return ampRows() + rig::numInserts (track) + 1; }
     juce::Rectangle<int> rowRect (int i) const { return { 4, 4 + i * rowH, getWidth() - 8, rowH }; }
     int rowAt (int y) const
     {
         const int i = (y - 4) / rowH;
-        return y >= 4 && i <= rig::numInserts (track) ? i : -1;
+        return y >= 4 && i < rows() ? i : -1;
     }
     void dismiss()
     {
@@ -110,7 +120,8 @@ private:
 
 void InsertStrip::paint (juce::Graphics& g)
 {
-    const int n = rig::numInserts (track);
+    const bool amp = owner.session.trackHasRig (track);
+    const int n = rig::numInserts (track) + (amp ? 1 : 0);
     auto r = getLocalBounds().toFloat().reduced (0.5f);
     g.setColour (hover != -2 ? palette::panelHi.brighter (0.12f) : palette::panelHi);
     g.fillRoundedRectangle (r, 4.0f);
@@ -135,7 +146,8 @@ void InsertStrip::paint (juce::Graphics& g)
     g.setColour (palette::textDim);
     g.fillPath (p);
     juce::StringArray names;
-    for (int i = 0; i < n; ++i)
+    if (amp) names.add (juce::String ("NAM Amp") + (owner.session.ampBypassed (track) ? " (off)" : ""));
+    for (int i = 0; i < rig::numInserts (track); ++i)
     {
         const auto node = rig::insertNode (track, i);
         names.add (node[rig::ids::name].toString() + ((bool) node[rig::ids::bypass] ? " (off)" : ""));
@@ -152,7 +164,7 @@ void InsertStrip::mouseMove (const juce::MouseEvent&)
 
 void InsertStrip::mouseDown (const juce::MouseEvent& e)
 {
-    if (rig::numInserts (track) == 0 && ! e.mods.isPopupMenu())
+    if (rig::numInserts (track) == 0 && ! owner.session.trackHasRig (track) && ! e.mods.isPopupMenu())
     {
         owner.session.showAddInsertMenu (track, this);
         return;
@@ -180,7 +192,6 @@ TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t),
     addAndMakeVisible (name);
 
     styleToggle (arm, palette::bad, "Arm for recording");
-    styleToggle (mon, palette::info, "Input monitoring: hear the input through this track");
     styleToggle (mute, palette::accent, "Mute");
     styleToggle (solo, palette::warn, "Solo");
     // With several tracks selected, these buttons switch the whole selection.
@@ -188,7 +199,7 @@ TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t),
     mon.onClick = [this] { owner.session.setOnTracks (track, ids::monitor, ! (bool) track[ids::monitor], false); };
     mute.onClick = [this] { owner.session.setOnTracks (track, ids::mute, ! (bool) track[ids::mute], false); };
     solo.onClick = [this] { owner.session.setOnTracks (track, ids::solo, ! (bool) track[ids::solo], false); };
-    for (auto* b : { &arm, &mon, &mute, &solo })
+    for (juce::Button* b : { (juce::Button*) &arm, (juce::Button*) &mon, (juce::Button*) &mute, (juce::Button*) &solo })
         addAndMakeVisible (b);
 
     input.setTooltip ("Recording / monitoring input");
@@ -286,7 +297,9 @@ void TrackHeader::refresh()
     const bool audio = isAudioTrack (track), inst = isInstrumentTrack (track);
     arm.setVisible (audio || inst);
     arm.setTooltip (inst ? "Play this instrument from your MIDI keyboard" : "Arm for recording");
-    mon.setVisible (audio);
+    mon.setVisible (audio || inst);
+    mon.setTooltip (inst ? "Monitor: play this instrument from your MIDI keyboard without arming it"
+                         : "Monitor: hear what comes into this track's input (your guitar / mic) through the track and its plugins");
     input.setVisible (audio);
     route.setVisible (! audio);
     if (inst) route.setButtonText ("SYNTH  " + owner.session.instrumentName (track));
@@ -1041,10 +1054,43 @@ void TimelineCanvas::paint (juce::Graphics& g)
             if (i < 0 || ph <= from) continue;
             const float x0 = geo.xFor (from), x1 = geo.xFor (ph);
             juce::Rectangle<float> r (x0, (float) (geo.topOf (i) - geo.scrollY) + 3.0f, x1 - x0, (float) geo.heightOf (i) - 7.0f);
-            g.setColour (palette::bad.withAlpha (0.35f));
+            g.setColour (palette::bad.withAlpha (0.22f));
             g.fillRoundedRectangle (r, 4.0f);
+            // the take's waveform as it is written (each recorded stretch where it lands on the timeline)
+            if (auto rec = owner.session.recorderFor (id); rec != nullptr && rec->sampleRate > 0.0)
+            {
+                const auto wave = r.withTrimmedTop (12.0f).reduced (0.0f, 2.0f);
+                const float mid = wave.getCentreY(), half = wave.getHeight() * 0.5f;
+                const double rate = rec->sampleRate;
+                const auto written = rec->samplesWritten();
+                std::vector<float> pk;
+                g.setColour (palette::bad.brighter (0.3f).withAlpha (0.9f));
+                for (int s = 0; s < rec->getNumSegments(); ++s)
+                {
+                    const auto& seg = rec->segment (s);
+                    const auto off = seg.fileOffset.load();
+                    auto len = seg.length.load();
+                    if (s == rec->getNumSegments() - 1 || len <= 0) len = juce::jmax ((juce::int64) 0, written - off);
+                    const int n = rec->copyPeaks (off, len, pk);
+                    if (n == 0) continue;
+                    const double t0 = (double) seg.timelineStart.load() / rate;
+                    const double secPerPeak = TrackRecorder::peakBlock / rate;
+                    const float sx = geo.xFor (t0), ex = geo.xFor (t0 + n * secPerPeak);
+                    for (float x = juce::jmax (sx, r.getX()); x < juce::jmin (ex, r.getRight()); x += 1.0f)
+                    {
+                        const int a = juce::jlimit (0, n - 1, (int) ((x - sx) / (ex - sx) * (float) n));
+                        const int b = juce::jlimit (a + 1, n, (int) ((x + 1.0f - sx) / (ex - sx) * (float) n));
+                        float m = 0.0f;
+                        for (int k = a; k < b; ++k) m = juce::jmax (m, pk[(size_t) k]);
+                        const float h = juce::jmin (1.0f, m) * half;
+                        g.drawVerticalLine ((int) x, mid - h, mid + h + 1.0f);
+                    }
+                }
+            }
             g.setColour (palette::bad);
             g.drawRoundedRectangle (r, 4.0f, 1.5f);
+            g.setFont (uiFont (10.5f, true));
+            g.drawText ("REC", r.reduced (5.0f, 1.0f).removeFromTop (11.0f), juce::Justification::topLeft);
         }
     }
 
