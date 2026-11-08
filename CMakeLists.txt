@@ -158,6 +158,15 @@ juce_add_gui_app(Ravenyr
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png"
     VERSION ${PROJECT_VERSION})
 
+# Windows: JUCE's generated icon.ico only has 16/32/48/256 px images, so Windows scales them for desktop icons at
+# 125-200 % display scaling (blurry). Replace it with packaging/ravenyr.ico (16-256 px, each sized and sharpened).
+if(WIN32)
+    get_target_property(ff_generated_ico Ravenyr JUCE_ICON_FILE)
+    if(ff_generated_ico)
+        configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/ravenyr.ico" "${ff_generated_ico}" COPYONLY)
+    endif()
+endif()
+
 # the logo and the heading font (Cinzel, SIL Open Font License: resources/Cinzel-OFL.txt)
 juce_add_binary_data(ff_resources SOURCES resources/ravenyr-logo.png resources/Cinzel-Bold.ttf)
 
@@ -236,7 +245,9 @@ if(FF_BUILD_APP)
     install(TARGETS Ravenyr BUNDLE DESTINATION . RUNTIME DESTINATION bin)
     if(UNIX AND NOT APPLE)
         install(FILES packaging/ravenyr.desktop DESTINATION share/applications)
-        install(FILES packaging/ravenyr-256.png DESTINATION share/icons/hicolor/256x256/apps RENAME ravenyr.png)
+        foreach(px 48 128 256 512)
+            install(FILES packaging/ravenyr-${px}.png DESTINATION share/icons/hicolor/${px}x${px}/apps RENAME ravenyr.png)
+        endforeach()
     endif()
 endif()
 set(CPACK_PACKAGE_NAME "Ravenyr")
@@ -265,7 +276,10 @@ if(WIN32)
     set(CPACK_NSIS_MUI_HEADERIMAGE "${FF_NSIS_HEADER}")
     set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\RAVENYR.exe")
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
-    set(CPACK_NSIS_MODIFY_PATH OFF)
+    # The options page (desktop shortcut checkbox) only shows with MODIFY_PATH on; packaging/NSIS.InstallOptions.ini.in
+    # replaces CPack's page so it only asks about the desktop shortcut and never touches PATH.
+    set(CPACK_NSIS_MODIFY_PATH ON)
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/packaging")
     set(CPACK_NSIS_MUI_FINISHPAGE_RUN "RAVENYR.exe")
     set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin")
     set(CPACK_CREATE_DESKTOP_LINKS "RAVENYR")
@@ -286,8 +300,10 @@ else()
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Multimedia")
     set(CPACK_RPM_PACKAGE_AUTOREQ OFF)
     set(CPACK_RPM_PACKAGE_REQUIRES "alsa-lib, freetype, fontconfig, libX11, libcurl")
-    set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/share/applications /usr/share/icons /usr/share/icons/hicolor
-        /usr/share/icons/hicolor/256x256 /usr/share/icons/hicolor/256x256/apps)
+    set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/share/applications /usr/share/icons /usr/share/icons/hicolor)
+    foreach(px 48 128 256 512)
+        list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/share/icons/hicolor/${px}x${px} /usr/share/icons/hicolor/${px}x${px}/apps)
+    endforeach()
 endif()
 include(CPack)
 

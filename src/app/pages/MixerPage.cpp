@@ -392,7 +392,7 @@ void ChannelStrip::showMenu()
     m.addItem (4, "Duplicate track");
     m.addItem (5, "Delete track");
     juce::Component::SafePointer<ChannelStrip> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r) {
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition(), [safe] (int r) {
         if (safe == nullptr || r == 0) return;
         auto t = safe->track;
         auto& sc = safe->session;

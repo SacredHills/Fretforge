@@ -1,0 +1,51 @@
+[Settings]
+NumFields=5
+
+[Field 1]
+Type=label
+Text=Choose additional options for RAVENYR STUDIO:
+Left=0
+Right=-1
+Top=0
+Bottom=20
+
+; Fields 2-4 are CPack's "add to PATH" choices: kept (the installer script reads them) but zero-sized and
+; disabled, so the installer never changes PATH.
+[Field 2]
+Type=radiobutton
+Text=Do not add to PATH
+Left=0
+Right=0
+Top=0
+Bottom=0
+Flags=DISABLED
+State=1
+
+[Field 3]
+Type=radiobutton
+Text=Add to PATH for all users
+Left=0
+Right=0
+Top=0
+Bottom=0
+Flags=DISABLED
+State=0
+
+[Field 4]
+Type=radiobutton
+Text=Add to PATH for current user
+Left=0
+Right=0
+Top=0
+Bottom=0
+Flags=DISABLED
+State=0
+
+[Field 5]
+Type=CheckBox
+Text=Create a desktop shortcut
+Left=0
+Right=-1
+Top=30
+Bottom=42
+State=1

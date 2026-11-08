@@ -503,7 +503,7 @@ void TrackHeader::showMenu()
     m.addItem (6, "Select all tracks");
     m.addItem (5, n > 1 ? "Delete " + juce::String (n) + " tracks" : juce::String ("Delete track"));
     juce::Component::SafePointer<TrackHeader> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r) {
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition(), [safe] (int r) {
         if (safe == nullptr || r == 0) return;
         auto& o = safe->owner;
         auto t = safe->track;
