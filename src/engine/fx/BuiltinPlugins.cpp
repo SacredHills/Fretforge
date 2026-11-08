@@ -501,7 +501,7 @@ private:
     }
 };
 
-/** General MIDI drum kit (any channel) played by FretForge's drum sounds. */
+/** General MIDI drum kit (any channel) played by RAVENYR's drum sounds. */
 class DrumKit final : public InstrumentBase
 {
 public:
@@ -1007,7 +1007,7 @@ const std::vector<Info>& all()
         { "fretforge:reverb", "Reverb", "Reverb", "Room to hall reverb. On an FX track, set Mix to 100 %." },
         { "fretforge:limiter", "Limiter", "Dynamics", "Look-ahead brick-wall limiter: nothing gets past the ceiling. Put it last on the master." },
         { "fretforge:synth", "Basic Synth", "Synth", "Polyphonic synth: two detuned oscillators, resonant filter with envelope.", true },
-        { "fretforge:drumkit", "Drum Kit", "Drums", "General MIDI drums (any channel) with FretForge's drum sounds.", true },
+        { "fretforge:drumkit", "Drum Kit", "Drums", "General MIDI drums (any channel) with RAVENYR's drum sounds.", true },
     };
     return list;
 }
@@ -1026,7 +1026,7 @@ juce::PluginDescription describe (const Info& i)
     d.descriptiveName = i.description;
     d.pluginFormatName = formatName;
     d.category = i.category;
-    d.manufacturerName = "FretForge";
+    d.manufacturerName = "RAVENYR";
     d.version = "1.0";
     d.fileOrIdentifier = i.id;
     d.uniqueId = d.deprecatedUid = (int) juce::String (i.id).hashCode();

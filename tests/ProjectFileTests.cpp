@@ -83,7 +83,7 @@ struct ProjectFileTests : juce::UnitTest
         beginTest ("bundle save/load, backups rotate, autosave");
         {
             auto bundle = Bundle::normaliseBundlePath (tmp.getChildFile ("Song"));
-            expect (bundle.getFileName() == "Song.ffproj");
+            expect (bundle.getFileName() == "Song.ravenyr");
             auto p = createDefault ("Song");
             for (int i = 0; i < 5; ++i)
             {
@@ -94,7 +94,7 @@ struct ProjectFileTests : juce::UnitTest
             }
             for (auto& f : Bundle::mediaFolders())
                 expect (bundle.getChildFile (f).isDirectory(), f);
-            expectEquals (Bundle::backupsDir (bundle).findChildFiles (juce::File::findFiles, false, "*.ffp").size(), 3);
+            expectEquals (Bundle::backupsDir (bundle).findChildFiles (juce::File::findFiles, false, "*.rvn").size(), 3);
 
             auto r = Bundle::load (bundle);
             expect (r.result.wasOk());
@@ -112,6 +112,27 @@ struct ProjectFileTests : juce::UnitTest
 
             expect (! tmp.getChildFile ("NotAProject").isDirectory() || ! Bundle::isBundle (tmp.getChildFile ("NotAProject")));
             expect (Bundle::load (tmp.getChildFile ("Missing.ffproj")).result.failed());
+        }
+
+        beginTest ("projects saved before the rename (FretForge .ffproj / project.ffp) open and re-save");
+        {
+            auto old = tmp.getChildFile ("Old.ffproj");
+            expect (Bundle::createStructure (old).wasOk());
+            auto p = createDefault ("Old");
+            p.getChildWithName (ids::TRANSPORT).setProperty (ids::bpm, 133.0, nullptr);
+            const auto text = serialise (p).replace (formatTag, legacyFormatTag);
+            expect (text.contains ("FretForgeProject"));
+            expect (old.getChildFile ("project.ffp").replaceWithText (text));
+            expect (Bundle::isBundle (old));
+            expect (Bundle::normaliseBundlePath (old) == old);
+            auto r = Bundle::load (old);
+            expect (r.result.wasOk(), r.result.getErrorMessage());
+            expectEquals ((double) r.tree.getChildWithName (ids::TRANSPORT)[ids::bpm], 133.0);
+            expect (Bundle::save (r.tree, old).wasOk());
+            expect (old.getChildFile ("project.rvn").existsAsFile());
+            expect (! old.getChildFile ("project.ffp").existsAsFile(), "the old document moves into Backups");
+            expect (Bundle::backupsDir (old).getChildFile ("project-before-rename.ffp").existsAsFile());
+            expect (Bundle::load (old).result.wasOk());
         }
 
         beginTest ("atomic write leaves no temp files and preserves content");

@@ -1,6 +1,6 @@
-# FretForge Studio — Architecture & Technical Plan
+# RAVENYR — Architecture & Technical Plan
 
-Working title: **FretForge Studio** (rename freely; the name appears only in `CMakeLists.txt`, `src/app/AppInfo.h` and this folder).
+Working title: **RAVENYR** (rename freely; the name appears only in `CMakeLists.txt`, `src/app/AppInfo.h` and this folder).
 
 This document covers the seven pre-implementation items requested in §18 of the brief: technology choice, application architecture, audio engine, project file format, plugin system, milestone plan, and technical risks — plus licensing.
 
@@ -41,7 +41,7 @@ This document covers the seven pre-implementation items requested in §18 of the
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Modules map to CMake targets: `ff_core` (static lib, links only `juce_core`, `juce_data_structures`, `juce_audio_basics`, `juce_dsp`), `ff_engine` (adds `juce_audio_devices`, `juce_audio_formats`, `juce_audio_utils` for processors), `FretForgeStudio` (GUI app), `ff_tests` (console test runner, no GUI). Tests never need audio hardware: `AudioEngine::process()` takes raw buffers and is driven offline.
+Modules map to CMake targets: `ff_core` (static lib, links only `juce_core`, `juce_data_structures`, `juce_audio_basics`, `juce_dsp`), `ff_engine` (adds `juce_audio_devices`, `juce_audio_formats`, `juce_audio_utils` for processors), `Ravenyr` (GUI app), `ff_tests` (console test runner, no GUI). Tests never need audio hardware: `AudioEngine::process()` takes raw buffers and is driven offline.
 
 **Data model:** the project is a `juce::ValueTree` owned by `ProjectDocument`. All UI edits go through the tree with the `UndoManager`, giving undo/redo for free. The engine never touches the tree; changes are compiled on the message thread into immutable *engine snapshots* (M2+) and swapped in with an atomic pointer exchange; the old snapshot is released on the message thread (no deallocation on the audio thread).
 

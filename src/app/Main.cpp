@@ -49,6 +49,7 @@ public:
             return;
         }
 
+        migrateFromOldName();   // before anything creates the new folders (on Windows the log goes into the app data folder)
         logger.reset (juce::FileLogger::createDateStampedLogger (FF_APP_NAME, "session", ".log",
                                                                  juce::String (FF_APP_NAME) + " " + FF_VERSION_STRING + " starting on "
                                                                      + juce::SystemStats::getOperatingSystemName()));
@@ -65,6 +66,32 @@ public:
 
         window = std::make_unique<MainWindow> (*properties.getUserSettings());
         openArgument (commandLine);
+    }
+
+    /** The app used to be called FretForge Studio: carry its settings, plugin list, rigs, presets and downloads over
+        once (copies; the old folders are left alone). */
+    static void migrateFromOldName()
+    {
+        const auto copyOnce = [] (const juce::File& from, const juce::File& to) {
+            if (from.isDirectory() && ! to.exists()) from.copyDirectoryTo (to);
+            else if (from.existsAsFile() && ! to.exists()) { to.getParentDirectory().createDirectory(); from.copyFileTo (to); }
+        };
+        const auto appData = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+        const auto docs = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+        auto optionsFor = [] (const juce::String& name) {
+            juce::PropertiesFile::Options o;
+            o.applicationName = name;
+            o.filenameSuffix = ".settings";
+            o.osxLibrarySubFolder = "Application Support";
+            o.folderName = name;
+            return o;
+        };
+        const auto oldSettings = optionsFor ("FretForge Studio").getDefaultFile(), newSettings = optionsFor (FF_APP_NAME).getDefaultFile();
+        copyOnce (appData.getChildFile ("FretForge Studio"), appData.getChildFile (FF_APP_NAME));   // plugin list, recovery, drum kit
+        copyOnce (oldSettings, newSettings);
+        copyOnce (appData.getChildFile ("FretForge").getChildFile ("Rigs"), appData.getChildFile (FF_APP_NAME).getChildFile ("Rigs"));
+        copyOnce (docs.getChildFile ("FretForge Studio").getChildFile ("Presets"), docs.getChildFile (FF_APP_NAME).getChildFile ("Presets"));
+        copyOnce (docs.getChildFile ("FretForge").getChildFile ("TONE3000"), docs.getChildFile (FF_APP_NAME).getChildFile ("TONE3000"));
     }
 
     void shutdown() override

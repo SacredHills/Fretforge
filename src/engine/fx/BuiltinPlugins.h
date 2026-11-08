@@ -2,12 +2,12 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <map>
 
-/** FretForge's own effects (EQ, compressor, delay, chorus, reverb), hosted like any other plugin: they show up
+/** RAVENYR's own effects (EQ, compressor, delay, chorus, reverb), hosted like any other plugin: they show up
     first in every plugin menu, work as track inserts and in amp rigs, save their settings in the project and
     open in a plugin window. */
 namespace ff::fx::builtin
 {
-inline constexpr const char* formatName = "FretForge";
+inline constexpr const char* formatName = "RAVENYR";   // projects from before the rename say "FretForge"
 
 struct Info
 {

@@ -155,7 +155,7 @@ ImportedFile readMidiFile (const juce::File& f)
     juce::MidiFile mf;
     if (! in.openedOk() || ! mf.readFrom (in))
     {
-        r.error = "\"" + f.getFileName() + "\" is not a MIDI file FretForge can read.";
+        r.error = "\"" + f.getFileName() + "\" is not a MIDI file RAVENYR can read.";
         return r;
     }
     juce::MidiMessageSequence tempos;

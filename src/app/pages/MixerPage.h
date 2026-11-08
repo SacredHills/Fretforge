@@ -83,6 +83,7 @@ private:
     PowerButton ampPower;
     juce::Label nameLabel;
     InsertList insertList { session, track };
+    juce::Viewport insertView;   // the plugin list scrolls when there are more plugins than room
     RouteList routeList { session, doc, track };
     void showMenu();
     float level = -100.0f, hold = -100.0f;
@@ -123,7 +124,23 @@ private:
     juce::TextButton addTrackButton { "+ Track" };
     std::unique_ptr<InsertList> masterInserts;   // plugins on the master bus
     int masterRows = 0;
-    int faderTop = 0;
+    int faderTop = 0, lastAutoTop = -1;
+    juce::Viewport masterInsertView;
+
+    /** The bar across all strips at the top of the faders: drag it down to shrink every fader (more room for
+        plugins), up to make them longer. Double-click: back to automatic. */
+    struct FaderDivider final : public juce::Component
+    {
+        explicit FaderDivider (MixerPage& p) : page (p) { setMouseCursor (juce::MouseCursor::UpDownResizeCursor); setRepaintsOnMouseActivity (true); }
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override { startTop = page.faderTop; }
+        void mouseDrag (const juce::MouseEvent& e) override { page.setFaderTop (startTop + e.getDistanceFromDragStartY()); }
+        void mouseDoubleClick (const juce::MouseEvent&) override { page.setFaderTop (-1); }
+        MixerPage& page;
+        int startTop = 0;
+    } divider { *this };
+    int autoFaderTop() const;
+    void setFaderTop (int top);   // -1: automatic (just below the tallest plugin / send list)
 
     void rebuild();
     void timerCallback() override;

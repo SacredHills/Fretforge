@@ -990,7 +990,7 @@ void DrumPage::renderToStudio()
     DrumSynth::renderOffline (hits, sr, c.lengthQ * spq + 3.0, (float) (double) drums.getProperty (dids::volume, 0.8), buf, &set, &mix);
 
     const auto name = useSong ? juce::String ("Drums") : "Drums - " + pat[dids::name].toString();
-    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("FretForgeRender");
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("RavenyrRender");
     dir.createDirectory();
     auto file = dir.getChildFile (juce::File::createLegalFileName (name) + ".wav");
     file.deleteFile();
@@ -1147,7 +1147,7 @@ void DrumPage::handleKitMenu (int r, int lane)
     {
         // copy the samples somewhere that outlives the project
         auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                       .getChildFile ("FretForge Studio").getChildFile ("Default drum kit");
+                       .getChildFile ("RAVENYR").getChildFile ("Default drum kit");
         dir.createDirectory();
         int n = 0;
         for (int p = 0; p < drums::numPieces; ++p)

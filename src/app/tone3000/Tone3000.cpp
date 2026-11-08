@@ -134,10 +134,10 @@ void LoopbackServer::run()
         juce::String response;
         if (line.startsWith ("GET ") && target.upToFirstOccurrenceOf ("?", false, false) == "/callback")
         {
-            const juce::String html ("<!doctype html><html><head><meta charset=\"utf-8\"><title>FretForge Studio</title></head>"
+            const juce::String html ("<!doctype html><html><head><meta charset=\"utf-8\"><title>RAVENYR</title></head>"
                                      "<body style=\"background:#141619;color:#dde1e6;font:16px sans-serif;display:flex;align-items:center;"
                                      "justify-content:center;height:100vh;margin:0\"><div style=\"text-align:center\"><h2>Done</h2>"
-                                     "<p>You can close this tab and go back to FretForge Studio.</p></div></body></html>");
+                                     "<p>You can close this tab and go back to RAVENYR.</p></div></body></html>");
             response << "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: " << (int) html.getNumBytesAsUTF8()
                      << "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n" << html;
             if (onCallback) juce::MessageManager::callAsync ([cb = onCallback, q = target.fromFirstOccurrenceOf ("?", false, false)] { cb (q); });
@@ -478,7 +478,7 @@ void Client::listModels (int toneId, std::function<void (juce::Array<Model>, juc
 {
     run<juce::Array<Model>> ([this, toneId] (juce::String& err) {
                                  juce::Array<Model> out;
-                                 // all architectures FretForge can run: A1 / custom (default listing) and A2
+                                 // all architectures RAVENYR can run: A1 / custom (default listing) and A2
                                  for (auto arch : { juce::String(), juce::String ("2") })
                                  {
                                      auto url = juce::URL (juce::String (origin) + "/api/v1/models")
@@ -506,7 +506,7 @@ void Client::listModels (int toneId, std::function<void (juce::Array<Model>, juc
 
 juce::File Client::libraryFolder()
 {
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("FretForge").getChildFile ("TONE3000");
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("RAVENYR").getChildFile ("TONE3000");
 }
 
 juce::String Client::safeName (const juce::String& s)

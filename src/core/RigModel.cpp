@@ -297,7 +297,7 @@ void moveInsert (juce::ValueTree track, int slot, int direction, juce::UndoManag
 juce::var toPreset (const juce::ValueTree& rig, const juce::String& presetName)
 {
     auto* o = new juce::DynamicObject();
-    o->setProperty ("format", "FretForge rig");
+    o->setProperty ("format", "RAVENYR rig");
     o->setProperty ("version", 1);
     o->setProperty ("name", presetName);
     o->setProperty ("order", rig[ids::order].toString().isNotEmpty() ? rig[ids::order].toString()

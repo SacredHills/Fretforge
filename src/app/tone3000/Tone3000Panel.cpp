@@ -158,7 +158,7 @@ void Tone3000Panel::reload()
         const int hidden = safe->tones.size() - safe->shownTones.size();
         safe->setStatus (juce::String (safe->shownTones.size()) + " tones"
                          + (p.totalPages > 1 ? "  -  page " + juce::String (p.page) + " of " + juce::String (p.totalPages) : juce::String())
-                         + (hidden > 0 ? "  (" + juce::String (hidden) + " in formats FretForge can't load hidden)" : juce::String()));
+                         + (hidden > 0 ? "  (" + juce::String (hidden) + " in formats RAVENYR can't load hidden)" : juce::String()));
         safe->prevButton.setEnabled (p.page > 1);
         safe->nextButton.setEnabled (p.page < p.totalPages);
     });

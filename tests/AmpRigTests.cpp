@@ -823,8 +823,9 @@ struct PluginSlotTests : juce::UnitTest
             expectEquals (rg::insertNode (t, 1)[rg::ids::name].toString(), juce::String ("B"));
             rg::replaceInsert (t, 0, "<D/>", "D");
             expectEquals (rg::insertNode (t, 0)[rg::ids::name].toString(), juce::String ("D"));
-            for (int i = 0; i < 10; ++i) rg::addInsert (t, "<E/>", "E");
+            for (int i = 0; i < rg::maxInserts; ++i) rg::addInsert (t, "<E/>", "E");   // the extra ones are refused
             expectEquals (rg::numInserts (t), rg::maxInserts);
+            expect (rg::maxInserts >= 64, "plenty of plugins per track");
             juce::StringArray w;
             expect (fx::makeOfflineInserts (t, 48000.0, 512, w) != nullptr);
             expect (w.size() == rg::maxInserts, "every insert reported without a host");
@@ -944,6 +945,19 @@ struct PluginSlotTests : juce::UnitTest
             expectWithinAbsoluteError (run (*chain, 0.4f), 0.4f * 1.5f, 0.01f);
             chain->setOrder ({ { 0 } }, 1);   // only slot 0 (bypassed) left in the order
             expectWithinAbsoluteError (run (*chain, 0.4f), 0.4f, 0.003f);
+
+            // many plugins on one track (more than the old limit of 8 / the old 14-entry order)
+            juce::ValueTree many ("TRACK");
+            for (int i = 0; i < 20; ++i)
+            {
+                rg::addInsert (many, desc, "G" + juce::String (i));
+                if (i % 2 == 1) rg::insertNode (many, i).setProperty (rg::ids::state, state, nullptr);   // alternate 0.5 and 1.5
+            }
+            expectEquals (rg::numInserts (many), 20);
+            warnings.clear();
+            auto big = fx::makeOfflineInserts (many, 48000.0, 512, warnings);
+            expect (big != nullptr && warnings.isEmpty(), warnings.joinIntoString ("; "));
+            if (big != nullptr) expectWithinAbsoluteError (run (*big, 0.4f), 0.4f * std::pow (0.75f, 10.0f), 0.002f);
             fx::setPluginHost (nullptr);
         }
     }

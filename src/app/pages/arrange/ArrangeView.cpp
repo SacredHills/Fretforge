@@ -23,84 +23,142 @@ static void styleToggle (juce::TextButton& b, juce::Colour on, const juce::Strin
 InsertStrip::InsertStrip (ArrangeView& v, juce::ValueTree t) : owner (v), track (t)
 {
     track.addListener (this);
-    setTooltip ("Plugins: click to open, right-click to replace, bypass or remove, + to add one");
+    setTooltip ("Plugins on this track: click to see them all (click one to open it, right-click to bypass, replace or remove it)");
 }
 
 InsertStrip::~InsertStrip() { track.removeListener (this); }
 
-void InsertStrip::layoutChips()
+namespace
 {
-    chips.clear();
-    const int n = rig::numInserts (track);
-    const auto font = uiFont (11.0f, true);
-    float x = 0.0f;
-    const float h = (float) getHeight(), gap = 4.0f;
-    for (int i = 0; i < n; ++i)
+/** The dropdown of a track's plugins: every plugin in order, click to open, right-click for bypass / replace / remove,
+    the dot switches bypass; "+ Add plugin" at the bottom. */
+class PluginListPanel final : public juce::Component
+{
+public:
+    PluginListPanel (ArrangeView& o, juce::ValueTree t, juce::Component& a) : owner (o), track (t), anchor (&a)
     {
-        const auto label = rig::insertNode (track, i)[rig::ids::name].toString();
-        const float w = juce::jlimit (34.0f, 110.0f, (float) juce::GlyphArrangement::getStringWidthInt (font, label) + 14.0f);
-        chips.push_back ({ x, 0.0f, w, h });
-        x += w + gap;
+        const int n = rig::numInserts (track);
+        setSize (230, (n + 1) * rowH + 8);
     }
-    chips.push_back ({ x, 0.0f, n == 0 ? 70.0f : 22.0f, h });   // "+ Plugin" / "+"
-}
-
-int InsertStrip::chipAt (juce::Point<float> p) const
-{
-    for (size_t i = 0; i < chips.size(); ++i)
-        if (chips[i].contains (p)) return i + 1 == chips.size() ? -1 : (int) i;
-    return -2;
-}
+    void paint (juce::Graphics& g) override
+    {
+        const int n = rig::numInserts (track);
+        g.setFont (uiFont (12.5f, true));
+        for (int i = 0; i <= n; ++i)
+        {
+            auto r = rowRect (i);
+            if (i == hover) { g.setColour (palette::panelHi.brighter (0.1f)); g.fillRoundedRectangle (r.toFloat(), 4.0f); }
+            if (i == n)
+            {
+                g.setColour (palette::textDim);
+                g.drawText ("+ Add plugin", r.reduced (10, 0), juce::Justification::centredLeft);
+                continue;
+            }
+            const auto node = rig::insertNode (track, i);
+            const bool bypassed = (bool) node[rig::ids::bypass];
+            auto dot = r.removeFromLeft (26).toFloat().withSizeKeepingCentre (10.0f, 10.0f);
+            g.setColour (bypassed ? palette::outline : palette::accent);
+            g.fillEllipse (dot);
+            g.setColour (bypassed ? palette::textDim.withAlpha (0.6f) : palette::text);
+            g.drawText (juce::String (i + 1) + "  " + node[rig::ids::name].toString() + (bypassed ? "  (bypassed)" : ""),
+                        r.reduced (2, 0), juce::Justification::centredLeft, true);
+        }
+    }
+    void mouseMove (const juce::MouseEvent& e) override { const int h = rowAt (e.y); if (h != hover) { hover = h; repaint(); } }
+    void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const int row = rowAt (e.y), n = rig::numInserts (track);
+        if (row < 0) return;
+        auto& session = owner.session;
+        auto t = track;
+        juce::Component::SafePointer<juce::Component> a (anchor);
+        if (row == n)
+        {
+            dismiss();
+            if (a != nullptr) session.showAddInsertMenu (t, a.getComponent());
+            return;
+        }
+        if (! e.mods.isPopupMenu() && e.x < 28)   // the dot: bypass on / off, the list stays open
+        {
+            session.toggleInsertBypass (t, row);
+            repaint();
+            return;
+        }
+        dismiss();
+        if (e.mods.isPopupMenu()) { if (a != nullptr) session.showInsertMenu (t, row, a.getComponent()); }
+        else session.openInsert (t, row);
+    }
+private:
+    static constexpr int rowH = 26;
+    ArrangeView& owner;
+    juce::ValueTree track;
+    juce::Component::SafePointer<juce::Component> anchor;
+    int hover = -1;
+    juce::Rectangle<int> rowRect (int i) const { return { 4, 4 + i * rowH, getWidth() - 8, rowH }; }
+    int rowAt (int y) const
+    {
+        const int i = (y - 4) / rowH;
+        return y >= 4 && i <= rig::numInserts (track) ? i : -1;
+    }
+    void dismiss()
+    {
+        if (auto* box = findParentComponentOfClass<juce::CallOutBox>()) box->dismiss();
+    }
+};
+} // namespace
 
 void InsertStrip::paint (juce::Graphics& g)
 {
-    layoutChips();
     const int n = rig::numInserts (track);
-    g.setFont (uiFont (11.0f, true));
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    g.setColour (hover != -2 ? palette::panelHi.brighter (0.12f) : palette::panelHi);
+    g.fillRoundedRectangle (r, 4.0f);
+    g.setColour (palette::outline.brighter (0.2f));
+    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+    // "FX 3" badge, then the plugin names, then the arrow
+    auto area = getLocalBounds().reduced (6, 0);
+    g.setFont (uiFont (10.5f, true));
+    auto badge = area.removeFromLeft (n > 0 ? 34 : 0).toFloat().reduced (0.0f, 4.0f);
+    if (n > 0)
+    {
+        g.setColour (palette::accent.withAlpha (0.85f));
+        g.fillRoundedRectangle (badge, 3.0f);
+        g.setColour (juce::Colours::black);
+        g.drawText ("FX " + juce::String (n), badge, juce::Justification::centred);
+        area.removeFromLeft (6);
+    }
+    auto arrow = area.removeFromRight (12).toFloat();
+    juce::Path p;
+    p.addTriangle (arrow.getCentreX() - 4.0f, arrow.getCentreY() - 2.0f, arrow.getCentreX() + 4.0f, arrow.getCentreY() - 2.0f,
+                   arrow.getCentreX(), arrow.getCentreY() + 3.0f);
+    g.setColour (palette::textDim);
+    g.fillPath (p);
+    juce::StringArray names;
     for (int i = 0; i < n; ++i)
     {
-        auto r = chips[(size_t) i];
-        if (r.getX() >= (float) getWidth()) break;
-        r.setRight (juce::jmin (r.getRight(), (float) getWidth()));
         const auto node = rig::insertNode (track, i);
-        const bool bypassed = (bool) node[rig::ids::bypass];
-        g.setColour (hover == i ? palette::panelHi.brighter (0.15f) : palette::panelHi);
-        g.fillRoundedRectangle (r, 4.0f);
-        g.setColour (bypassed ? palette::outline : palette::accent.withAlpha (0.7f));
-        g.fillRoundedRectangle (r.withWidth (3.0f), 1.5f);   // a lit edge: the plugin is active
-        g.setColour (bypassed ? palette::textDim.withAlpha (0.6f) : palette::text);
-        g.drawText (node[rig::ids::name].toString(), r.withTrimmedLeft (6.0f).withTrimmedRight (4.0f), juce::Justification::centredLeft, true);
+        names.add (node[rig::ids::name].toString() + ((bool) node[rig::ids::bypass] ? " (off)" : ""));
     }
-    if (n < rig::maxInserts && chips.back().getRight() <= (float) getWidth() + 1.0f)
-    {
-        const auto r = chips.back();
-        g.setColour (hover == -1 ? palette::panelHi.brighter (0.15f) : palette::panelHi);
-        g.fillRoundedRectangle (r, 4.0f);
-        g.setColour (palette::outline.brighter (0.2f));
-        g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
-        g.setColour (hover == -1 ? palette::text : palette::textDim);
-        g.setFont (uiFont (n == 0 ? 11.0f : 14.0f, true));
-        g.drawText (n == 0 ? "+ Plugin" : "+", r, juce::Justification::centred);
-    }
+    g.setFont (uiFont (11.5f, n > 0));
+    g.setColour (n > 0 ? palette::text : palette::textDim);
+    g.drawText (n > 0 ? names.joinIntoString (", ") : juce::String ("+ Plugin"), area, juce::Justification::centredLeft, true);
 }
 
-void InsertStrip::mouseMove (const juce::MouseEvent& e)
+void InsertStrip::mouseMove (const juce::MouseEvent&)
 {
-    const int h = chipAt (e.position);
-    if (h != hover) { hover = h; repaint(); }
+    if (hover != 0) { hover = 0; repaint(); }
 }
 
 void InsertStrip::mouseDown (const juce::MouseEvent& e)
 {
-    const int c = chipAt (e.position);
-    if (c == -2) { getParentComponent()->mouseDown (e.getEventRelativeTo (getParentComponent())); return; }   // empty: like the header
-    if (c == -1)
+    if (rig::numInserts (track) == 0 && ! e.mods.isPopupMenu())
     {
-        if (rig::numInserts (track) < rig::maxInserts) owner.session.showAddInsertMenu (track, this);
+        owner.session.showAddInsertMenu (track, this);
         return;
     }
-    if (e.mods.isPopupMenu()) owner.session.showInsertMenu (track, c, this);
-    else owner.session.openInsert (track, c);
+    auto panel = std::make_unique<PluginListPanel> (owner, track, *this);
+    juce::CallOutBox::launchAsynchronously (std::move (panel), getScreenBounds(), nullptr);
 }
 
 TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t), index (i), owner (v)

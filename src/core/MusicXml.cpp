@@ -541,7 +541,7 @@ std::unique_ptr<juce::XmlElement> exportScore (const juce::ValueTree& score)
         if (score[ids::artist].toString().isNotEmpty())
             add (*id, "creator", score[ids::artist].toString())->setAttribute ("type", "composer");
         auto* enc = add (*id, "encoding");
-        add (*enc, "software", juce::String ("FretForge Studio ") + FF_VERSION_STRING);
+        add (*enc, "software", juce::String ("RAVENYR ") + FF_VERSION_STRING);
         add (*enc, "encoding-date", juce::Time::getCurrentTime().formatted ("%Y-%m-%d"));
     }
     auto* partList = add (*root, "part-list");

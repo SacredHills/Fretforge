@@ -88,7 +88,7 @@ public:
     /** Downloads into libraryFolder()/<tone>/; returns the file (an existing download is reused). */
     void download (const Tone&, const Model&, std::function<void (juce::File, juce::String error)> done);
 
-    /** Where downloads go: <Documents>/FretForge/TONE3000. */
+    /** Where downloads go: <Documents>/RAVENYR/TONE3000. */
     static juce::File libraryFolder();
     static juce::String safeName (const juce::String&);
 

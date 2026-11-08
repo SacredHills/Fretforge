@@ -376,7 +376,7 @@ private:
             juce::String f;
             std::vector<int> frets;
             for (int i = 0; i < count; ++i) frets.push_back (r.i32());
-            // stored highest string first; FretForge writes lowest first
+            // stored highest string first; RAVENYR writes lowest first
             for (int i = juce::jmin (count, stringCount) - 1; i >= 0; --i)
                 f << (frets[(size_t) i] < 0 ? juce::String ("x") : juce::String (frets[(size_t) i])) << (i > 0 ? " " : "");
             b.chordFrets = f;

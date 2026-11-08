@@ -4,10 +4,15 @@
 namespace ff::project
 {
 constexpr int currentFormatVersion = 1;
-constexpr const char* formatTag = "FretForgeProject";
-constexpr const char* bundleExtension = ".ffproj";
-constexpr const char* documentName = "project.ffp";
-constexpr const char* autosaveName = "project.autosave.ffp";
+constexpr const char* formatTag = "RavenyrProject";
+constexpr const char* bundleExtension = ".ravenyr";
+constexpr const char* documentName = "project.rvn";
+constexpr const char* autosaveName = "project.autosave.rvn";
+// projects saved before the app was renamed (RAVENYR) still open; they are saved with the new names
+constexpr const char* legacyFormatTag = "FretForgeProject";
+constexpr const char* legacyBundleExtension = ".ffproj";
+constexpr const char* legacyDocumentName = "project.ffp";
+constexpr const char* legacyAutosaveName = "project.autosave.ffp";
 
 namespace ids
 {
@@ -45,12 +50,21 @@ LoadResult parse (const juce::String& json);
 /** Repairs missing nodes / out-of-range values in place, recording warnings. */
 void validate (juce::ValueTree& project, juce::StringArray& warnings);
 
-/** A project bundle is a folder `<Name>.ffproj` holding the JSON document and media folders. */
+/** A project bundle is a folder `<Name>.ravenyr` (older: `.ffproj`) holding the JSON document and media folders. */
 struct Bundle
 {
     static const juce::StringArray& mediaFolders();
-    static juce::File documentFile (const juce::File& bundleDir) { return bundleDir.getChildFile (documentName); }
-    static juce::File autosaveFile (const juce::File& bundleDir) { return bundleDir.getChildFile ("Autosave").getChildFile (autosaveName); }
+    /** The document to read: project.rvn, or an older project.ffp if that is all there is. Saving always writes project.rvn. */
+    static juce::File documentFile (const juce::File& bundleDir)
+    {
+        const auto f = bundleDir.getChildFile (documentName), old = bundleDir.getChildFile (legacyDocumentName);
+        return ! f.existsAsFile() && old.existsAsFile() ? old : f;
+    }
+    static juce::File autosaveFile (const juce::File& bundleDir)
+    {
+        const auto f = bundleDir.getChildFile ("Autosave").getChildFile (autosaveName), old = bundleDir.getChildFile ("Autosave").getChildFile (legacyAutosaveName);
+        return ! f.existsAsFile() && old.existsAsFile() ? old : f;
+    }
     static juce::File backupsDir (const juce::File& bundleDir) { return bundleDir.getChildFile ("Backups"); }
 
     /** Ensures `dir` ends with the bundle extension. */
@@ -67,7 +81,12 @@ struct Bundle
     static juce::Result writeAutosave (const juce::ValueTree& project, const juce::File& bundleDir);
     static bool hasNewerAutosave (const juce::File& bundleDir);
     static LoadResult loadAutosave (const juce::File& bundleDir);
-    static void discardAutosave (const juce::File& bundleDir) { autosaveFile (bundleDir).deleteFile(); }
+    static void discardAutosave (const juce::File& bundleDir)
+    {
+        bundleDir.getChildFile ("Autosave").getChildFile (autosaveName).deleteFile();
+        bundleDir.getChildFile ("Autosave").getChildFile (legacyAutosaveName).deleteFile();
+    }
+    static bool isBundleFolderName (const juce::File& dir) { return dir.hasFileExtension (bundleExtension) || dir.hasFileExtension (legacyBundleExtension); }
 
     /** Media references are stored relative to the bundle with '/' separators. */
     static juce::String toPortablePath (const juce::File& bundleDir, const juce::File& media);

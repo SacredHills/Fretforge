@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(FretForgeStudio VERSION 0.6.0 LANGUAGES C CXX)
+project(Ravenyr VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +10,7 @@ option(FF_BUILD_APP    "Build the GUI application" ON)
 option(FF_BUILD_TEST_PLUGIN "Build a tiny VST3 effect used to test plugin hosting (FF_TEST_VST3=<path> runs the tests)" OFF)
 option(FF_ENABLE_ASIO  "Enable ASIO on Windows (requires the Steinberg ASIO SDK)" OFF)
 set(FF_ASIO_SDK_DIR "" CACHE PATH "Path to the ASIO SDK root (contains common/iasiodrv.h)")
-# VST2 hosting needs Steinberg's VST 2 SDK, which is not open source and cannot be shipped with FretForge.
+# VST2 hosting needs Steinberg's VST 2 SDK, which is not open source and cannot be shipped with RAVENYR.
 # If you hold a VST 2 licence, point this at the SDK folder (the one containing pluginterfaces/vst2.x/aeffect.h).
 set(FF_VST2_SDK_DIR "" CACHE PATH "Path to the VST 2 SDK (enables VST2 plugin hosting)")
 set(FF_JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/JUCE" CACHE PATH "Local JUCE checkout (fetched automatically if missing)")
@@ -147,16 +147,16 @@ endif()
 
 # ---------------------------------------------------------------- GUI application
 if(FF_BUILD_APP)
-juce_add_gui_app(FretForgeStudio
-    PRODUCT_NAME "FretForge Studio"
-    COMPANY_NAME "FretForge"
-    BUNDLE_ID "com.fretforge.studio"
+juce_add_gui_app(Ravenyr
+    PRODUCT_NAME "RAVENYR"
+    COMPANY_NAME "RAVENYR"
+    BUNDLE_ID "com.ravenyr.app"
     PLUGINHOST_AU TRUE
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "FretForge Studio needs audio input to tune and record your instrument."
+    MICROPHONE_PERMISSION_TEXT "RAVENYR needs audio input to tune and record your instrument."
     VERSION ${PROJECT_VERSION})
 
-target_sources(FretForgeStudio PRIVATE
+target_sources(Ravenyr PRIVATE
     src/app/Main.cpp
     src/app/MainComponent.cpp
     src/app/GlobalKeys.cpp
@@ -184,7 +184,7 @@ target_sources(FretForgeStudio PRIVATE
     src/app/pages/SettingsPage.cpp
     src/app/pages/MilestonePage.cpp)
 
-target_link_libraries(FretForgeStudio PRIVATE
+target_link_libraries(Ravenyr PRIVATE
     ff_core
     juce::juce_gui_basics
     juce::juce_gui_extra
@@ -224,10 +224,10 @@ endif()
 
 # ---------------------------------------------------------------- packaging
 if(FF_BUILD_APP)
-    install(TARGETS FretForgeStudio BUNDLE DESTINATION . RUNTIME DESTINATION bin)
+    install(TARGETS Ravenyr BUNDLE DESTINATION . RUNTIME DESTINATION bin)
 endif()
-set(CPACK_PACKAGE_NAME "FretForgeStudio")
-set(CPACK_PACKAGE_VENDOR "FretForge")
+set(CPACK_PACKAGE_NAME "Ravenyr")
+set(CPACK_PACKAGE_VENDOR "RAVENYR")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 if(WIN32)
     set(CPACK_GENERATOR "NSIS;ZIP")
@@ -235,7 +235,7 @@ elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
 else()
     set(CPACK_GENERATOR "TGZ;DEB")
-    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "FretForge")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "RAVENYR")
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "libasound2t64 | libasound2, libfreetype6, libfontconfig1, libx11-6")
     set(CPACK_DEBIAN_PACKAGE_SUGGESTS "libjack-jackd2-0 | pipewire-jack")
 endif()
@@ -245,7 +245,7 @@ include(CPack)
 if(FF_BUILD_TEST_PLUGIN)
     juce_add_plugin(ff_test_plugin
         PRODUCT_NAME "FF Test Gain"
-        COMPANY_NAME "FretForge"
+        COMPANY_NAME "RAVENYR"
         PLUGIN_MANUFACTURER_CODE Frfg
         PLUGIN_CODE Fftg
         FORMATS VST3

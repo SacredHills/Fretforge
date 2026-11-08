@@ -696,7 +696,7 @@ void RigEditor::setIrFile (const juce::File& f)
 
 juce::File RigEditor::presetFolder() const
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("FretForge").getChildFile ("Rigs");
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("RAVENYR").getChildFile ("Rigs");
 }
 
 void RigEditor::showAddPluginMenu (int slot)
@@ -748,7 +748,7 @@ void RigEditor::rebuildPresets()
     presetCombo.addSectionHeading ("Built-in (no external files)");
     int id = 1;
     for (auto& p : factoryPresets()) presetCombo.addItem (p.name, id++);
-    auto files = presetFolder().findChildFiles (juce::File::findFiles, false, "*.ffrig");
+    auto files = presetFolder().findChildFiles (juce::File::findFiles, false, "*.rvnrig;*.ffrig");
     files.sort();
     if (! files.isEmpty())
     {
@@ -771,7 +771,7 @@ void RigEditor::applyPresetId (int id)
     }
     else
     {
-        auto files = presetFolder().findChildFiles (juce::File::findFiles, false, "*.ffrig");
+        auto files = presetFolder().findChildFiles (juce::File::findFiles, false, "*.rvnrig;*.ffrig");
         files.sort();
         if (id - 100 < files.size()) json = juce::JSON::parse (files[id - 100]);
     }
@@ -799,7 +799,7 @@ void RigEditor::savePreset()
         if (name.isEmpty()) return;
         auto folder = safe->presetFolder();
         folder.createDirectory();
-        const auto f = folder.getChildFile (name + ".ffrig");
+        const auto f = folder.getChildFile (name + ".rvnrig");
         if (! f.replaceWithText (juce::JSON::toString (toPreset (safe->target, name))))
         {
             juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Could not save").withMessage ("Writing " + f.getFullPathName() + " failed.")
@@ -820,7 +820,7 @@ void RigEditor::deletePreset()
                                           .withButton ("OK").withAssociatedComponent (this), nullptr);
         return;
     }
-    auto files = presetFolder().findChildFiles (juce::File::findFiles, false, "*.ffrig");
+    auto files = presetFolder().findChildFiles (juce::File::findFiles, false, "*.rvnrig;*.ffrig");
     files.sort();
     if (id - 100 >= files.size()) return;
     const auto f = files[id - 100];

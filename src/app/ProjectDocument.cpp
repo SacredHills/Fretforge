@@ -6,7 +6,7 @@ using namespace project;
 
 juce::File ProjectDocument::appDataDir()
 {
-    auto d = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("FretForge Studio");
+    auto d = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("RAVENYR");
     d.createDirectory();
     return d;
 }
@@ -226,7 +226,7 @@ void ProjectDocument::setAutosaveIntervalSeconds (int seconds)
 
 juce::File ProjectDocument::untitledRecoveryBundle() const
 {
-    return appDataDir().getChildFile ("Recovery").getChildFile ("Untitled.ffproj");
+    return appDataDir().getChildFile ("Recovery").getChildFile ("Untitled.ravenyr");
 }
 
 juce::File ProjectDocument::sessionLockFile() const

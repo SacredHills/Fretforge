@@ -449,8 +449,8 @@ void PluginManager::reportPreviousCrash (juce::Component* parent)
     if (r.pluginName.isEmpty())
     {
         juce::AlertWindow::showAsync (juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::WarningIcon)
-                                          .withTitle ("FretForge closed unexpectedly")
-                                          .withMessage ("FretForge closed unexpectedly last time. A crash report was saved to:\n" + saved.getFullPathName())
+                                          .withTitle ("RAVENYR closed unexpectedly")
+                                          .withMessage ("RAVENYR closed unexpectedly last time. A crash report was saved to:\n" + saved.getFullPathName())
                                           .withButton ("OK").withAssociatedComponent (parent), nullptr);
         return;
     }
@@ -459,7 +459,7 @@ void PluginManager::reportPreviousCrash (juce::Component* parent)
     std::weak_ptr<bool> token = alive;
     juce::AlertWindow::showAsync (juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::WarningIcon)
                                       .withTitle ("Plugin problem")
-                                      .withMessage ("Last time FretForge " + what + ".\n\nDisable this plugin? Tracks and rigs that use it keep "
+                                      .withMessage ("Last time RAVENYR " + what + ".\n\nDisable this plugin? Tracks and rigs that use it keep "
                                                     "their settings but leave it out until you enable it again (Plugins > Options).\n\n"
                                                     "Report: " + saved.getFullPathName())
                                       .withButton ("Disable plugin").withButton ("Keep it").withAssociatedComponent (parent),
@@ -504,7 +504,7 @@ void PluginManager::changeListenerCallback (juce::ChangeBroadcaster*)
 void PluginManager::addToMenu (juce::PopupMenu& menu, int firstId) const
 {
     const bool instruments = firstId == instrumentMenu;
-    menu.addSectionHeader ("FretForge");
+    menu.addSectionHeader ("RAVENYR");
     int i = 0;
     for (auto& b : fx::builtin::all())
     {
@@ -702,8 +702,14 @@ private:
 };
 }
 
+std::unique_ptr<juce::Component> PluginManager::createManagerPanel()
+{
+    return std::make_unique<ManagerContent> (formats, known, deadMansPedal, settings);
+}
+
 void PluginManager::showManager()
 {
+    if (onShowManager) { onShowManager(); return; }
     if (managerWindow == nullptr)
     {
         struct Window : juce::DocumentWindow
@@ -773,7 +779,7 @@ void PluginManager::recordChange (std::shared_ptr<juce::AudioPluginInstance> p, 
 juce::File PluginManager::presetFolder (const juce::AudioPluginInstance& p)
 {
     const auto app = juce::JUCEApplicationBase::getInstance() != nullptr ? juce::JUCEApplicationBase::getInstance()->getApplicationName()
-                                                                         : juce::String ("FretForge");
+                                                                         : juce::String ("RAVENYR");
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
         .getChildFile (app).getChildFile ("Presets").getChildFile (juce::File::createLegalFileName (p.getPluginDescription().name));
 }
@@ -781,7 +787,7 @@ juce::File PluginManager::presetFolder (const juce::AudioPluginInstance& p)
 juce::String PluginManager::savePreset (juce::AudioPluginInstance& p, const juce::File& f)
 {
     const auto d = p.getPluginDescription();
-    juce::XmlElement x ("FretForgePreset");
+    juce::XmlElement x ("RavenyrPreset");
     x.setAttribute ("version", 1);
     x.setAttribute ("name", f.getFileNameWithoutExtension());
     x.setAttribute ("pluginName", d.name);
@@ -796,7 +802,7 @@ juce::String PluginManager::savePreset (juce::AudioPluginInstance& p, const juce
 juce::String PluginManager::loadPreset (juce::AudioPluginInstance& p, const juce::File& f)
 {
     const auto x = juce::XmlDocument::parse (f);
-    if (x == nullptr || ! x->hasTagName ("FretForgePreset")) return f.getFileName() + " is not a preset file";
+    if (x == nullptr || ! (x->hasTagName ("RavenyrPreset") || x->hasTagName ("FretForgePreset"))) return f.getFileName() + " is not a preset file";
     const auto d = p.getPluginDescription();
     if (x->getStringAttribute ("pluginId") != d.createIdentifierString() && x->getStringAttribute ("pluginName") != d.name)
         return "That preset is for " + x->getStringAttribute ("pluginName");
@@ -812,7 +818,7 @@ void PluginManager::showPresetMenu (juce::Component& anchor, juce::AudioPluginIn
                                ? plugin.getPluginDescription().fileOrIdentifier : juce::String();
     const auto& factory = fx::builtin::factoryPresets (builtinId);
     const auto folder = presetFolder (plugin);
-    auto files = folder.findChildFiles (juce::File::findFiles, false, "*.ffpreset");
+    auto files = folder.findChildFiles (juce::File::findFiles, false, "*.rvnpreset;*.ffpreset");
     files.sort();
 
     juce::PopupMenu m;
@@ -869,14 +875,14 @@ void PluginManager::showPresetMenu (juce::Component& anchor, juce::AudioPluginIn
             w->enterModalState (true, juce::ModalCallbackFunction::create ([w, pl, folder, status, token] (int res) {
                 const auto name = juce::File::createLegalFileName (w->getTextEditorContents ("name").trim());
                 if (res != 1 || name.isEmpty() || token.expired()) return;
-                const auto f = folder.getChildFile (name + ".ffpreset");
+                const auto f = folder.getChildFile (name + ".rvnpreset");
                 const auto err = savePreset (*pl, f);
                 status (err.isEmpty() ? "Saved preset " + name : err);
             }), true);
         }
         else if (r == 2)
         {
-            presetChooser = std::make_unique<juce::FileChooser> ("Load preset", folder.exists() ? folder : folder.getParentDirectory(), "*.ffpreset");
+            presetChooser = std::make_unique<juce::FileChooser> ("Load preset", folder.exists() ? folder : folder.getParentDirectory(), "*.rvnpreset;*.ffpreset");
             presetChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                                         [this, pl, status, token] (const juce::FileChooser& fc) {
                 if (token.expired() || fc.getResult() == juce::File()) return;
@@ -910,14 +916,15 @@ void PluginManager::createAsync (const juce::String& descXml, double sr, int bs,
     juce::PluginDescription d;
     auto xml = juce::parseXML (descXml);
     if (xml == nullptr || ! d.loadFromXml (*xml)) { done (nullptr, "The plugin description is not valid."); return; }
+    if (d.pluginFormatName == "FretForge") d.pluginFormatName = fx::builtin::formatName;   // saved before the rename
     if (heldBack.isNotEmpty() && (d.fileOrIdentifier == heldBack || d.name == heldBack))
     {
-        done (nullptr, "\"" + d.name + "\" was held back because it crashed or froze FretForge last time.");
+        done (nullptr, "\"" + d.name + "\" was held back because it crashed or froze RAVENYR last time.");
         return;
     }
     if (known.getBlacklistedFiles().contains (d.fileOrIdentifier))
     {
-        done (nullptr, "\"" + d.name + "\" is disabled because it crashed or froze FretForge. Re-enable it under Plugins > Options.");
+        done (nullptr, "\"" + d.name + "\" is disabled because it crashed or froze RAVENYR. Re-enable it under Plugins > Options.");
         return;
     }
     std::weak_ptr<bool> token = alive;
@@ -935,8 +942,9 @@ std::unique_ptr<juce::AudioPluginInstance> PluginManager::createBlocking (const 
     juce::PluginDescription d;
     auto xml = juce::parseXML (descXml);
     if (xml == nullptr || ! d.loadFromXml (*xml)) { error = "The plugin description is not valid."; return nullptr; }
+    if (d.pluginFormatName == "FretForge") d.pluginFormatName = fx::builtin::formatName;   // saved before the rename
     if (heldBack.isNotEmpty() && (d.fileOrIdentifier == heldBack || d.name == heldBack)) { error = "\"" + d.name + "\" was held back because it crashed last time."; return nullptr; }
-    if (known.getBlacklistedFiles().contains (d.fileOrIdentifier)) { error = "\"" + d.name + "\" is disabled because it crashed or froze FretForge."; return nullptr; }
+    if (known.getBlacklistedFiles().contains (d.fileOrIdentifier)) { error = "\"" + d.name + "\" is disabled because it crashed or froze RAVENYR."; return nullptr; }
     if (juce::MessageManager::getInstance()->isThisTheMessageThread())
     {
         fx::PluginActivity activity (d.name, d.fileOrIdentifier, "loading");

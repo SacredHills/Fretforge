@@ -231,9 +231,9 @@ LoadResult parse (const juce::String& json)
         r.result = juce::Result::fail ("The project file is not valid JSON: " + res.getErrorMessage());
         return r;
     }
-    if (parsed.getProperty ("format", {}).toString() != formatTag)
+    if (const auto tag = parsed.getProperty ("format", {}).toString(); tag != formatTag && tag != legacyFormatTag)
     {
-        r.result = juce::Result::fail ("This file is not a FretForge project.");
+        r.result = juce::Result::fail ("This file is not a RAVENYR project.");
         return r;
     }
     const int version = (int) parsed.getProperty ("formatVersion", 0);
@@ -244,7 +244,7 @@ LoadResult parse (const juce::String& json)
     }
     if (version > currentFormatVersion)
     {
-        r.result = juce::Result::fail ("This project was saved by a newer version of FretForge Studio (format "
+        r.result = juce::Result::fail ("This project was saved by a newer version of RAVENYR (format "
                                        + juce::String (version) + "). Please update the application.");
         return r;
     }
@@ -299,7 +299,7 @@ const juce::StringArray& Bundle::mediaFolders()
 
 juce::File Bundle::normaliseBundlePath (const juce::File& dir)
 {
-    if (dir.hasFileExtension (bundleExtension))
+    if (isBundleFolderName (dir))
         return dir;
     return dir.getParentDirectory().getChildFile (dir.getFileName() + bundleExtension);
 }
@@ -332,10 +332,11 @@ juce::Result Bundle::save (const juce::ValueTree& projectTree, const juce::File&
     {
         const auto dir = backupsDir (bundleDir);
         const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
-        auto backup = dir.getChildFile ("project-" + stamp + ".ffp").getNonexistentSibling (false);
+        auto backup = dir.getChildFile ("project-" + stamp + ".rvn").getNonexistentSibling (false);
         doc.copyFileTo (backup);
 
-        auto backups = dir.findChildFiles (juce::File::findFiles, false, "project-*.ffp");
+        auto backups = dir.findChildFiles (juce::File::findFiles, false, "project-*.rvn");
+        backups.addArray (dir.findChildFiles (juce::File::findFiles, false, "project-*.ffp"));
         backups.sort();
         while (backups.size() > backupsToKeep)
         {
@@ -344,9 +345,14 @@ juce::Result Bundle::save (const juce::ValueTree& projectTree, const juce::File&
         }
     }
 
-    r = writeFileAtomically (doc, text);
+    r = writeFileAtomically (bundleDir.getChildFile (documentName), text);
     if (r.wasOk())
+    {
         discardAutosave (bundleDir);
+        // an older project.ffp has been replaced by project.rvn: keep it among the backups
+        if (const auto old = bundleDir.getChildFile (legacyDocumentName); old.existsAsFile())
+            old.moveFileTo (backupsDir (bundleDir).getChildFile ("project-before-rename.ffp").getNonexistentSibling (false));
+    }
     return r;
 }
 
@@ -370,7 +376,7 @@ LoadResult Bundle::load (const juce::File& bundleDir)
 
 juce::Result Bundle::writeAutosave (const juce::ValueTree& projectTree, const juce::File& bundleDir)
 {
-    return writeFileAtomically (autosaveFile (bundleDir), serialise (projectTree));
+    return writeFileAtomically (bundleDir.getChildFile ("Autosave").getChildFile (autosaveName), serialise (projectTree));
 }
 
 bool Bundle::hasNewerAutosave (const juce::File& bundleDir)

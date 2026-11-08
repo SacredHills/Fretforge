@@ -45,12 +45,16 @@ public:
 
     static constexpr int builtinMenuBase = 9000;
     static constexpr int instrumentMenu = -100;   // pass as firstId to list instruments instead of effects
-    /** Menu of FretForge's own effects, then the known plugins (by manufacturer). */
+    /** Menu of RAVENYR's own effects, then the known plugins (by manufacturer). */
     void addToMenu (juce::PopupMenu& menu, int firstId) const;
     /** The plugin chosen from that menu, as description XML (empty if none). */
     juce::String descriptionForMenuResult (int result, int firstId, juce::String& name) const;
 
     void showManager();
+    /** The plugin settings (scan folders, scan, the plugin list, disabled plugins) as a panel, for the Settings tab. */
+    std::unique_ptr<juce::Component> createManagerPanel();
+    /** Set by the main window: showManager() opens Settings > Plugins instead of a separate window. */
+    std::function<void()> onShowManager;
 
     /** Copied plugin settings (the Copy / Paste buttons in every plugin window). */
     struct Clipboard { juce::String identifier, descXml, name, state; bool empty() const { return state.isEmpty() && descXml.isEmpty(); } };
@@ -75,9 +79,9 @@ public:
     // ---- presets (the Presets button in every plugin window) ----
     /** Where a plugin's own saved presets live: Documents/<app>/Presets/<plugin name>. */
     static juce::File presetFolder (const juce::AudioPluginInstance&);
-    /** Saves the plugin's current settings as a .ffpreset file. Returns an error message, empty on success. */
+    /** Saves the plugin's current settings as a .rvnpreset file. Returns an error message, empty on success. */
     static juce::String savePreset (juce::AudioPluginInstance&, const juce::File&);
-    /** Loads a .ffpreset file saved from the same plugin. Returns an error message, empty on success. */
+    /** Loads a .rvnpreset (or older .ffpreset) file saved from the same plugin. Returns an error message, empty on success. */
     static juce::String loadPreset (juce::AudioPluginInstance&, const juce::File&);
     void showPresetMenu (juce::Component& anchor, juce::AudioPluginInstance&, std::function<void (const juce::String&)> status);
 

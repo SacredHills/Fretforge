@@ -98,7 +98,10 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
                           "(click to route it to a bus, or add sends)");
     addAndMakeVisible (routeList);
     insertList.setTooltip ("Plugins on this track (after its NAM amp, before the fader). Click a plugin to open it, right-click for more.");
-    addAndMakeVisible (insertList);
+    insertView.setViewedComponent (&insertList, false);
+    insertView.setScrollBarsShown (true, false);
+    insertView.setScrollBarThickness (6);
+    addAndMakeVisible (insertView);
     session.rigs().statusChanged.addChangeListener (this);
     track.addListener (this);
     refresh();
@@ -431,14 +434,46 @@ void ChannelStrip::resized()
         ampButton.setBounds (row);
     }
     else r.removeFromTop (6);
-    insertList.setBounds (r.removeFromTop (insertList.rowsWanted() * InsertList::rowHeight).withTrimmedRight (0));
-    r.removeFromTop (insertList.rowsWanted() > 0 ? 6 : 0);
-    routeList.setBounds (r.removeFromTop (routeList.rowsWanted() * RouteList::rowHeight));
+    // plugins take the room left above the sends and the fader (which starts where the mixer's divider is); they scroll if
+    // they do not fit
+    const int insRows = insertList.rowsWanted(), routesH = routeList.rowsWanted() * RouteList::rowHeight;
+    const int roomBottom = juce::jmax (r.getY(), (alignTop > 0 ? alignTop : getHeight()) - 6 - routesH - (insRows > 0 ? 6 : 0));
+    const int insH = juce::jmin (insRows * InsertList::rowHeight, roomBottom - r.getY());
+    insertView.setBounds (r.removeFromTop (juce::jmax (0, insH)));
+    const bool scrolls = insRows * InsertList::rowHeight > insH;
+    insertList.setSize (insertView.getWidth() - (scrolls ? insertView.getScrollBarThickness() + 1 : 0), insRows * InsertList::rowHeight);
+    r.removeFromTop (insRows > 0 ? 6 : 0);
+    routeList.setBounds (r.removeFromTop (routesH));
     r.removeFromTop (6);
     nameLabel.setBounds (getLocalBounds().reduced (5, 0).withTrimmedTop (6).withHeight (24));
     r.removeFromBottom (6);
     r.setTop (juce::jmax (r.getY(), alignTop));   // every strip's fader starts at the same height
     fader.setBounds (r.withTrimmedRight (16));
+}
+
+int MixerPage::autoFaderTop() const
+{
+    int top = 0;
+    for (auto* st : strips) top = juce::jmax (top, st->wantedFaderTop());
+    return top;
+}
+
+void MixerPage::setFaderTop (int top)
+{
+    settings.setValue ("mixerFaderTop", top < 0 ? -1 : top);
+    resized();
+}
+
+void MixerPage::FaderDivider::paint (juce::Graphics& g)
+{
+    const bool hot = isMouseOverOrDragging();
+    auto r = getLocalBounds().toFloat().reduced (0.0f, 2.5f);
+    g.setColour ((hot ? palette::accent : palette::outline.brighter (0.3f)).withAlpha (hot ? 0.9f : 0.7f));
+    g.fillRoundedRectangle (r, 1.5f);
+    g.setColour (palette::bg);
+    for (float x = 40.0f; x < (float) getWidth(); x += (float) ChannelStrip::width)   // a grip in every strip
+        for (int k = -1; k <= 1; ++k)
+            g.fillEllipse (x + (float) k * 6.0f + 10.0f, r.getCentreY() - 1.0f, 2.0f, 2.0f);
 }
 
 int ChannelStrip::wantedFaderTop() const
@@ -494,7 +529,10 @@ void MixerPage::rebind()
     masterInserts = std::make_unique<InsertList> (session, project::masterNode (doc.tree()));
     masterInserts->setTooltip ("Plugins on the master bus (they process the whole mix, and are in exports). "
                                "Click a plugin to open it, right-click for more.");
-    addAndMakeVisible (*masterInserts);
+    masterInsertView.setViewedComponent (masterInserts.get(), false);
+    masterInsertView.setScrollBarsShown (true, false);
+    masterInsertView.setScrollBarThickness (6);
+    addAndMakeVisible (masterInsertView);
     rebuild();
 }
 
@@ -508,6 +546,7 @@ void MixerPage::rebuild()
         auto* s = strips.add (new ChannelStrip (doc, host, session, t, i++));
         stripHolder.addAndMakeVisible (s);
     }
+    stripHolder.addChildComponent (divider);
     emptyLabel.setVisible (strips.isEmpty());
     resized();
 }
@@ -517,9 +556,8 @@ void MixerPage::timerCallback()
     meterL.tick();
     meterR.tick();
     {
-        int top = 0;
-        for (auto* st : strips) top = juce::jmax (top, st->wantedFaderTop());
-        if (top != faderTop) resized();   // a strip gained or lost a plugin / send row
+        const int top = autoFaderTop();
+        if (top != lastAutoTop) { lastAutoTop = top; resized(); }   // a strip gained or lost a plugin / send row
     }
     if (masterInserts != nullptr)
     {
@@ -555,17 +593,26 @@ void MixerPage::resized()
     viewport.setBounds (r);
     emptyLabel.setBounds (r);
     stripHolder.setSize (juce::jmax (r.getWidth(), strips.size() * ChannelStrip::width), r.getHeight() - viewport.getScrollBarThickness());
-    faderTop = 0;
-    for (auto* st : strips) faderTop = juce::jmax (faderTop, st->wantedFaderTop());
-    for (auto* st : strips) { st->alignTop = faderTop; st->resized(); }
+    const int stored = settings.getIntValue ("mixerFaderTop", -1);
+    const int lowest = juce::jmax (150, stripHolder.getHeight() - 140);   // a fader is always at least ~140 px long
+    faderTop = juce::jlimit (150, lowest, stored >= 0 ? stored : autoFaderTop());
+    for (auto* st : strips) st->alignTop = faderTop;
     for (int i = 0; i < strips.size(); ++i)
+    {
         strips[i]->setBounds (i * ChannelStrip::width, 0, ChannelStrip::width, stripHolder.getHeight());
+        strips[i]->resized();
+    }
+    divider.setBounds (0, faderTop - 9, strips.size() * ChannelStrip::width, 8);
+    divider.setVisible (! strips.isEmpty());
+    divider.toFront (false);
 
     auto s = masterBox.reduced (12).withTrimmedTop (24).withTrimmedBottom (8);
     if (masterInserts != nullptr)
     {
         masterRows = masterInserts->rowsWanted();
-        masterInserts->setBounds (s.removeFromTop (masterRows * InsertList::rowHeight));
+        const int want = masterRows * InsertList::rowHeight, room = juce::jmax (InsertList::rowHeight, s.getHeight() - 220);
+        masterInsertView.setBounds (s.removeFromTop (juce::jmin (want, room)));
+        masterInserts->setSize (masterInsertView.getWidth() - (want > room ? masterInsertView.getScrollBarThickness() + 1 : 0), want);
         s.removeFromTop (8);
     }
     auto meters = s.removeFromRight (34);

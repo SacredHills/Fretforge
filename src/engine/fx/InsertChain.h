@@ -43,7 +43,11 @@ private:
         std::atomic<juce::AudioPluginInstance*> active { nullptr };
     };
     std::array<Slot, maxSlots> slots;
-    std::atomic<juce::uint64> order { 0 };   // 4 bits per position, top byte = count
+    // play order, published with a sequence lock (odd = being written) so the audio thread always sees a whole order
+    std::array<std::atomic<int>, maxSlots> orderSlots {};
+    std::atomic<int> orderCount { 0 };
+    std::atomic<juce::uint32> orderSeq { 0 };
+    int readOrder (std::array<int, maxSlots>& out) const noexcept;   // returns the count
     std::atomic<double> preparedRate { 0.0 };
     double sr = 48000.0;
     int maxBlock = 0;

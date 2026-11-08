@@ -98,7 +98,7 @@ juce::String blockLabel (const juce::ValueTree& rig, int block);
 
 // ---- track inserts: plugins on a track after its amp rig, before the fader ----
 //   TRACK / INSERTS / PLUGIN {slot, desc, state, name, bypass}; slots play in order 0..maxInserts-1
-constexpr int maxInserts = 8;
+constexpr int maxInserts = 64;   // per track; effectively unlimited
 juce::ValueTree findInserts (const juce::ValueTree& track);
 juce::ValueTree insertNode (const juce::ValueTree& track, int slot);
 int numInserts (const juce::ValueTree& track);

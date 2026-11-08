@@ -5,7 +5,7 @@ namespace ff
 {
 struct TrackWorkers::Worker final : public juce::Thread
 {
-    explicit Worker (TrackWorkers& o, int i) : juce::Thread ("FretForge track worker " + juce::String (i)), owner (o) {}
+    explicit Worker (TrackWorkers& o, int i) : juce::Thread ("RAVENYR track worker " + juce::String (i)), owner (o) {}
     void run() override
     {
         int joinedGeneration = -1;

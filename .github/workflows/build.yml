@@ -1,4 +1,4 @@
-# Builds FretForge Studio for macOS, Windows and Linux on every push and on demand.
+# Builds RAVENYR for macOS, Windows and Linux on every push and on demand.
 # Download the results from the run's "Artifacts" section on GitHub (Actions tab).
 name: Build
 
@@ -121,8 +121,8 @@ jobs:
       - name: Smoke test (macOS) - universal binary and app launch
         if: runner.os == 'macOS'
         run: |
-          APP="build/FretForgeStudio_artefacts/Release/FretForge Studio.app"
-          BIN="$APP/Contents/MacOS/FretForge Studio"
+          APP="build/Ravenyr_artefacts/Release/RAVENYR.app"
+          BIN="$APP/Contents/MacOS/RAVENYR"
           echo "Architectures: $(lipo -archs "$BIN")"
           lipo -archs "$BIN" | grep -q arm64  || { echo "::error::arm64 slice missing"; exit 1; }
           lipo -archs "$BIN" | grep -q x86_64 || { echo "::error::x86_64 slice missing"; exit 1; }
@@ -131,7 +131,7 @@ jobs:
           codesign --verify --deep --strict "$APP"
           launch () {
             local label="$1"; shift
-            rm -f ~/Library/Logs/DiagnosticReports/*FretForge* 2>/dev/null || true
+            rm -f ~/Library/Logs/DiagnosticReports/*RAVENYR* 2>/dev/null || true
             "$@" > "run-$label.log" 2>&1 &
             local pid=$!
             sleep 20
@@ -141,7 +141,7 @@ jobs:
             else
               echo "::error::$label: app exited during startup"
               cat "run-$label.log"
-              for f in ~/Library/Logs/DiagnosticReports/*FretForge*; do echo "== $f"; head -c 20000 "$f"; done
+              for f in ~/Library/Logs/DiagnosticReports/*RAVENYR*; do echo "== $f"; head -c 20000 "$f"; done
               return 1
             fi
           }
@@ -167,18 +167,18 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: FretForgeStudio-${{ matrix.name }}
+          name: Ravenyr-${{ matrix.name }}
           path: |
-            build/FretForgeStudio-*.dmg
-            build/FretForgeStudio-*.zip
-            build/FretForgeStudio-*.tar.gz
+            build/Ravenyr-*.dmg
+            build/Ravenyr-*.zip
+            build/Ravenyr-*.tar.gz
           if-no-files-found: error
 
   # Collects the three platform builds into a single zip:
-  #   FretForgeStudio-<version>-all-platforms.zip
-  #     macOS/   FretForgeStudio-x.y.z-Darwin.dmg
-  #     Windows/ FretForgeStudio-x.y.z-win64.zip
-  #     Linux/   FretForgeStudio-x.y.z-Linux.tar.gz
+  #   Ravenyr-<version>-all-platforms.zip
+  #     macOS/   Ravenyr-x.y.z-Darwin.dmg
+  #     Windows/ Ravenyr-x.y.z-win64.zip
+  #     Linux/   Ravenyr-x.y.z-Linux.tar.gz
   # Pushing a tag such as v0.3.0 also publishes that zip as a GitHub Release.
   bundle:
     name: All platforms (one zip)
@@ -198,27 +198,27 @@ jobs:
       - name: Make one zip
         id: zip
         run: |
-          version=$(grep -oP 'project\(FretForgeStudio VERSION \K[0-9.]+' CMakeLists.txt)
-          mkdir -p out/FretForgeStudio
-          mv dist/FretForgeStudio-macOS   out/FretForgeStudio/macOS
-          mv dist/FretForgeStudio-Windows out/FretForgeStudio/Windows
-          mv dist/FretForgeStudio-Linux   out/FretForgeStudio/Linux
-          cat > out/FretForgeStudio/README.txt <<'TXT'
-          FretForge Studio builds
+          version=$(grep -oP 'project\(Ravenyr VERSION \K[0-9.]+' CMakeLists.txt)
+          mkdir -p out/Ravenyr
+          mv dist/Ravenyr-macOS   out/Ravenyr/macOS
+          mv dist/Ravenyr-Windows out/Ravenyr/Windows
+          mv dist/Ravenyr-Linux   out/Ravenyr/Linux
+          cat > out/Ravenyr/README.txt <<'TXT'
+          RAVENYR builds
           macOS:   open the .dmg and drag the app to Applications. First launch: right-click > Open > Open.
-          Windows: unzip and run "bin\FretForge Studio.exe". If SmartScreen warns: More info > Run anyway.
-          Linux:   extract the .tar.gz and run "bin/FretForge Studio".
+          Windows: unzip and run "bin\RAVENYR.exe". If SmartScreen warns: More info > Run anyway.
+          Linux:   extract the .tar.gz and run "bin/RAVENYR".
                    Needs ALSA (and JACK or PipeWire-JACK for low latency), FreeType, Fontconfig and X11 libraries.
           TXT
-          name="FretForgeStudio-${version}-all-platforms.zip"
-          (cd out && zip -r "../$name" FretForgeStudio)
+          name="Ravenyr-${version}-all-platforms.zip"
+          (cd out && zip -r "../$name" Ravenyr)
           echo "name=$name" >> "$GITHUB_OUTPUT"
           unzip -l "$name"
 
       - name: Upload the combined zip
         uses: actions/upload-artifact@v4
         with:
-          name: FretForgeStudio-AllPlatforms
+          name: Ravenyr-AllPlatforms
           path: ${{ steps.zip.outputs.name }}
           compression-level: 0   # already a zip
 
@@ -226,4 +226,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" "${{ steps.zip.outputs.name }}" --title "FretForge Studio ${GITHUB_REF_NAME}" --generate-notes
+        run: gh release create "${GITHUB_REF_NAME}" "${{ steps.zip.outputs.name }}" --title "RAVENYR ${GITHUB_REF_NAME}" --generate-notes

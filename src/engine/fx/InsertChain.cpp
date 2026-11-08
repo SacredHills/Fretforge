@@ -30,20 +30,34 @@ std::shared_ptr<juce::AudioPluginInstance> InsertChain::getPlugin (int slot) con
 
 void InsertChain::setOrder (const std::array<int, maxSlots>& o, int count) noexcept
 {
-    juce::uint64 v = (juce::uint64) juce::jlimit (0, maxSlots, count) << 56;
-    for (int i = 0; i < maxSlots; ++i) v |= (juce::uint64) (o[(size_t) i] & 0xf) << (4 * i);
-    order.store (v, std::memory_order_release);
+    orderSeq.fetch_add (1, std::memory_order_acq_rel);   // odd: readers retry
+    for (int i = 0; i < maxSlots; ++i) orderSlots[(size_t) i].store (o[(size_t) i], std::memory_order_relaxed);
+    orderCount.store (juce::jlimit (0, maxSlots, count), std::memory_order_relaxed);
+    orderSeq.fetch_add (1, std::memory_order_release);
+}
+
+int InsertChain::readOrder (std::array<int, maxSlots>& out) const noexcept
+{
+    for (;;)
+    {
+        const auto s0 = orderSeq.load (std::memory_order_acquire);
+        if ((s0 & 1u) != 0) continue;   // a write is in progress (a few instructions long)
+        const int count = orderCount.load (std::memory_order_relaxed);
+        for (int i = 0; i < count; ++i) out[(size_t) i] = orderSlots[(size_t) i].load (std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_acquire);
+        if (orderSeq.load (std::memory_order_relaxed) == s0) return count;
+    }
 }
 
 int InsertChain::latency() const noexcept
 {
-    const auto v = order.load (std::memory_order_acquire);
-    const int count = (int) (v >> 56);
+    std::array<int, maxSlots> o;
+    const int count = readOrder (o);
     int l = 0;
     for (int i = 0; i < count; ++i)
     {
-        const int slot = (int) ((v >> (4 * i)) & 0xf);
-        if (slot >= maxSlots || bypass[(size_t) slot].load (std::memory_order_relaxed)) continue;
+        const int slot = o[(size_t) i];
+        if (slot < 0 || slot >= maxSlots || bypass[(size_t) slot].load (std::memory_order_relaxed)) continue;
         if (auto* p = slots[(size_t) slot].active.load (std::memory_order_acquire)) l += juce::jmax (0, p->getLatencySamples());
     }
     return l;
@@ -52,15 +66,15 @@ int InsertChain::latency() const noexcept
 void InsertChain::process (float* L, float* R, int n) noexcept
 {
     if (! isPreparedFor (sr) || maxBlock == 0) return;
-    const auto v = order.load (std::memory_order_acquire);
-    const int count = (int) (v >> 56);
+    std::array<int, maxSlots> o;
+    const int count = readOrder (o);
     for (int done = 0; done < n;)
     {
         const int len = juce::jmin (maxBlock, n - done);
         for (int i = 0; i < count; ++i)
         {
-            const int slot = (int) ((v >> (4 * i)) & 0xf);
-            if (slot >= maxSlots || bypass[(size_t) slot].load (std::memory_order_relaxed)) continue;
+            const int slot = o[(size_t) i];
+            if (slot < 0 || slot >= maxSlots || bypass[(size_t) slot].load (std::memory_order_relaxed)) continue;
             if (auto* p = slots[(size_t) slot].active.load (std::memory_order_acquire))
                 runPluginStereo (*p, scratch, midi, L + done, R + done, len);
         }

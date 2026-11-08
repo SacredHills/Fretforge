@@ -64,7 +64,7 @@ void crashHandler (void*)
 class Watchdog final : public juce::Thread
 {
 public:
-    Watchdog() : juce::Thread ("FretForge plugin watchdog") {}
+    Watchdog() : juce::Thread ("RAVENYR plugin watchdog") {}
     void run() override
     {
         while (! threadShouldExit())

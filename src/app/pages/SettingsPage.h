@@ -14,6 +14,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void setWelcomeVisible (bool shouldShow) { welcome = shouldShow; resized(); repaint(); }
+    /** The Plugins part of the settings (folders to scan, the plugin list), from the plugin manager. */
+    void setPluginPanel (std::unique_ptr<juce::Component>);
+    void showTab (int tab);   // 0: audio & projects, 1: plugins
 
 private:
     EngineHost& host;
@@ -27,5 +30,8 @@ private:
     juce::TextButton revealLogs { "Show log folder" };
     juce::Rectangle<int> audioBox, appBox, welcomeBox;
     bool welcome = false;
+    juce::TextButton generalTab { "Audio & Projects" }, pluginsTab { "Plugins" };
+    std::unique_ptr<juce::Component> pluginPanel;
+    int tab = 0;
 };
 } // namespace ff

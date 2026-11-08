@@ -269,7 +269,7 @@ void SessionController::showAddInsertMenu (juce::ValueTree track, juce::Componen
     if (plugins == nullptr || ! track.isValid()) return;
     if (rig::numInserts (track) >= rig::maxInserts)
     {
-        if (onError) onError ("Plugins", "This track already has " + juce::String (rig::maxInserts) + " plugins.");
+        if (onError) onError ("Plugins", "This track already has the maximum of " + juce::String (rig::maxInserts) + " plugins.");
         return;
     }
     juce::PopupMenu m;

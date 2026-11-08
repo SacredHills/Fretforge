@@ -51,7 +51,7 @@ bool ScorePdf::writeImagesAsPdf (const std::vector<juce::Image>& pages, float pw
         out << "\nendstream\nendobj\n";
     }
     beginObj();
-    out << "<< /Title (" << escape (title) << ") /Producer (FretForge Studio " << FF_VERSION_STRING << ") >>\nendobj\n";
+    out << "<< /Title (" << escape (title) << ") /Producer (RAVENYR " << FF_VERSION_STRING << ") >>\nendobj\n";
     const int infoObj = (int) offsets.size();
 
     const auto xref = out.getPosition();

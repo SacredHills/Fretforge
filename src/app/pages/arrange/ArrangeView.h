@@ -59,8 +59,8 @@ struct ArrangeGeometry
     }
 };
 
-/** The track's plugins as small chips under its input: click one to open it, right-click to replace / bypass / remove,
-    "+" adds one. */
+/** The track's plugins under its input, as one dropdown: click it to see every plugin (click one to open it, right-click
+    to bypass / replace / remove, + to add). With no plugins it is a "+ Plugin" button. */
 class InsertStrip : public juce::Component, public juce::SettableTooltipClient, private juce::ValueTree::Listener
 {
 public:
@@ -73,10 +73,7 @@ public:
 private:
     ArrangeView& owner;
     juce::ValueTree track;
-    int hover = -2;   // chip under the mouse (-1: the "+" chip)
-    std::vector<juce::Rectangle<float>> chips;   // per insert, then the "+" chip last
-    void layoutChips();
-    int chipAt (juce::Point<float>) const;
+    int hover = -2;
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { repaint(); }
     void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { repaint(); }
     void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { repaint(); }

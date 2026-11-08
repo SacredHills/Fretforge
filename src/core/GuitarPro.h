@@ -8,7 +8,7 @@
     holding GPIF XML) and Guitar Pro 7/8 (.gp, zip holding GPIF XML).
 
     All readers produce a format-neutral `gp::Song`, which `applySong` writes into the project's SCORE.
-    What does not map onto FretForge's tab model is reported as a warning instead of being dropped silently:
+    What does not map onto RAVENYR's tab model is reported as a warning instead of being dropped silently:
     drum tracks (Drum Studio is a later milestone), second voices, grace notes, unusual tuplets.
     Repeats and alternate endings are written out so that playback follows the form of the song. */
 namespace ff::tab::gp

@@ -123,6 +123,8 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     transport->onOpenTuner = [this] { openTuner(); };
     session->onOpenRig = [this] (juce::ValueTree t) { openRigWindow (t); };
     session->rigs().onPluginRemoved = [this] (juce::AudioPluginInstance* p) { if (pluginManager != nullptr) pluginManager->closeEditor (p); };
+    settingsPage->setPluginPanel (pluginManager->createManagerPanel());
+    pluginManager->onShowManager = [this] { showSection (settingsSection); settingsPage->showTab (1); };
     studioPage->arrange.onExportRequested = [this] { ExportDialog::show (this, *doc, *session, host, settings); };
     effectsPage->setPluginManager (pluginManager.get());
     session->plugins = pluginManager.get();
@@ -234,7 +236,7 @@ void MainComponent::showSection (int index)
 void MainComponent::updateTitleAndStatus()
 {
     if (onTitleChanged)
-        onTitleChanged ("FretForge Studio - " + doc->displayName());
+        onTitleChanged ("RAVENYR - " + doc->displayName());
 
     juce::String left = doc->displayName() + "   ";
     left << (doc->hasLocation() ? doc->getBundle().getFullPathName() : juce::String ("(not saved)"));
@@ -358,8 +360,8 @@ void MainComponent::saveAsThen (std::function<void()> continuation)
 
 void MainComponent::openProjectDialog()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Open project (choose the .ffproj folder or its project.ffp)",
-                                                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.ffp;*.ffproj");
+    chooser = std::make_unique<juce::FileChooser> ("Open project (choose the .ravenyr folder or its project.rvn)",
+                                                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.rvn;*.ravenyr;*.ffp;*.ffproj");
     juce::Component::SafePointer<MainComponent> safe (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::canSelectDirectories,
@@ -374,7 +376,7 @@ void MainComponent::openProject (const juce::File& f)
     const auto bundle = f.existsAsFile() ? f.getParentDirectory() : f;
     if (! project::Bundle::isBundle (bundle))
     {
-        showError ("Not a project", f.getFullPathName() + " is not a FretForge project folder.");
+        showError ("Not a project", f.getFullPathName() + " is not a RAVENYR project folder.");
         return;
     }
     host.engine.stop();
@@ -406,7 +408,7 @@ void MainComponent::runStartupChecks()
         juce::AlertWindow::showAsync (juce::MessageBoxOptions()
                                           .withIconType (juce::MessageBoxIconType::WarningIcon)
                                           .withTitle ("Recover unsaved work?")
-                                          .withMessage ("FretForge Studio did not shut down cleanly. An autosave of " + where
+                                          .withMessage ("RAVENYR did not shut down cleanly. An autosave of " + where
                                                         + " is newer than the last save. Recover it?")
                                           .withButton ("Recover")
                                           .withButton ("Discard")
@@ -530,7 +532,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
     switch (id)
     {
         case cmdNew:   info.setInfo ("New Project", "Start a new untitled project", "File", 0); info.addDefaultKeypress ('n', cmd); break;
-        case cmdOpen:  info.setInfo ("Open Project...", "Open a .ffproj project", "File", 0); info.addDefaultKeypress ('o', cmd); break;
+        case cmdOpen:  info.setInfo ("Open Project...", "Open a .ravenyr project", "File", 0); info.addDefaultKeypress ('o', cmd); break;
         case cmdSave:  info.setInfo ("Save", "Save the project", "File", 0); info.addDefaultKeypress ('s', cmd); break;
         case cmdSaveAs: info.setInfo ("Save As...", "Save the project to a new location", "File", 0); info.addDefaultKeypress ('s', cmd | shift); break;
         case cmdReveal: info.setInfo ("Show Project Folder", "Reveal the project bundle", "File", 0); info.setActive (doc->hasLocation()); break;
@@ -554,7 +556,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdMetronomeWindow: info.setInfo ("Metronome...", "Open the metronome window (practice metronome, tempo trainer)", "Transport", 0); info.addDefaultKeypress ('m', cmd | shift); break;
         case cmdPracticeMetronome: info.setInfo ("Practice Metronome", "Start/stop the free-running metronome", "Transport", 0); info.setTicked (host.engine.practiceMetronome.load()); info.addDefaultKeypress ('m', 0); break;
         case cmdShortcuts: info.setInfo ("Keyboard Shortcuts...", "View and customise shortcuts", "Help", 0); info.addDefaultKeypress ('/', cmd); break;
-        case cmdAbout: info.setInfo ("About FretForge Studio", "Version information", "Help", 0); break;
+        case cmdAbout: info.setInfo ("About RAVENYR", "Version information", "Help", 0); break;
         case cmdRecord: info.setInfo ("Record", "Record on armed tracks / punch out", "Transport", 0); info.setTicked (host.engine.isRecordRequested()); info.addDefaultKeypress ('r', 0); break;
         case cmdLoop: info.setInfo ("Loop", "Toggle the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::loopEnabled]); info.addDefaultKeypress ('l', 0); break;
         case cmdPunch: info.setInfo ("Punch In/Out", "Record only inside the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::punchEnabled]); info.addDefaultKeypress ('p', 0); break;
@@ -624,7 +626,7 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdAbout:
             juce::AlertWindow::showAsync (juce::MessageBoxOptions()
                                               .withIconType (juce::MessageBoxIconType::InfoIcon)
-                                              .withTitle ("FretForge Studio")
+                                              .withTitle ("RAVENYR")
                                               .withMessage (juce::String ("Version ") + FF_VERSION_STRING
                                                             + "\nMilestone 2 - Recording studio\n\nBuilt with JUCE " + juce::SystemStats::getJUCEVersion().fromLastOccurrenceOf (" ", false, false)
                                                             + "\n" + juce::SystemStats::getOperatingSystemName())
