@@ -506,7 +506,7 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
     swingSlider.setTooltip ("Swing: delays off-beat 8ths (or 16ths on a 16th grid)");
     swingSlider.onValueChange = [this] { if (! updating && current().isValid()) doc.set (current(), dids::swing, swingSlider.getValue() / 100.0, false); };
     setupSlider (tempoSlider, 20.0, 400.0, 1.0, " BPM");
-    tempoSlider.setTooltip ("Project tempo (shared with the Studio)");
+    tempoSlider.setTooltip ("Project tempo (shared with the Editor)");
     tempoSlider.onDragStart = [this] { doc.undo().beginNewTransaction ("Tempo"); };
     tempoSlider.onValueChange = [this] { if (! updating) doc.setTempo (tempoSlider.getValue()); };
 
@@ -631,7 +631,7 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
                                         });
         });
     };
-    renderButton.setTooltip ("Render the song (or the current pattern) to audio and add it as a new track in the Studio, starting at bar 1");
+    renderButton.setTooltip ("Render the song (or the current pattern) to audio and add it as a new track in the Editor, starting at bar 1");
     renderButton.onClick = [this] { renderToStudio(); };
 
     addSectionButton.setTooltip ("Append the current pattern to the song (after the selected section)");
@@ -1006,8 +1006,8 @@ void DrumPage::renderToStudio()
     auto r = session.importFiles ({ file }, {}, 0.0);
     file.deleteFile();
     if (r.failed()) { message ("Render failed", r.getErrorMessage()); return; }
-    message ("Rendered to the Studio", "Added the track \"" + name + "\" (" + juce::String (c.lengthQ * spq, 1)
-                                           + " s at " + juce::String (doc.tempo(), 1) + " BPM) to the Studio, starting at bar 1.");
+    message ("Rendered to the Editor", "Added the track \"" + name + "\" (" + juce::String (c.lengthQ * spq, 1)
+                                           + " s at " + juce::String (doc.tempo(), 1) + " BPM) to the Editor, starting at bar 1.");
 }
 
 // ------------------------------------------------------------------ sample kit

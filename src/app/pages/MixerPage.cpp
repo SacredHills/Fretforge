@@ -469,7 +469,7 @@ MixerPage::MixerPage (EngineHost& h, ProjectDocument& d, SessionController& sc, 
     viewport.setScrollBarsShown (false, true);
     addAndMakeVisible (viewport);
 
-    emptyLabel.setText ("No tracks yet. Click \"+ Track\" (or add tracks in Studio) and they appear here as channel strips.", juce::dontSendNotification);
+    emptyLabel.setText ("No tracks yet. Click \"+ Track\" (or add tracks in the Editor) and they appear here as channel strips.", juce::dontSendNotification);
     addTrackButton.setTooltip ("Add an audio, bus or FX track");
     addTrackButton.onClick = [this] { session.showAddTrackMenu (&addTrackButton); };
     addAndMakeVisible (addTrackButton);

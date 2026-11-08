@@ -367,34 +367,36 @@ void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::C
     const auto node = rig::insertNode (track, slot);
     if (! node.isValid()) return;
     const auto st = rigBank->insertStatus (track, slot);
-    juce::PopupMenu m;
+    // the plugin list is a submenu (its own item ids); the actions use ids well above it
+    enum { openId = 200001, bypassId, upId, downId, removeId };
+    juce::PopupMenu m, replace;
     m.addSectionHeader (node[rig::ids::name].toString() + (st.error.isNotEmpty() ? "  (not loaded)" : juce::String()));
-    m.addItem (1, "Open plugin window", st.loaded);
-    m.addItem (2, "Bypass", true, (bool) node[rig::ids::bypass]);
-    m.addItem (3, "Move up", slot > 0);
-    m.addItem (4, "Move down", slot < rig::numInserts (track) - 1);
-    m.addItem (5, "Replace...");
-    m.addItem (6, "Remove");
+    m.addItem (openId, "Open plugin window", st.loaded);
+    m.addItem (bypassId, "Bypass", true, (bool) node[rig::ids::bypass]);
+    if (plugins != nullptr)
+    {
+        plugins->addToMenu (replace, 1);
+        m.addSubMenu ("Replace with", replace);
+    }
+    m.addItem (removeId, "Remove");
+    m.addSeparator();
+    m.addItem (upId, "Move up", slot > 0);
+    m.addItem (downId, "Move down", slot < rig::numInserts (track) - 1);
     if (st.error.isNotEmpty()) { m.addSeparator(); m.addItem (-1, st.error, false); }
-    juce::Component::SafePointer<juce::Component> safeTarget (target);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, slot, safeTarget] (int r) {
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, slot] (int r) {
         auto n = rig::insertNode (track, slot);
-        if (! n.isValid()) return;
-        if (r == 1) openInsert (track, slot);
-        else if (r == 2) { doc.undo().beginNewTransaction ("Bypass plugin"); n.setProperty (rig::ids::bypass, ! (bool) n[rig::ids::bypass], &doc.undo()); }
-        else if (r == 3 || r == 4) { doc.undo().beginNewTransaction ("Move plugin"); rig::moveInsert (track, slot, r == 3 ? -1 : 1, &doc.undo()); }
-        else if (r == 6) { doc.undo().beginNewTransaction ("Remove plugin"); rig::removeInsert (track, slot, &doc.undo()); }
-        else if (r == 5 && plugins != nullptr)
+        if (! n.isValid() || r == 0) return;
+        if (r == openId) openInsert (track, slot);
+        else if (r == bypassId) { doc.undo().beginNewTransaction ("Bypass plugin"); n.setProperty (rig::ids::bypass, ! (bool) n[rig::ids::bypass], &doc.undo()); }
+        else if (r == upId || r == downId) { doc.undo().beginNewTransaction ("Move plugin"); rig::moveInsert (track, slot, r == upId ? -1 : 1, &doc.undo()); }
+        else if (r == removeId) { doc.undo().beginNewTransaction ("Remove plugin"); rig::removeInsert (track, slot, &doc.undo()); }
+        else if (plugins != nullptr)
         {
-            juce::PopupMenu pm;
-            plugins->addToMenu (pm, 1);
-            pm.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (safeTarget.getComponent()).withMousePosition(), [this, track, slot] (int rr) {
-                juce::String name;
-                const auto desc = plugins->descriptionForMenuResult (rr, 1, name);
-                if (desc.isEmpty()) return;
-                doc.undo().beginNewTransaction ("Replace plugin");
-                rig::replaceInsert (track, slot, desc, name, &doc.undo());
-            });
+            juce::String name;
+            const auto desc = plugins->descriptionForMenuResult (r, 1, name);
+            if (desc.isEmpty()) return;
+            doc.undo().beginNewTransaction ("Replace plugin");
+            rig::replaceInsert (track, slot, desc, name, &doc.undo());
         }
     });
 }

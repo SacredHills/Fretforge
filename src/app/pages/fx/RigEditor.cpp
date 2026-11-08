@@ -261,7 +261,7 @@ RigEditor::RigEditor (ProjectDocument& d, EngineHost& h, SessionController& s, j
         setOnTarget (ids::enabled, ! rig::isEnabled (target), targetTrackId.isEmpty() ? "" : "Amp rig on/off");
     };
     monitorButton.setButtonText ("Monitor input");
-    monitorButton.setTooltip ("Hear the track's input through its rig (same as the track's monitor button in the Studio)");
+    monitorButton.setTooltip ("Hear the track's input through its rig (same as the track's monitor button in the Editor)");
     monitorButton.onClick = [this] {
         auto t = session.findTrack (targetTrackId);
         if (t.isValid()) doc.set (t, tlids::monitor, ! (bool) t[tlids::monitor]);

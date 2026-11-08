@@ -111,7 +111,7 @@ private:
     juce::TextButton kitButton { "Kit..." }, mixerButton { "Mixer" };
     DrumMixer mixer { doc, host };
     void pushMix();
-    juce::TextButton importButton { "Import..." }, exportButton { "Export MIDI..." }, renderButton { "Render to Studio" };
+    juce::TextButton importButton { "Import..." }, exportButton { "Export MIDI..." }, renderButton { "Render to Editor" };
     // song
     juce::TextButton addSectionButton { "+ Add pattern" }, removeSectionButton { "Remove" }, leftButton { "<" }, rightButton { ">" },
                      lessButton { "x-" }, moreButton { "x+" };

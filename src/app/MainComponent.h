@@ -116,7 +116,7 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
     juce::TooltipWindow tooltips { this, 600 };
     int currentSection = 0;
-    static constexpr int numSections = 8, effectsSection = 5, settingsSection = 7;
+    static constexpr int numSections = 7, effectsSection = 5, settingsSection = 6;
 
     void showSection (int index);
     void updateTitleAndStatus();

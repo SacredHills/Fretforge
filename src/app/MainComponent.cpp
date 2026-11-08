@@ -89,14 +89,11 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     effectsPage->setTone3000Handler ([this, ed = juce::Component::SafePointer<RigEditor> (effectsPage.get())] (bool cab) {
         if (ed != nullptr) openTone3000 (*ed, cab);
     });
-    auto* library = milestonePages.add (new MilestonePage ("Library", 7, "Songwriting & library",
-        { "Riff library with tags (genre, tuning, BPM, key...)", "Chord progression library", "Example tabs, drum patterns, tutorials",
-          "Preset & IR browser", "Song structure timeline", "Cross-project riff reuse" }));
 
-    const juce::StringArray names { "Studio", "Mixer", "Guitar Tabs", "Drum Studio", "Training", "Effects & Amps", "Library", "Settings" };
-    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), training, effectsPage.get(), library, settingsPage.get() };
+    const juce::StringArray names { "Editor", "Mixer", "Guitar Tabs", "Drum Studio", "Training", "Effects & Amps", "Settings" };
+    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), training, effectsPage.get(), settingsPage.get() };
     nav.names = names;
-    nav.implemented = { true, true, true, true, false, true, false, true };
+    nav.implemented = { true, true, true, true, false, true, true };
     nav.onSelect = [this] (int i) { showSection (i); };
     addAndMakeVisible (nav);
     for (auto* p : pages)
@@ -126,6 +123,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     transport->onOpenTuner = [this] { openTuner(); };
     session->onOpenRig = [this] (juce::ValueTree t) { openRigWindow (t); };
     session->rigs().onPluginRemoved = [this] (juce::AudioPluginInstance* p) { if (pluginManager != nullptr) pluginManager->closeEditor (p); };
+    studioPage->arrange.onExportRequested = [this] { ExportDialog::show (this, *doc, *session, host, settings); };
     effectsPage->setPluginManager (pluginManager.get());
     session->plugins = pluginManager.get();
     pluginManager->onPluginsReenabled = [this] { if (session != nullptr) session->rigs().retryFailedPlugins(); };

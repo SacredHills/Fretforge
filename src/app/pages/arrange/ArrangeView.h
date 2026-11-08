@@ -21,7 +21,7 @@ struct ArrangeGeometry
     double pixelsPerSecond = 60.0;
     double scrollX = 0.0;        // seconds at the left edge of the lanes
     int scrollY = 0;             // pixels
-    int trackHeight = 78;        // default; each track can be taller or shorter (TRACK laneHeight, drag a header's bottom edge)
+    int trackHeight = 96;        // default; each track can be taller or shorter (TRACK laneHeight, drag a header's bottom edge)
     std::vector<int> heights;    // per track, refreshed by the view
     static constexpr int minTrackHeight = 66, maxTrackHeight = 480;
     int heightOf (int i) const { return i >= 0 && i < (int) heights.size() ? heights[(size_t) i] : trackHeight; }
@@ -59,6 +59,30 @@ struct ArrangeGeometry
     }
 };
 
+/** The track's plugins as small chips under its input: click one to open it, right-click to replace / bypass / remove,
+    "+" adds one. */
+class InsertStrip : public juce::Component, public juce::SettableTooltipClient, private juce::ValueTree::Listener
+{
+public:
+    InsertStrip (ArrangeView&, juce::ValueTree track);
+    ~InsertStrip() override;
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override { hover = -2; repaint(); }
+private:
+    ArrangeView& owner;
+    juce::ValueTree track;
+    int hover = -2;   // chip under the mouse (-1: the "+" chip)
+    std::vector<juce::Rectangle<float>> chips;   // per insert, then the "+" chip last
+    void layoutChips();
+    int chipAt (juce::Point<float>) const;
+    void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { repaint(); }
+    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { repaint(); }
+    void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { repaint(); }
+    void valueTreeChildOrderChanged (juce::ValueTree&, int, int) override { repaint(); }
+};
+
 class TrackHeader : public juce::Component, private juce::ValueTree::Listener
 {
 public:
@@ -82,6 +106,7 @@ private:
     juce::ComboBox input;
     juce::TextButton route, laneButton;   // laneButton: automation mode, which lane the track shows
     juce::Slider gain, pan;
+    std::unique_ptr<InsertStrip> inserts;
     juce::Array<std::pair<int, bool>> inputValues;
     std::vector<std::pair<juce::ValueTree, double>> groupStart; // other selected tracks' values at drag start
     void beginGroupDrag (const juce::Identifier& id);
@@ -159,7 +184,10 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     static constexpr int markerLane = 18;
     static constexpr int loopLane = 14;   // the loop bar's strip at the top
+    static constexpr int exportLane = 12; // below it: the export range (what File > Export renders)
+    static constexpr int numbersTop = loopLane + exportLane;
     void mouseMove (const juce::MouseEvent&) override;
+    static inline const juce::Identifier exportStartId { "exportStart" }, exportEndId { "exportEnd" };   // TRANSPORT
 private:
     ArrangeView& owner;
     double dragStart = -1.0;
@@ -167,8 +195,11 @@ private:
     // loop bar (like Studio One): drag the bar to move it, its ends to resize it, the empty strip to draw a new one
     enum class LoopDrag { none, move, left, right, draw } loopDrag = LoopDrag::none;
     double loopA0 = 0.0, loopB0 = 0.0;
-    bool scrubbing = false;
-    LoopDrag loopHit (float x) const;
+    bool scrubbing = false, zooming = false, exportDrag = false;
+    double zoomPps0 = 0.0, zoomAnchor = 0.0, playheadBefore = 0.0;
+    LoopDrag loopHit (float x, bool exportRange = false) const;
+    juce::Identifier startId (bool exportRange) const;
+    juce::Identifier endId (bool exportRange) const;
 };
 
 /** The Studio arrange window: toolbar, ruler, track headers and the clip timeline. */
@@ -196,6 +227,8 @@ public:
     void addMarkerAtPlayhead();
     void zoom (double factor, float aroundX = -1.0f);
     void zoomToFit();
+    /** Zoom to `pps` pixels per second keeping `time` under canvas x `x` (the ruler's drag-to-zoom). */
+    void zoomAround (double pps, double time, float x);
     bool hasSelection() const { return ! selection.isEmpty(); }
     /** Reorders: moves `tracks` as a block so they start at `insertIndex` (0..numTracks). */
     void moveTracks (juce::Array<juce::ValueTree> tracks, int insertIndex);
@@ -227,6 +260,7 @@ public:
     void updateScrollBars();
     void repaintAll();
     void showError (const juce::String& title, const juce::String& message);
+    std::function<void()> onExportRequested;   // the export bar's "Export this range..."
     void renameDialog (const juce::String& title, const juce::String& current, std::function<void (juce::String)> onDone);
     juce::Rectangle<int> lanesArea() const { return canvas.getBounds(); }
 
@@ -281,7 +315,7 @@ private:
     void valueTreeRedirected (juce::ValueTree&) override { rebuildHeaders(); }
 
     static constexpr int headerWidth = 250;
-    static constexpr int rulerHeight = 46;
+    static constexpr int rulerHeight = 58;
     static constexpr int toolbarHeight = 38;
 };
 } // namespace ff

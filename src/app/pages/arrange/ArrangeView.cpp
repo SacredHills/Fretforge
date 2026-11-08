@@ -20,8 +20,93 @@ static void styleToggle (juce::TextButton& b, juce::Colour on, const juce::Strin
     b.setWantsKeyboardFocus (false);
 }
 
+InsertStrip::InsertStrip (ArrangeView& v, juce::ValueTree t) : owner (v), track (t)
+{
+    track.addListener (this);
+    setTooltip ("Plugins: click to open, right-click to replace, bypass or remove, + to add one");
+}
+
+InsertStrip::~InsertStrip() { track.removeListener (this); }
+
+void InsertStrip::layoutChips()
+{
+    chips.clear();
+    const int n = rig::numInserts (track);
+    const auto font = uiFont (11.0f, true);
+    float x = 0.0f;
+    const float h = (float) getHeight(), gap = 4.0f;
+    for (int i = 0; i < n; ++i)
+    {
+        const auto label = rig::insertNode (track, i)[rig::ids::name].toString();
+        const float w = juce::jlimit (34.0f, 110.0f, (float) juce::GlyphArrangement::getStringWidthInt (font, label) + 14.0f);
+        chips.push_back ({ x, 0.0f, w, h });
+        x += w + gap;
+    }
+    chips.push_back ({ x, 0.0f, n == 0 ? 70.0f : 22.0f, h });   // "+ Plugin" / "+"
+}
+
+int InsertStrip::chipAt (juce::Point<float> p) const
+{
+    for (size_t i = 0; i < chips.size(); ++i)
+        if (chips[i].contains (p)) return i + 1 == chips.size() ? -1 : (int) i;
+    return -2;
+}
+
+void InsertStrip::paint (juce::Graphics& g)
+{
+    layoutChips();
+    const int n = rig::numInserts (track);
+    g.setFont (uiFont (11.0f, true));
+    for (int i = 0; i < n; ++i)
+    {
+        auto r = chips[(size_t) i];
+        if (r.getX() >= (float) getWidth()) break;
+        r.setRight (juce::jmin (r.getRight(), (float) getWidth()));
+        const auto node = rig::insertNode (track, i);
+        const bool bypassed = (bool) node[rig::ids::bypass];
+        g.setColour (hover == i ? palette::panelHi.brighter (0.15f) : palette::panelHi);
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (bypassed ? palette::outline : palette::accent.withAlpha (0.7f));
+        g.fillRoundedRectangle (r.withWidth (3.0f), 1.5f);   // a lit edge: the plugin is active
+        g.setColour (bypassed ? palette::textDim.withAlpha (0.6f) : palette::text);
+        g.drawText (node[rig::ids::name].toString(), r.withTrimmedLeft (6.0f).withTrimmedRight (4.0f), juce::Justification::centredLeft, true);
+    }
+    if (n < rig::maxInserts && chips.back().getRight() <= (float) getWidth() + 1.0f)
+    {
+        const auto r = chips.back();
+        g.setColour (hover == -1 ? palette::panelHi.brighter (0.15f) : palette::panelHi);
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (palette::outline.brighter (0.2f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
+        g.setColour (hover == -1 ? palette::text : palette::textDim);
+        g.setFont (uiFont (n == 0 ? 11.0f : 14.0f, true));
+        g.drawText (n == 0 ? "+ Plugin" : "+", r, juce::Justification::centred);
+    }
+}
+
+void InsertStrip::mouseMove (const juce::MouseEvent& e)
+{
+    const int h = chipAt (e.position);
+    if (h != hover) { hover = h; repaint(); }
+}
+
+void InsertStrip::mouseDown (const juce::MouseEvent& e)
+{
+    const int c = chipAt (e.position);
+    if (c == -2) { getParentComponent()->mouseDown (e.getEventRelativeTo (getParentComponent())); return; }   // empty: like the header
+    if (c == -1)
+    {
+        if (rig::numInserts (track) < rig::maxInserts) owner.session.showAddInsertMenu (track, this);
+        return;
+    }
+    if (e.mods.isPopupMenu()) owner.session.showInsertMenu (track, c, this);
+    else owner.session.openInsert (track, c);
+}
+
 TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t), index (i), owner (v)
 {
+    inserts = std::make_unique<InsertStrip> (v, t);
+    addAndMakeVisible (*inserts);
     name.setFont (uiFont (14.0f, true));
     name.setColour (juce::Label::textColourId, palette::text);
     name.setEditable (false, true, false);
@@ -245,6 +330,9 @@ void TrackHeader::resized()
     laneButton.setBounds (input.getBounds());
     row.removeFromLeft (4);
     gain.setBounds (row);
+    r.removeFromTop (6);
+    inserts->setVisible (r.getHeight() >= 18);   // a short track has no room for the plugin row
+    inserts->setBounds (r.removeFromTop (juce::jmin (22, r.getHeight())));
 }
 
 void TrackHeader::mouseMove (const juce::MouseEvent& e)
@@ -408,6 +496,30 @@ void Ruler::paint (juce::Graphics& g)
         g.fillRect (bar.withWidth (3.0f));                              // drag handles
         g.fillRect (bar.withX (bar.getRight() - 3.0f).withWidth (3.0f));
     }
+    // export range (green): what File > Export renders when "Export range" is chosen
+    {
+        const double es = prop (t, exportStartId), ee = prop (t, exportEndId);
+        auto lane = juce::Rectangle<float> (0.0f, (float) loopLane, (float) getWidth(), (float) exportLane);
+        if (ee > es)
+        {
+            const float ex0 = geo.xFor (es), ex1 = geo.xFor (ee);
+            auto bar = juce::Rectangle<float> (ex0, lane.getY() + 1.0f, juce::jmax (4.0f, ex1 - ex0), lane.getHeight() - 2.0f);
+            g.setColour (palette::good.withAlpha (0.6f));
+            g.fillRoundedRectangle (bar, 3.0f);
+            g.setColour (palette::good.brighter (0.3f));
+            g.fillRect (bar.withWidth (3.0f));
+            g.fillRect (bar.withX (bar.getRight() - 3.0f).withWidth (3.0f));
+            g.setColour (juce::Colours::black.withAlpha (0.8f));
+            g.setFont (uiFont (9.5f, true));
+            if (bar.getWidth() > 50.0f) g.drawText ("EXPORT", bar.reduced (5.0f, 0.0f), juce::Justification::centredLeft);
+        }
+        else
+        {
+            g.setColour (palette::textDim.withAlpha (0.35f));
+            g.setFont (uiFont (9.5f));
+            g.drawText ("drag here to set an export range", lane.reduced (6.0f, 0.0f), juce::Justification::centredLeft);
+        }
+    }
     if ((bool) t[pids::punchEnabled])
     {
         g.setColour (palette::bad);
@@ -430,7 +542,7 @@ void Ruler::paint (juce::Graphics& g)
         g.setColour (palette::textDim);
         g.drawVerticalLine ((int) x, (float) r.getBottom() - 14.0f, (float) r.getBottom());
         if (b % labelEvery == 0)
-            g.drawText (juce::String (b + 1), (int) x + 3, r.getY() + loopLane, 40, 14, juce::Justification::left);
+            g.drawText (juce::String (b + 1), (int) x + 3, r.getY() + numbersTop, 40, 14, juce::Justification::left);
         if (beat * geo.pixelsPerSecond > 8.0)
             for (int k = 1; k < geo.tsNum; ++k)
             {
@@ -493,26 +605,52 @@ void Ruler::mouseDown (const juce::MouseEvent& e)
         return;
     }
     loopDrag = LoopDrag::none;
-    scrubbing = false;
+    scrubbing = zooming = false;
     auto tr = owner.doc.transport();
-    if (e.y < loopLane)
+    if (e.y < numbersTop)
     {
-        loopDrag = loopHit ((float) e.x);
-        loopA0 = prop (tr, pids::loopStart);
-        loopB0 = prop (tr, pids::loopEnd);
+        exportDrag = e.y >= loopLane;
+        if (exportDrag && e.mods.isPopupMenu())
+        {
+            juce::PopupMenu m;
+            const bool has = prop (tr, endId (true)) > prop (tr, startId (true));
+            m.addItem (1, "Export this range...", has);
+            m.addItem (2, "Set export range to the loop");
+            m.addItem (3, "Clear export range  (double-click)", has);
+            juce::Component::SafePointer<Ruler> safe (this);
+            m.showMenuAsync ({}, [safe, tr] (int r) mutable {
+                if (safe == nullptr) return;
+                auto& o = safe->owner;
+                if (r == 1 && o.onExportRequested) o.onExportRequested();
+                if (r == 2) { o.doc.undo().beginNewTransaction ("Export range"); o.doc.set (tr, exportStartId, prop (tr, pids::loopStart)); o.doc.set (tr, exportEndId, prop (tr, pids::loopEnd)); }
+                if (r == 3) { o.doc.undo().beginNewTransaction ("Clear export range"); o.doc.set (tr, exportStartId, 0.0); o.doc.set (tr, exportEndId, 0.0); }
+                safe->repaint();
+            });
+            return;
+        }
+        loopDrag = loopHit ((float) e.x, exportDrag);
+        loopA0 = prop (tr, startId (exportDrag));
+        loopB0 = prop (tr, endId (exportDrag));
         dragStart = owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown());
-        owner.doc.undo().beginNewTransaction ("Loop range");
+        owner.doc.undo().beginNewTransaction (exportDrag ? "Export range" : "Loop range");
         return;
     }
-    // the bar numbers: click or drag to move the playhead (never touches the loop)
+    // the bar numbers: click to move the playhead; drag sideways to scrub, down to zoom in, up to zoom out
     scrubbing = true;
+    zoomPps0 = owner.geo.pixelsPerSecond;
+    zoomAnchor = owner.geo.timeFor ((float) e.x);
+    playheadBefore = owner.playhead();
     owner.locate (owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown()));
 }
 
-Ruler::LoopDrag Ruler::loopHit (float x) const
+juce::Identifier Ruler::startId (bool exportRange) const { return exportRange ? exportStartId : pids::loopStart; }
+juce::Identifier Ruler::endId (bool exportRange) const { return exportRange ? exportEndId : pids::loopEnd; }
+
+Ruler::LoopDrag Ruler::loopHit (float x, bool exportRange) const
 {
     auto tr = owner.doc.transport();
-    const float a = owner.geo.xFor (prop (tr, pids::loopStart)), b = owner.geo.xFor (prop (tr, pids::loopEnd));
+    if (prop (tr, endId (exportRange)) <= prop (tr, startId (exportRange))) return LoopDrag::draw;
+    const float a = owner.geo.xFor (prop (tr, startId (exportRange))), b = owner.geo.xFor (prop (tr, endId (exportRange)));
     const float edge = juce::jmin (7.0f, (b - a) * 0.3f);
     if (std::abs (x - a) <= edge) return LoopDrag::left;
     if (std::abs (x - b) <= edge) return LoopDrag::right;
@@ -522,8 +660,12 @@ Ruler::LoopDrag Ruler::loopHit (float x) const
 
 void Ruler::mouseMove (const juce::MouseEvent& e)
 {
-    if (e.y >= loopLane) { setMouseCursor (juce::MouseCursor::NormalCursor); return; }
-    const auto h = loopHit ((float) e.x);
+    if (e.y >= numbersTop)
+    {
+        setMouseCursor (e.y < getHeight() - markerLane ? juce::MouseCursor::UpDownLeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+        return;
+    }
+    const auto h = loopHit ((float) e.x, e.y >= loopLane);
     setMouseCursor (h == LoopDrag::left || h == LoopDrag::right ? juce::MouseCursor::LeftRightResizeCursor
                     : h == LoopDrag::move ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
 }
@@ -531,6 +673,17 @@ void Ruler::mouseMove (const juce::MouseEvent& e)
 void Ruler::mouseDrag (const juce::MouseEvent& e)
 {
     const bool snapOn = ! e.mods.isAltDown();
+    if (scrubbing && ! zooming && std::abs (e.getDistanceFromDragStartY()) > 5 && std::abs (e.getDistanceFromDragStartY()) > std::abs (e.getDistanceFromDragStartX()))
+    {
+        zooming = true;   // a mostly vertical drag zooms (down: in, up: out); sideways while zooming scrolls
+        owner.locate (playheadBefore);   // zooming leaves the playhead where it was
+    }
+    if (zooming)
+    {
+        const double pps = zoomPps0 * std::exp (e.getDistanceFromDragStartY() * 0.012);
+        owner.zoomAround (pps, zoomAnchor, (float) e.x);
+        return;
+    }
     if (scrubbing)
     {
         owner.locate (owner.geo.snap (owner.geo.timeFor ((float) e.x), snapOn));
@@ -555,8 +708,8 @@ void Ruler::mouseDrag (const juce::MouseEvent& e)
         case LoopDrag::draw: a = juce::jmin (dragStart, t); b = juce::jmax (dragStart, t); if (b - a < minLen) return; break;
         case LoopDrag::none: return;
     }
-    owner.doc.set (tr, pids::loopStart, a);
-    owner.doc.set (tr, pids::loopEnd, b);
+    owner.doc.set (tr, startId (exportDrag), a);
+    owner.doc.set (tr, endId (exportDrag), b);
     repaint();
 }
 
@@ -564,11 +717,20 @@ void Ruler::mouseUp (const juce::MouseEvent&)
 {
     dragStart = -1.0;
     loopDrag = LoopDrag::none;
-    scrubbing = false;
+    scrubbing = zooming = false;
 }
 
 void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    if (e.y >= loopLane && e.y < numbersTop && loopHit ((float) e.x, true) != LoopDrag::draw)   // double-click the export bar: clear it
+    {
+        auto tr = owner.doc.transport();
+        owner.doc.undo().beginNewTransaction ("Clear export range");
+        owner.doc.set (tr, exportStartId, 0.0);
+        owner.doc.set (tr, exportEndId, 0.0);
+        repaint();
+        return;
+    }
     if (e.y < loopLane && loopHit ((float) e.x) != LoopDrag::draw)   // double-click the loop bar: loop on / off
     {
         auto tr = owner.doc.transport();
@@ -2246,6 +2408,14 @@ void ArrangeView::zoom (double factor, float aroundX)
     const double tAt = geo.timeFor (x);
     geo.pixelsPerSecond = juce::jlimit (2.0, 2000.0, geo.pixelsPerSecond * factor);
     geo.scrollX = juce::jmax (0.0, tAt - x / geo.pixelsPerSecond);
+    updateScrollBars();
+    repaintAll();
+}
+
+void ArrangeView::zoomAround (double pps, double time, float x)
+{
+    geo.pixelsPerSecond = juce::jlimit (2.0, 2000.0, pps);
+    geo.scrollX = juce::jmax (0.0, time - x / geo.pixelsPerSecond);
     updateScrollBars();
     repaintAll();
 }

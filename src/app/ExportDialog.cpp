@@ -69,12 +69,18 @@ ExportDialog::ExportDialog (ProjectDocument& d, SessionController& s, EngineHost
     rate.addItem ("96 kHz", 96000);
     range.addItem ("Whole song (start to last clip)", 1);
     range.addItem ("Loop range on the ruler", 2);
+    range.addItem ("Export range on the ruler (green bar)", 3);
 
     mode.setSelectedId (settings.getIntValue ("exportMode", 1), juce::dontSendNotification);
     format.setSelectedId (settings.getIntValue ("exportFormat", 1), juce::dontSendNotification);
     bits.setSelectedId (settings.getIntValue ("exportBits", 24), juce::dontSendNotification);
     rate.setSelectedId (settings.getIntValue ("exportRate", 1), juce::dontSendNotification);
-    range.setSelectedId (1, juce::dontSendNotification);
+    {
+        auto t = doc.transport();
+        const bool hasRange = (double) t.getProperty ("exportEnd", 0.0) > (double) t.getProperty ("exportStart", 0.0);
+        range.setItemEnabled (3, hasRange);
+        range.setSelectedId (hasRange ? 3 : 1, juce::dontSendNotification);   // a drawn export range is what you want to export
+    }
     normalize.setToggleState (settings.getBoolValue ("exportNormalize", false), juce::dontSendNotification);
 
     for (auto* c : { &mode, &format, &bits, &rate, &range })
@@ -110,7 +116,12 @@ ExportSettings ExportDialog::currentSettings() const
                                              : (double) rate.getSelectedId();
     s.normalize = normalize.getToggleState();
     auto t = doc.transport();
-    if (range.getSelectedId() == 2)
+    if (range.getSelectedId() == 3)
+    {
+        s.startSec = (double) t.getProperty ("exportStart", 0.0);
+        s.endSec = (double) t.getProperty ("exportEnd", 0.0);
+    }
+    else if (range.getSelectedId() == 2)
     {
         s.startSec = (double) t[pids::loopStart];
         s.endSec = (double) t[pids::loopEnd];
