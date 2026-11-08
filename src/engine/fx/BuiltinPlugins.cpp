@@ -13,8 +13,9 @@ namespace
 {
 namespace col
 {
-    const juce::Colour bg { 0xff141619 }, panel { 0xff1c1f24 }, well { 0xff0e1013 }, outline { 0xff323840 }, text { 0xffdde1e6 },
-        dim { 0xff8b939d }, accent { 0xfff0a030 }, good { 0xff46c38a }, info { 0xff4c9bf5 }, bad { 0xffe5484d };
+    // the app's gothic palette (see StudioLookAndFeel.h)
+    const juce::Colour bg { 0xff0b0a0d }, panel { 0xff131116 }, well { 0xff070609 }, outline { 0xff2f2834 }, text { 0xffe8e1d6 },
+        dim { 0xff8f8693 }, accent { 0xffc32f3d }, good { 0xff4fae80 }, info { 0xff8c97d8 }, bad { 0xffff4655 };
 }
 
 using Layout = juce::AudioProcessorValueTreeState::ParameterLayout;

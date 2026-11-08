@@ -1,0 +1,10 @@
+RAVENYR Studio 1.0.0
+Copyright (c) Sacred Hills Studio. All rights reserved.
+
+This software is provided "as is", without warranty of any kind, express or implied. In no event shall
+Sacred Hills Studio be liable for any claim, damages or other liability arising from the use of the software.
+
+Third-party components:
+- JUCE (https://juce.com), used under its licence terms.
+- Cinzel font by Natanael Gama, used under the SIL Open Font License 1.1.
+- Steinberg ASIO SDK (Windows builds), used under the GNU GPLv3.

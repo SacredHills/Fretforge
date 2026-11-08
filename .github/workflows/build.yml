@@ -159,10 +159,16 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then
             cpack -C Release -G DragNDrop
           elif [ "$RUNNER_OS" = "Windows" ]; then
-            cpack -C Release -G ZIP
+            # setup .exe installer (NSIS) and a portable zip
+            command -v makensis >/dev/null || [ -x "/c/Program Files (x86)/NSIS/makensis.exe" ] || choco install nsis -y --no-progress
+            export PATH="$PATH:/c/Program Files (x86)/NSIS"
+            cpack -C Release -G "NSIS;ZIP"
           else
-            cpack -G TGZ
+            # .deb (Debian/Ubuntu/Mint), .rpm (Fedora/openSUSE) and a portable .tar.gz
+            sudo apt-get install -y rpm
+            cpack -G "TGZ;DEB;RPM"
           fi
+          ls -la Ravenyr-*
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -170,15 +176,18 @@ jobs:
           name: Ravenyr-${{ matrix.name }}
           path: |
             build/Ravenyr-*.dmg
+            build/Ravenyr-*.exe
             build/Ravenyr-*.zip
             build/Ravenyr-*.tar.gz
+            build/Ravenyr-*.deb
+            build/Ravenyr-*.rpm
           if-no-files-found: error
 
   # Collects the three platform builds into a single zip:
   #   Ravenyr-<version>-all-platforms.zip
   #     macOS/   Ravenyr-x.y.z-Darwin.dmg
-  #     Windows/ Ravenyr-x.y.z-win64.zip
-  #     Linux/   Ravenyr-x.y.z-Linux.tar.gz
+  #     Windows/ Ravenyr-x.y.z-win64.exe (installer), Ravenyr-x.y.z-win64.zip (portable)
+  #     Linux/   Ravenyr-x.y.z-Linux.deb, .rpm (installers), .tar.gz (portable)
   # Pushing a tag such as v0.3.0 also publishes that zip as a GitHub Release.
   bundle:
     name: All platforms (one zip)
@@ -204,11 +213,14 @@ jobs:
           mv dist/Ravenyr-Windows out/Ravenyr/Windows
           mv dist/Ravenyr-Linux   out/Ravenyr/Linux
           cat > out/Ravenyr/README.txt <<'TXT'
-          RAVENYR builds
-          macOS:   open the .dmg and drag the app to Applications. First launch: right-click > Open > Open.
-          Windows: unzip and run "bin\RAVENYR.exe". If SmartScreen warns: More info > Run anyway.
-          Linux:   extract the .tar.gz and run "bin/RAVENYR".
-                   Needs ALSA (and JACK or PipeWire-JACK for low latency), FreeType, Fontconfig and X11 libraries.
+          RAVENYR Studio installers - (c) Sacred Hills Studio
+          macOS:   open the .dmg and drag RAVENYR to Applications. First launch: right-click > Open > Open.
+          Windows: run Ravenyr-x.y.z-win64.exe (setup with Start menu and desktop shortcuts, uninstall from Settings > Apps).
+                   If SmartScreen warns: More info > Run anyway. The .zip is a portable copy: unzip and run "bin\RAVENYR.exe".
+          Linux:   Debian / Ubuntu / Mint: sudo apt install ./Ravenyr-x.y.z-Linux.deb
+                   Fedora / openSUSE:      sudo dnf install ./Ravenyr-x.y.z-Linux.rpm
+                   Then start RAVENYR from the applications menu. The .tar.gz is portable: extract and run "bin/RAVENYR".
+                   Uses ALSA (and JACK or PipeWire-JACK for low latency).
           TXT
           name="Ravenyr-${version}-all-platforms.zip"
           (cd out && zip -r "../$name" Ravenyr)

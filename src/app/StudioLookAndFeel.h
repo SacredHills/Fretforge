@@ -5,25 +5,32 @@ namespace ff
 {
 namespace palette
 {
-    inline const juce::Colour bg        { 0xff141619 };
-    inline const juce::Colour panel     { 0xff1c1f24 };
-    inline const juce::Colour panelHi   { 0xff252930 };
-    inline const juce::Colour well      { 0xff0e1013 };
-    inline const juce::Colour outline   { 0xff323840 };
-    inline const juce::Colour text      { 0xffdde1e6 };
-    inline const juce::Colour textDim   { 0xff8b939d };
-    inline const juce::Colour accent    { 0xfff0a030 };  // amber
-    inline const juce::Colour accentDim { 0xff7a5420 };
-    inline const juce::Colour good      { 0xff46c38a };
-    inline const juce::Colour warn      { 0xffe8c547 };
-    inline const juce::Colour bad       { 0xffe5484d };
-    inline const juce::Colour info      { 0xff4c9bf5 };
+    // gothic: near-black with a violet cast, bone-white text, blood-red accent, cold steel for information
+    inline const juce::Colour bg        { 0xff0b0a0d };
+    inline const juce::Colour panel     { 0xff131116 };
+    inline const juce::Colour panelHi   { 0xff1e1a22 };
+    inline const juce::Colour well      { 0xff070609 };
+    inline const juce::Colour outline   { 0xff2f2834 };
+    inline const juce::Colour text      { 0xffe8e1d6 };  // bone
+    inline const juce::Colour textDim   { 0xff8f8693 };
+    inline const juce::Colour accent    { 0xffc32f3d };  // blood red
+    inline const juce::Colour accentDim { 0xff5c1820 };
+    inline const juce::Colour onAccent  { 0xfff4ece2 };  // text on accent-coloured buttons
+    inline const juce::Colour good      { 0xff4fae80 };
+    inline const juce::Colour warn      { 0xffd8b04a };
+    inline const juce::Colour bad       { 0xffff4655 };
+    inline const juce::Colour info      { 0xff8c97d8 };  // cold steel
 }
 
 inline juce::Font uiFont (float height, bool bold = false)
 {
     return juce::Font (juce::FontOptions (height, bold ? juce::Font::bold : juce::Font::plain));
 }
+
+/** Headings (section names, panel titles): Cinzel, carved Roman capitals. */
+juce::Font titleFont (float height);
+/** The RAVENYR logo (bone white on transparent). */
+juce::Image logoImage();
 
 inline juce::Font monoFont (float height, bool bold = false)
 {

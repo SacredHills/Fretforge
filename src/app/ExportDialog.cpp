@@ -96,7 +96,7 @@ ExportDialog::ExportDialog (ProjectDocument& d, SessionController& s, EngineHost
     addAndMakeVisible (summary);
 
     exportButton.setColour (juce::TextButton::buttonColourId, palette::accent);
-    exportButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+    exportButton.setColour (juce::TextButton::textColourOffId, palette::onAccent);
     exportButton.onClick = [this] { startExport(); };
     cancelButton.onClick = [this] { if (auto* w = findParentComponentOfClass<juce::DialogWindow>()) w->exitModalState (0); };
     addAndMakeVisible (exportButton);

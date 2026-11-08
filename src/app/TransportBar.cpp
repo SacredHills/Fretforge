@@ -330,12 +330,14 @@ void TransportBar::resized()
 {
     auto full = getLocalBounds().reduced (10, 8);
     const int h = full.getHeight();
-    // everything is laid out as one group, centred in the bar (the MIDI LED stays at the far right)
-    const int meterW = 150, cpuW = 96, tunerW = 150;
-    const int total = 5 * h + 8 + 4 * 4 + 6 + 96 + 12 + 170 + 14 + 120 + 6 + 46 + 14 + 124 + 16 + tunerW + 16 + meterW + 10 + cpuW;
-    const int avail = getWidth() - 2 * 44;
-    const int x0 = juce::jmax (10, 44 + (avail - total) / 2);
-    auto r = juce::Rectangle<int> (x0, full.getY(), juce::jmin (total, getWidth() - x0 - 40), h);
+    // one group centred in the bar (the MIDI LED stays at the far right); the gaps shrink when the bar is narrow
+    const int meterW = 140, cpuW = 84, tunerW = 140, posW = 160;
+    const int fixed = 5 * h + 8 + 4 * 4 + 6 + 96 + posW + 120 + 6 + 46 + 124 + tunerW + meterW + cpuW;
+    const int avail = getWidth() - 2 * 40;
+    const int gap = juce::jlimit (4, 16, (avail - fixed) / 6);
+    const int total = fixed + 6 * gap;
+    const int x0 = juce::jmax (8, 40 + (avail - total) / 2);
+    auto r = juce::Rectangle<int> (x0, full.getY(), juce::jmin (total, getWidth() - x0 - 36), h);
 
     rtzButton.setBounds (r.removeFromLeft (h));
     r.removeFromLeft (4);
@@ -350,28 +352,28 @@ void TransportBar::resized()
     auto small = r.removeFromLeft (96);
     punchButton.setBounds (small.removeFromTop (h / 2 - 1));
     countInButton.setBounds (small.removeFromBottom (h / 2 - 1));
-    r.removeFromLeft (12);
+    r.removeFromLeft (gap);
 
-    auto pos = r.removeFromLeft (170);
+    auto pos = r.removeFromLeft (posW);
     barsLabel.setBounds (pos.removeFromTop (h * 3 / 5));
     timeLabel.setBounds (pos);
-    r.removeFromLeft (14);
+    r.removeFromLeft (gap);
 
     auto tempo = r.removeFromLeft (120);
     bpmCaption.setBounds (tempo.removeFromTop (14));
     tempoSlider.setBounds (tempo.reduced (0, 1));
     r.removeFromLeft (6);
     tapButton.setBounds (r.removeFromLeft (46).withTrimmedTop (14));
-    r.removeFromLeft (14);
+    r.removeFromLeft (gap);
 
     auto sig = r.removeFromLeft (124);
     sigCaption.setBounds (sig.removeFromTop (14));
     sigNum.setBounds (sig.removeFromLeft (60).reduced (0, 1));
     sigDen.setBounds (sig.removeFromRight (60).reduced (0, 1));
-    r.removeFromLeft (16);
+    r.removeFromLeft (gap);
 
     tunerDisplay.setBounds (r.removeFromLeft (tunerW));
-    r.removeFromLeft (16);
+    r.removeFromLeft (gap);
 
     auto meters = r.removeFromLeft (meterW);
     auto inRow = meters.removeFromTop (meters.getHeight() / 3);
@@ -382,7 +384,7 @@ void TransportBar::resized()
     outCaption.setBounds (outRow.removeFromLeft (30));
     outL.setBounds (outRow.removeFromTop (outRow.getHeight() / 2).reduced (0, 1));
     outR.setBounds (outRow.reduced (0, 1));
-    r.removeFromLeft (10);
+    r.removeFromLeft (gap);
     cpuLabel.setBounds (r.removeFromLeft (cpuW));
 }
 } // namespace ff

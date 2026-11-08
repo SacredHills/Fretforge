@@ -47,7 +47,7 @@ SettingsPage::SettingsPage (EngineHost& h, ProjectDocument& d, juce::PropertiesF
     {
         b->setClickingTogglesState (false);
         b->setColour (juce::TextButton::buttonOnColourId, palette::accent);
-        b->setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+        b->setColour (juce::TextButton::textColourOnId, palette::onAccent);
         addAndMakeVisible (b);
     }
     generalTab.onClick = [this] { showTab (0); };

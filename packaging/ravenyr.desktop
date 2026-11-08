@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RAVENYR
+GenericName=Guitar Workstation
+Comment=Record, mix, write tabs and practise guitar
+Exec=RAVENYR %f
+Icon=ravenyr
+Terminal=false
+Categories=AudioVideo;Audio;Music;Recorder;Mixer;
+Keywords=guitar;daw;tab;amp;recording;
+StartupWMClass=RAVENYR

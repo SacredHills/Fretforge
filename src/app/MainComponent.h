@@ -15,6 +15,7 @@
 #include "pages/MixerPage.h"
 #include "pages/SettingsPage.h"
 #include "pages/MilestonePage.h"
+#include "pages/training/TrainingPage.h"
 #include "pages/tabs/TabPage.h"
 #include "pages/drums/DrumPage.h"
 #include "pages/fx/RigEditor.h"
@@ -85,7 +86,8 @@ private:
     juce::PropertiesFile& settings;
     StudioLookAndFeel lnf;
     EngineHost host;
-    std::unique_ptr<PluginManager> pluginManager;   // before the session: rigs load plugins through it
+    std::unique_ptr<PluginManager> pluginManager;
+    juce::Rectangle<int> logoArea;   // before the session: rigs load plugins through it
     std::unique_ptr<ProjectDocument> doc;
     std::unique_ptr<SessionController> session;
 
@@ -109,6 +111,7 @@ private:
     std::unique_ptr<SettingsPage> settingsPage;
     std::unique_ptr<TabPage> tabPage;
     std::unique_ptr<DrumPage> drumPage;
+    std::unique_ptr<TrainingPage> trainingPage;
     std::unique_ptr<RigEditor> effectsPage;
     juce::OwnedArray<MilestonePage> milestonePages;
     juce::Array<juce::Component*> pages;

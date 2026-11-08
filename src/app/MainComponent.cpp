@@ -27,7 +27,7 @@ void SectionNav::paint (juce::Graphics& g)
         }
         auto text = row.reduced (16, 0);
         g.setColour (sel ? palette::text : palette::textDim);
-        g.setFont (uiFont (14.5f, sel));
+        g.setFont (titleFont (15.5f));
         g.drawText (names[i], text, juce::Justification::centredLeft);
 
         g.setFont (uiFont (10.5f));
@@ -80,10 +80,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
 
     tabPage = std::make_unique<TabPage> (*doc, host, settings);
     drumPage = std::make_unique<DrumPage> (*doc, host, *session, settings);
-    auto* training = milestonePages.add (new MilestonePage ("Training", 6, "Training centre",
-        { "Rule-based exercise generator (23 techniques)", "Exercises as editable tab with playback", "Progressive tempo practice with thresholds",
-          "Structured plans (fundamentals to death-metal picking)", "Practice tracking, streaks and speed records", "Progress charts and weak-area analysis" },
-        "Available now: the metronome window (right-click the click button) already includes a tempo trainer, random missing-beat rhythm training and a practice timer."));
+    trainingPage = std::make_unique<TrainingPage> (host, *doc, settings);
     effectsPage = std::make_unique<RigEditor> (*doc, host, *session, settings);
     t3kClient = std::make_unique<t3k::Client> (settings);
     effectsPage->setTone3000Handler ([this, ed = juce::Component::SafePointer<RigEditor> (effectsPage.get())] (bool cab) {
@@ -91,9 +88,9 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     });
 
     const juce::StringArray names { "Editor", "Mixer", "Guitar Tabs", "Drum Studio", "Training", "Effects & Amps", "Settings" };
-    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), training, effectsPage.get(), settingsPage.get() };
+    pages = { studioPage.get(), mixerPage.get(), tabPage.get(), drumPage.get(), trainingPage.get(), effectsPage.get(), settingsPage.get() };
     nav.names = names;
-    nav.implemented = { true, true, true, true, false, true, true };
+    nav.implemented = { true, true, true, true, true, true, true };
     nav.onSelect = [this] (int i) { showSection (i); };
     addAndMakeVisible (nav);
     for (auto* p : pages)
@@ -190,6 +187,7 @@ MainComponent::~MainComponent()
     host.engine.stop();
     tabPage->setActive (false);
     drumPage->setActive (false);
+    trainingPage->setActive (false);
     transport.reset();
     pages.clear();
     tabPage.reset();
@@ -224,6 +222,7 @@ void MainComponent::showSection (int index)
     if (drumPage != nullptr && index != 3) drumPage->setActive (false);
     if (tabPage != nullptr && index == 2) tabPage->setActive (true);
     if (drumPage != nullptr && index == 3) drumPage->setActive (true);
+    if (trainingPage != nullptr) trainingPage->setActive (index == 4);
     if (effectsPage != nullptr) effectsPage->setActive (index == effectsSection);
     currentSection = index;
     nav.selected = index;
@@ -258,6 +257,16 @@ void MainComponent::timerCallback()
 void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (palette::bg);
+    if (! logoArea.isEmpty())
+    {
+        g.setColour (palette::panel);
+        g.fillRect (logoArea);
+        g.setColour (palette::outline);
+        g.drawVerticalLine (logoArea.getRight() - 1, (float) logoArea.getY(), (float) logoArea.getBottom());
+        g.drawHorizontalLine (logoArea.getBottom() - 1, (float) logoArea.getX(), (float) logoArea.getRight());
+        if (auto img = logoImage(); img.isValid())
+            g.drawImage (img, logoArea.reduced (12, 6).toFloat(), juce::RectanglePlacement::centred);
+    }
     auto status = getLocalBounds().removeFromBottom (26);
     g.setColour (palette::panel);
     g.fillRect (status);
@@ -270,7 +279,9 @@ void MainComponent::resized()
     auto r = getLocalBounds();
     if (menuBar)
         menuBar->setBounds (r.removeFromTop (24));
-    transport->setBounds (r.removeFromTop (64));
+    auto top = r.removeFromTop (64);
+    logoArea = top.removeFromLeft (200);   // the logo, right under the menus, above the section list
+    transport->setBounds (top);
     auto status = r.removeFromBottom (26).reduced (10, 0);
     statusRight.setBounds (status.removeFromRight (status.getWidth() / 2));
     statusLeft.setBounds (status);
@@ -597,7 +608,7 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdReveal: if (doc->hasLocation()) doc->getBundle().revealToUser(); return true;
         case cmdUndo: pluginManager->commitPendingChanges(); doc->undo().undo(); return true;
         case cmdRedo: pluginManager->commitPendingChanges(); doc->undo().redo(); return true;
-        case cmdPlayStop: if (currentSection == 2) tabPage->togglePlay(); else if (currentSection == 3) drumPage->togglePlay(); else host.engine.togglePlay(); return true;
+        case cmdPlayStop: if (currentSection == 2) tabPage->togglePlay(); else if (currentSection == 3) drumPage->togglePlay(); else if (currentSection == 4) trainingPage->togglePlay(); else host.engine.togglePlay(); return true;
         case cmdReturnToZero: host.engine.returnToZero(); return true;
         case cmdToggleClick: transport->toggleClick(); return true;
         case cmdTapTempo: transport->tapTempo(); return true;
@@ -627,8 +638,11 @@ bool MainComponent::perform (const InvocationInfo& info)
             juce::AlertWindow::showAsync (juce::MessageBoxOptions()
                                               .withIconType (juce::MessageBoxIconType::InfoIcon)
                                               .withTitle ("RAVENYR")
-                                              .withMessage (juce::String ("Version ") + FF_VERSION_STRING
-                                                            + "\nMilestone 2 - Recording studio\n\nBuilt with JUCE " + juce::SystemStats::getJUCEVersion().fromLastOccurrenceOf (" ", false, false)
+                                              .withMessage (juce::String ("RAVENYR Studio\nVersion ") + FF_VERSION_STRING
+                                                            + "\n\n" + juce::String::fromUTF8 ("\xc2\xa9 ") + juce::String (juce::Time::getCurrentTime().getYear())
+                                                            + " Sacred Hills Studio. All rights reserved."
+                                                            + "\n\nBuilt with JUCE " + juce::SystemStats::getJUCEVersion().fromLastOccurrenceOf (" ", false, false)
+                                                            + ". Heading font: Cinzel (SIL Open Font License)."
                                                             + "\n" + juce::SystemStats::getOperatingSystemName())
                                               .withButton ("OK"),
                                           nullptr);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Ravenyr VERSION 0.6.0 LANGUAGES C CXX)
+project(Ravenyr VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -96,6 +96,7 @@ target_sources(ff_core PRIVATE
     src/core/MidiClip.cpp
     src/core/Automation.cpp
     src/core/TabModel.cpp
+    src/core/Exercises.cpp
     src/core/GuitarPro.cpp
     src/core/MusicXml.cpp
     src/core/DrumModel.cpp
@@ -149,12 +150,16 @@ endif()
 if(FF_BUILD_APP)
 juce_add_gui_app(Ravenyr
     PRODUCT_NAME "RAVENYR"
-    COMPANY_NAME "RAVENYR"
+    COMPANY_NAME "Sacred Hills Studio"
     BUNDLE_ID "com.ravenyr.app"
     PLUGINHOST_AU TRUE
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "RAVENYR needs audio input to tune and record your instrument."
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png"
     VERSION ${PROJECT_VERSION})
+
+# the logo and the heading font (Cinzel, SIL Open Font License: resources/Cinzel-OFL.txt)
+juce_add_binary_data(ff_resources SOURCES resources/ravenyr-logo.png resources/Cinzel-Bold.ttf)
 
 target_sources(Ravenyr PRIVATE
     src/app/Main.cpp
@@ -172,6 +177,7 @@ target_sources(Ravenyr PRIVATE
     src/app/pages/tabs/NotationGlyphs.cpp
     src/app/pages/tabs/ScorePdf.cpp
     src/app/pages/drums/DrumPage.cpp
+    src/app/pages/training/TrainingPage.cpp
     src/app/pages/fx/RigEditor.cpp
     src/app/tone3000/Tone3000.cpp
     src/app/tone3000/Tone3000Panel.cpp
@@ -186,6 +192,7 @@ target_sources(Ravenyr PRIVATE
 
 target_link_libraries(Ravenyr PRIVATE
     ff_core
+    ff_resources
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_audio_utils
@@ -203,6 +210,7 @@ if(FF_BUILD_TESTS)
         tests/MusicTheoryTests.cpp
         tests/PitchDetectorTests.cpp
         tests/MetronomeTests.cpp
+        tests/ExerciseTests.cpp
         tests/ProjectFileTests.cpp
         tests/AudioEngineTests.cpp
         tests/TimelineTests.cpp
@@ -223,21 +231,63 @@ if(FF_BUILD_TESTS)
 endif()
 
 # ---------------------------------------------------------------- packaging
+# Installers: Windows NSIS setup .exe (+ portable zip), macOS drag-to-Applications .dmg, Linux .deb / .rpm (+ .tar.gz).
 if(FF_BUILD_APP)
     install(TARGETS Ravenyr BUNDLE DESTINATION . RUNTIME DESTINATION bin)
+    if(UNIX AND NOT APPLE)
+        install(FILES packaging/ravenyr.desktop DESTINATION share/applications)
+        install(FILES packaging/ravenyr-256.png DESTINATION share/icons/hicolor/256x256/apps RENAME ravenyr.png)
+    endif()
 endif()
 set(CPACK_PACKAGE_NAME "Ravenyr")
-set(CPACK_PACKAGE_VENDOR "RAVENYR")
+set(CPACK_PACKAGE_VENDOR "Sacred Hills Studio")
+set(CPACK_PACKAGE_CONTACT "Sacred Hills Studio")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RAVENYR Studio - guitar workstation: recording, mixing, amps, tabs, drums and training")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/SacredHills/Fretforge")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "RAVENYR")
+set(CPACK_PACKAGE_EXECUTABLES "RAVENYR" "RAVENYR")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/LICENSE.txt")
 if(WIN32)
     set(CPACK_GENERATOR "NSIS;ZIP")
+    set(CPACK_NSIS_PACKAGE_NAME "RAVENYR Studio")
+    set(CPACK_NSIS_DISPLAY_NAME "RAVENYR Studio")
+    set(CPACK_NSIS_PUBLISHER "Sacred Hills Studio")
+    set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/SacredHills/Fretforge")
+    set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ravenyr.ico")
+    set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ravenyr.ico")
+    file(TO_NATIVE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/packaging/nsis-side.bmp" FF_NSIS_SIDE)
+    file(TO_NATIVE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/packaging/nsis-header.bmp" FF_NSIS_HEADER)
+    string(REPLACE "\\" "\\\\" FF_NSIS_SIDE "${FF_NSIS_SIDE}")
+    string(REPLACE "\\" "\\\\" FF_NSIS_HEADER "${FF_NSIS_HEADER}")
+    set(CPACK_NSIS_MUI_WELCOMEFINISHPAGE_BITMAP "${FF_NSIS_SIDE}")
+    set(CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP "${FF_NSIS_SIDE}")
+    set(CPACK_NSIS_MUI_HEADERIMAGE "${FF_NSIS_HEADER}")
+    set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\RAVENYR.exe")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_MODIFY_PATH OFF)
+    set(CPACK_NSIS_MUI_FINISHPAGE_RUN "RAVENYR.exe")
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin")
+    set(CPACK_CREATE_DESKTOP_LINKS "RAVENYR")
+    set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "RAVENYR")
+    set(CPACK_DMG_FORMAT "UDZO")
+    set(CPACK_DMG_SLA_USE_RESOURCE_FILE_LICENSE OFF)   # no license prompt when the .dmg opens
 else()
-    set(CPACK_GENERATOR "TGZ;DEB")
-    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "RAVENYR")
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libasound2t64 | libasound2, libfreetype6, libfontconfig1, libx11-6")
+    set(CPACK_GENERATOR "TGZ;DEB;RPM")
+    set(CPACK_STRIP_FILES ON)
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Sacred Hills Studio")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "sound")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libasound2t64 | libasound2, libfreetype6, libfontconfig1, libx11-6, libcurl4t64 | libcurl4")
     set(CPACK_DEBIAN_PACKAGE_SUGGESTS "libjack-jackd2-0 | pipewire-jack")
+    set(CPACK_RPM_PACKAGE_LICENSE "Proprietary")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/Multimedia")
+    set(CPACK_RPM_PACKAGE_AUTOREQ OFF)
+    set(CPACK_RPM_PACKAGE_REQUIRES "alsa-lib, freetype, fontconfig, libX11, libcurl")
+    set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/share/applications /usr/share/icons /usr/share/icons/hicolor
+        /usr/share/icons/hicolor/256x256 /usr/share/icons/hicolor/256x256/apps)
 endif()
 include(CPack)
 
@@ -245,7 +295,7 @@ include(CPack)
 if(FF_BUILD_TEST_PLUGIN)
     juce_add_plugin(ff_test_plugin
         PRODUCT_NAME "FF Test Gain"
-        COMPANY_NAME "RAVENYR"
+        COMPANY_NAME "Sacred Hills Studio"
         PLUGIN_MANUFACTURER_CODE Frfg
         PLUGIN_CODE Fftg
         FORMATS VST3

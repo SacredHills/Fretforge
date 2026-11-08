@@ -15,7 +15,7 @@ static double prop (const juce::ValueTree& v, const juce::Identifier& id) { retu
 static void styleToggle (juce::TextButton& b, juce::Colour on, const juce::String& tip)
 {
     b.setColour (juce::TextButton::buttonOnColourId, on);
-    b.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    b.setColour (juce::TextButton::textColourOnId, palette::onAccent);
     b.setTooltip (tip);
     b.setWantsKeyboardFocus (false);
 }

@@ -1,11 +1,12 @@
 #include "StudioLookAndFeel.h"
+#include "BinaryData.h"
 
 namespace ff
 {
 StudioLookAndFeel::StudioLookAndFeel()
 {
     using namespace palette;
-    auto scheme = LookAndFeel_V4::ColourScheme (bg, panel, panelHi, outline, text, accent, juce::Colours::black,
+    auto scheme = LookAndFeel_V4::ColourScheme (bg, panel, panelHi, outline, text, accent, onAccent,
                                                 panelHi, text);
     setColourScheme (scheme);
 
@@ -14,14 +15,14 @@ StudioLookAndFeel::StudioLookAndFeel()
     setColour (juce::TextButton::buttonColourId, panelHi);
     setColour (juce::TextButton::buttonOnColourId, accent);
     setColour (juce::TextButton::textColourOffId, text);
-    setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    setColour (juce::TextButton::textColourOnId, onAccent);
     setColour (juce::ComboBox::backgroundColourId, well);
     setColour (juce::ComboBox::outlineColourId, outline);
     setColour (juce::ComboBox::textColourId, text);
     setColour (juce::ComboBox::arrowColourId, textDim);
     setColour (juce::PopupMenu::backgroundColourId, panel);
     setColour (juce::PopupMenu::highlightedBackgroundColourId, accent.withAlpha (0.85f));
-    setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::black);
+    setColour (juce::PopupMenu::highlightedTextColourId, onAccent);
     setColour (juce::PopupMenu::textColourId, text);
     setColour (juce::Label::textColourId, text);
     setColour (juce::TextEditor::backgroundColourId, well);
@@ -199,17 +200,34 @@ void StudioLookAndFeel::drawTabButton (juce::TabBarButton& b, juce::Graphics& g,
     g.drawFittedText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
 }
 
+juce::Font titleFont (float height)
+{
+    static const auto face = juce::Typeface::createSystemTypefaceFor (BinaryData::CinzelBold_ttf, BinaryData::CinzelBold_ttfSize);
+    return face != nullptr ? juce::Font (juce::FontOptions (face).withHeight (height)) : uiFont (height, true);
+}
+
+juce::Image logoImage()
+{
+    static const auto img = juce::ImageCache::getFromMemory (BinaryData::ravenyrlogo_png, BinaryData::ravenyrlogo_pngSize);
+    return img;
+}
+
 void drawSectionPanel (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title)
 {
-    g.setColour (palette::panel);
-    g.fillRoundedRectangle (area.toFloat(), 6.0f);
+    // a faint violet-to-black wash and a thin blood-red rule under the title
+    g.setGradientFill (juce::ColourGradient (palette::panel.brighter (0.04f), 0.0f, (float) area.getY(),
+                                             palette::panel.darker (0.25f), 0.0f, (float) area.getBottom(), false));
+    g.fillRoundedRectangle (area.toFloat(), 4.0f);
     g.setColour (palette::outline);
-    g.drawRoundedRectangle (area.toFloat().reduced (0.5f), 6.0f, 1.0f);
+    g.drawRoundedRectangle (area.toFloat().reduced (0.5f), 4.0f, 1.0f);
     if (title.isNotEmpty())
     {
-        g.setColour (palette::textDim);
-        g.setFont (uiFont (12.0f, true));
-        g.drawText (title.toUpperCase(), area.reduced (12, 0).removeFromTop (28), juce::Justification::centredLeft);
+        auto t = area.reduced (12, 0).removeFromTop (28);
+        g.setColour (palette::textDim.brighter (0.2f));
+        g.setFont (titleFont (12.5f));
+        g.drawText (title.toUpperCase(), t, juce::Justification::centredLeft);
+        g.setColour (palette::accent.withAlpha (0.35f));
+        g.fillRect (t.getX(), t.getBottom() - 3, juce::jmin (t.getWidth(), 60), 1);
     }
 }
 } // namespace ff
