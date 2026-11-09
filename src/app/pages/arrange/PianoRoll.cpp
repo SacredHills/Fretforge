@@ -471,6 +471,9 @@ void PianoRoll::paint (juce::Graphics& g)
             auto r = juce::Rectangle<float> ((float) keys.getX(), std::round (top), (float) keys.getWidth() - 1.0f, std::round (bottom) - std::round (top) - 1.0f);
             g.setColour (p == keyboardNote ? palette::graph : juce::Colour (0xffe4e7eb));
             g.fillRect (r);
+            // the line between this key and the one above, drawn explicitly so it never vanishes at any zoom
+            g.setColour (juce::Colour (0xff8a9099));
+            g.fillRect (keys.getX(), (int) std::round (top) - 1, keys.getWidth() - 1, 1);
             if (p % 12 == 0 && keyH >= 7.0f)
             {
                 g.setColour (juce::Colour (0xff30343a));

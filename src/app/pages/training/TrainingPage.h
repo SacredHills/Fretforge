@@ -73,6 +73,17 @@ private:
         TrainingPage& page;
     } tabView { *this };
 
+    /** Scale shapes: the fretboard with every note of the shape and its degree (roots highlighted), and the note being
+        played lit up. */
+    struct NeckView : public juce::Component
+    {
+        explicit NeckView (TrainingPage& p) : page (p) {}
+        void paint (juce::Graphics&) override;
+        TrainingPage& page;
+    } neckView { *this };
+    std::vector<training::Step::Note> diagram;   // of the current technique (empty: not a scale shape)
+    int playingStep() const;                     // index into the pattern being played, -1 when stopped
+
     juce::Rectangle<int> leftBox, mainBox, trainerBox, statsBox, chartBox;
 
     // ListBoxModel

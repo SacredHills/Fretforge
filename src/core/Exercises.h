@@ -22,7 +22,8 @@ int techniqueIndex (const juce::String& id);   // -1 if unknown
 struct Settings
 {
     int technique = 0;
-    int position = 5;          // fret of the lowest note of the pattern (5 = A on the low E string)
+    int position = 5;          // fret of the lowest note of the pattern (5 = A on the low E string); scale shapes: the
+                               // key (the root's fret on the low E string of standard tuning)
     int bars = 2;
     int subdivision = 16;      // 8 (eighths), 16 (sixteenths) or 12 (eighth-note triplets)
     juce::uint32 seed = 1;     // pattern variation
@@ -32,7 +33,8 @@ struct Settings
 /** One step of an exercise: a note (or a chord, or a rest) one subdivision long. */
 struct Step
 {
-    struct Note { int string, fret; bool hammer = false, palmMute = false, vibrato = false, tap = false, accent = false, slide = false; float bend = 0.0f; };
+    struct Note { int string, fret; bool hammer = false, palmMute = false, vibrato = false, tap = false, accent = false, slide = false; float bend = 0.0f;
+                  const char* degree = nullptr; };   // degree: scale-degree label for diagrams ("1", "b3"...)
     std::vector<Note> notes;   // empty = rest
 };
 
@@ -41,6 +43,10 @@ std::vector<Step> pattern (const Settings&);
 
 /** A complete SCORE tree (one guitar track) for the settings at `bpm`. */
 juce::ValueTree buildScore (const Settings&, double bpm);
+
+/** Scale techniques: every note of the shape (with its degree; "1" = the root), for a fretboard diagram. Empty for
+    techniques that are not a scale shape. */
+std::vector<Step::Note> scaleDiagram (const Settings&);
 
 /** Plain-text tab of the pattern (for copying / tests). */
 juce::String asciiTab (const Settings&);

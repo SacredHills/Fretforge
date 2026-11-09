@@ -256,6 +256,7 @@ TrainingPage::TrainingPage (EngineHost& h, ProjectDocument& d, juce::PropertiesF
     resetTempoButton.onClick = [this] { setTempo (startSlider.getValue()); loopsAtTempo = 0; };
     addAndMakeVisible (resetTempoButton);
     addAndMakeVisible (tabView);
+    addChildComponent (neckView);
 
     ex.position = (int) positionSlider.getValue();
     ex.bars = barsBox.getSelectedId();
@@ -303,6 +304,105 @@ void TrainingPage::rebuild()
     }
     updateStatus();
     tabView.repaint();
+    const auto d = tr::scaleDiagram (ex);
+    const bool had = ! diagram.empty();
+    diagram = d;
+    positionCaption.setText (diagram.empty() ? juce::String ("Position (fret)")
+                                             : "Key: " + juce::MidiMessage::getMidiNoteName (40 + ex.position, true, false, 3) + " minor",
+                             juce::dontSendNotification);
+    if (had != ! diagram.empty()) resized();
+    neckView.repaint();
+}
+
+int TrainingPage::playingStep() const
+{
+    auto& e = host.engine;
+    if (! active || ! e.isPlaying() || e.isCountingIn() || bpm <= 0.0) return -1;
+    const double stepSec = 60.0 / bpm * 4.0 / (double) ex.subdivision;
+    return (int) std::floor (e.getPositionSeconds() / stepSec + 1.0e-6);
+}
+
+void TrainingPage::NeckView::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (palette::well);
+    g.fillRoundedRectangle (r, 4.0f);
+    const auto& d = page.diagram;
+    if (d.empty()) return;
+    const int nStr = (int) page.ex.tuning.size();
+    int lo = 99, hi = 0;
+    for (auto& n : d) { lo = juce::jmin (lo, n.fret); hi = juce::jmax (hi, n.fret); }
+    // show the frets around the shape (at least 6), from the nut when the shape is low
+    int first = juce::jmax (0, lo - 1), last = juce::jmax (hi + 1, first + 6);
+    if (first <= 1) first = 0;
+    const bool nut = first == 0;
+    auto area = r.reduced (36.0f, 14.0f).withTrimmedBottom (14.0f);
+    const int cells = last - first + (nut ? 0 : 1);   // fret spaces drawn
+    const float fw = area.getWidth() / (float) juce::jmax (1, cells + (nut ? 1 : 0));
+    const float sg = area.getHeight() / (float) juce::jmax (1, nStr - 1);
+    // x of the middle of a fret space (fret 0 = left of the nut)
+    auto xFor = [&] (int fret) { return nut ? area.getX() + ((float) fret + 0.5f) * fw : area.getX() + ((float) (fret - first) + 0.5f) * fw; };
+    auto lineX = [&] (int fret) { return nut ? area.getX() + ((float) fret + 1.0f) * fw : area.getX() + (float) (fret - first + 1) * fw; };   // the fret wire after `fret`
+    // inlays
+    g.setColour (palette::outline.brighter (0.2f));
+    for (int f = juce::jmax (1, first); f <= last; ++f)
+    {
+        const int m = f % 12;
+        if (m == 3 || m == 5 || m == 7 || m == 9) g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ xFor (f), area.getCentreY() }));
+        if (m == 0)
+            for (float k : { -1.0f, 1.0f }) g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ xFor (f), area.getCentreY() + k * sg }));
+    }
+    // fret wires (the nut thicker) and fret numbers
+    g.setFont (uiFont (10.0f));
+    for (int f = nut ? 0 : first - 1; f <= last; ++f)
+    {
+        const float x = lineX (f);
+        g.setColour (f == 0 ? palette::text.withAlpha (0.8f) : palette::outline.brighter (0.5f));
+        g.fillRect (juce::Rectangle<float> (x - (f == 0 ? 2.0f : 0.75f), area.getY(), f == 0 ? 4.0f : 1.5f, area.getHeight()));
+    }
+    for (int f = juce::jmax (1, first); f <= last; ++f)
+    {
+        g.setColour (palette::textDim);
+        g.drawText (juce::String (f), juce::Rectangle<float> (xFor (f) - 12.0f, area.getBottom() + 3.0f, 24.0f, 12.0f), juce::Justification::centred);
+    }
+    // strings: highest on top, with names
+    for (int s = 0; s < nStr; ++s)
+    {
+        const float y = area.getY() + (float) (nStr - 1 - s) * sg;
+        g.setColour (palette::textDim.withAlpha (0.7f));
+        g.drawHorizontalLine (juce::roundToInt (y), area.getX(), area.getRight());
+        g.setColour (palette::textDim);
+        g.drawText (juce::MidiMessage::getMidiNoteName (page.ex.tuning[(size_t) s], true, false, 3),
+                    juce::Rectangle<float> (r.getX() + 4.0f, y - 7.0f, 28.0f, 14.0f), juce::Justification::centredLeft);
+    }
+    // the note being played
+    int playS = -1, playF = -1;
+    if (const int step = page.playingStep(); step >= 0)
+    {
+        const auto pat = tr::pattern (page.ex);
+        if (! pat.empty() && ! pat[(size_t) step % pat.size()].notes.empty())
+        {
+            playS = pat[(size_t) step % pat.size()].notes[0].string;
+            playF = pat[(size_t) step % pat.size()].notes[0].fret;
+        }
+    }
+    // the notes
+    const float dot = juce::jmin (fw * 0.72f, sg * 0.9f, 26.0f);
+    for (auto& n : d)
+    {
+        const auto c = juce::Point<float> (n.fret == 0 && nut ? area.getX() - dot * 0.2f : xFor (n.fret), area.getY() + (float) (nStr - 1 - n.string) * sg);
+        const bool root = juce::String (n.degree) == "1";
+        const bool now = n.string == playS && n.fret == playF;
+        auto b = juce::Rectangle<float> (dot, dot).withCentre (c);
+        if (now) { g.setColour (palette::accent.withAlpha (0.35f)); g.fillEllipse (b.expanded (5.0f)); }
+        g.setColour (root ? palette::graph : juce::Colour (0xff262626));
+        g.fillEllipse (b);
+        g.setColour (now ? palette::accent : root ? palette::graph.brighter (0.4f) : palette::text.withAlpha (0.55f));
+        g.drawEllipse (b, now ? 2.0f : 1.0f);
+        g.setColour (palette::text);
+        g.setFont (uiFont (dot * 0.48f, true));
+        g.drawText (n.degree != nullptr ? juce::String (n.degree) : juce::String(), b, juce::Justification::centred);
+    }
 }
 
 void TrainingPage::pushEngine()
@@ -382,6 +482,7 @@ void TrainingPage::timerCallback()
         }
         lastPos = pos;
         tabView.repaint();
+        if (! diagram.empty()) neckView.repaint();
     }
     lastTick = now;
 }
@@ -689,6 +790,12 @@ void TrainingPage::resized()
     tuningCaption.setBounds (c4.removeFromTop (16)); tuningBox.setBounds (c4.reduced (0, 2));
     variationButton.setBounds (opts.removeFromLeft (juce::jmin (130, opts.getWidth())).withTrimmedTop (16).reduced (0, 1));
     m.removeFromTop (12);
+    neckView.setVisible (! diagram.empty());
+    if (! diagram.empty())
+    {
+        neckView.setBounds (m.removeFromTop (juce::jmax (150, m.getHeight() * 45 / 100)));
+        m.removeFromTop (8);
+    }
     tabView.setBounds (m);
 
     auto t = trainerBox.reduced (14).withTrimmedTop (26);

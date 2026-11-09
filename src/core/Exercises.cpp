@@ -121,12 +121,80 @@ Steps threeNps (const Settings& s, juce::Random& r, const int* iv, bool legato, 
     return upAndDown (run);
 }
 
-Steps pentatonicBox (const Settings& s, juce::Random& r)
+// ---- minor pentatonic: the five shapes (CAGED boxes) ----
+// Per shape and string (low E first, standard tuning): two frets relative to the root's fret on the low E string,
+// and their degrees. Shape 1 has the root on the low E; each next shape starts where the last one ends.
+struct ShapeString { int fret[2]; const char* degree[2]; };
+constexpr ShapeString pentShapes[5][6] {
+    { { { 0, 3 }, { "1", "b3" } }, { { 0, 2 }, { "4", "5" } }, { { 0, 2 }, { "b7", "1" } },
+      { { 0, 2 }, { "b3", "4" } }, { { 0, 3 }, { "5", "b7" } }, { { 0, 3 }, { "1", "b3" } } },
+    { { { 3, 5 }, { "b3", "4" } }, { { 2, 5 }, { "5", "b7" } }, { { 2, 5 }, { "1", "b3" } },
+      { { 2, 4 }, { "4", "5" } }, { { 3, 5 }, { "b7", "1" } }, { { 3, 5 }, { "b3", "4" } } },
+    { { { 5, 7 }, { "4", "5" } }, { { 5, 7 }, { "b7", "1" } }, { { 5, 7 }, { "b3", "4" } },
+      { { 4, 7 }, { "5", "b7" } }, { { 5, 8 }, { "1", "b3" } }, { { 5, 7 }, { "4", "5" } } },
+    { { { 7, 10 }, { "5", "b7" } }, { { 7, 10 }, { "1", "b3" } }, { { 7, 9 }, { "4", "5" } },
+      { { 7, 9 }, { "b7", "1" } }, { { 8, 10 }, { "b3", "4" } }, { { 7, 10 }, { "5", "b7" } } },
+    { { { 10, 12 }, { "b7", "1" } }, { { 10, 12 }, { "b3", "4" } }, { { 9, 12 }, { "5", "b7" } },
+      { { 9, 12 }, { "1", "b3" } }, { { 10, 12 }, { "4", "5" } }, { { 10, 12 }, { "b7", "1" } } },
+};
+constexpr int standardOpen[6] { 40, 45, 50, 55, 59, 64 };
+
+/** The notes of pentatonic shape `shape` (0..4) in the key of the position, on the top six strings of the tuning,
+    lowest string first, low to high on each string. Moved down an octave when it would go past fret 22. */
+std::vector<Note> pentShape (const Settings& s, int shape)
 {
-    auto run = fingering (s, scale (rootNote (s), pentIv, 5, 2 * strings (s)), 2);
-    if (s.seed > 1 && r.nextBool()) return inFours (run);
-    return upAndDown (run);
+    const int n = strings (s), first = juce::jmax (0, n - 6);
+    const int key = 40 + juce::jlimit (0, 17, s.position);   // the root on the low E string of standard tuning
+    auto build = [&] (int shift) {
+        std::vector<Note> out;
+        for (int k = 0; k < 6 && first + k < n; ++k)
+            for (int j = 0; j < 2; ++j)
+            {
+                const int pitch = standardOpen[k] + key - 40 + pentShapes[shape][k].fret[j] + shift;
+                Note nt { first + k, pitch - open (s, first + k) };
+                nt.degree = pentShapes[shape][k].degree[j];
+                out.push_back (nt);
+            }
+        return out;
+    };
+    auto out = build (0);
+    int lo = 99, hi = -99;
+    for (auto& nt : out) { lo = juce::jmin (lo, nt.fret); hi = juce::jmax (hi, nt.fret); }
+    if (hi > 22 && lo >= 12) out = build (-12);
+    else if (lo < 0) out = build (12);
+    return out;
 }
+
+/** Up and down a shape; variations: in groups of four, in threes, or each string's pair twice. */
+Steps pentShapeRun (const Settings& s, juce::Random& r, int shape)
+{
+    auto run = pentShape (s, shape);
+    if (s.seed <= 1) return upAndDown (run);
+    switch (r.nextInt (3))
+    {
+        case 0: return inFours (run);
+        case 1:
+        {
+            Steps out;   // groups of three up, then down
+            for (size_t i = 0; i + 3 <= run.size(); ++i) for (size_t k = 0; k < 3; ++k) out.push_back (one (run[i + k]));
+            for (size_t i = run.size(); i >= 3; --i) for (size_t k = 0; k < 3; ++k) out.push_back (one (run[i - 1 - k]));
+            return out;
+        }
+        default:
+        {
+            Steps out;   // each string's two notes twice, up then down
+            for (size_t i = 0; i + 1 < run.size(); i += 2) for (int rep = 0; rep < 2; ++rep) { out.push_back (one (run[i])); out.push_back (one (run[i + 1])); }
+            for (size_t i = run.size(); i >= 2; i -= 2) for (int rep = 0; rep < 2; ++rep) { out.push_back (one (run[i - 1])); out.push_back (one (run[i - 2])); }
+            return out;
+        }
+    }
+}
+
+Steps pentatonicBox (const Settings& s, juce::Random& r) { return pentShapeRun (s, r, 0); }
+Steps pentShape2 (const Settings& s, juce::Random& r) { return pentShapeRun (s, r, 1); }
+Steps pentShape3 (const Settings& s, juce::Random& r) { return pentShapeRun (s, r, 2); }
+Steps pentShape4 (const Settings& s, juce::Random& r) { return pentShapeRun (s, r, 3); }
+Steps pentShape5 (const Settings& s, juce::Random& r) { return pentShapeRun (s, r, 4); }
 
 Steps stringSkipping (const Settings& s, juce::Random& r)
 {
@@ -410,7 +478,11 @@ const std::vector<Entry>& entries()
         { { "syncopation", "Syncopation", "Rhythm", "Count the 16ths; the rests are as important as the hits.", 60, 160 }, syncopation },
         { { "bends", "Bends to pitch", "Expression", "Bend with several fingers; check the bend against the fretted target note.", 50, 110 }, bends },
         { { "vibrato", "Vibrato", "Expression", "Even width and speed, from the wrist; keep it in time with the tempo.", 50, 110 }, vibrato },
-        { { "pentatonic", "Minor pentatonic box", "Scales & arpeggios", "Two notes per string; alternate pick and keep the notes even.", 70, 200 }, pentatonicBox },
+        { { "pentatonic", "Minor pentatonic shape 1", "Scales & arpeggios", "Root on the low E (the classic box). Two notes per string; say the root notes as you play them. Position sets the key.", 70, 200 }, pentatonicBox },
+        { { "pent2", "Minor pentatonic shape 2", "Scales & arpeggios", "Starts where shape 1 ends; the root is on the D and B strings.", 70, 200 }, pentShape2 },
+        { { "pent3", "Minor pentatonic shape 3", "Scales & arpeggios", "Root on the A and B strings; note the 4-fret stretch on the B string.", 70, 200 }, pentShape3 },
+        { { "pent4", "Minor pentatonic shape 4", "Scales & arpeggios", "Root on the A and G strings.", 70, 200 }, pentShape4 },
+        { { "pent5", "Minor pentatonic shape 5", "Scales & arpeggios", "Root on both E strings and the G string; it joins back to shape 1 an octave up.", 70, 200 }, pentShape5 },
         { { "major3nps", "Major scale (3 notes per string)", "Scales & arpeggios", "Three notes per string up and down; know the root notes.", 60, 190 }, major3 },
         { { "arp7", "Seventh-chord arpeggios", "Scales & arpeggios", "Two notes per string; let each note ring separately.", 50, 160 }, arpeggio7 },
     };
@@ -433,6 +505,14 @@ int techniqueIndex (const juce::String& id)
     for (size_t i = 0; i < techniques().size(); ++i)
         if (id == techniques()[i].id) return (int) i;
     return -1;
+}
+
+std::vector<Step::Note> scaleDiagram (const Settings& s)
+{
+    if (s.tuning.size() < 6) return {};
+    const juce::String id = techniques()[(size_t) juce::jlimit (0, (int) techniques().size() - 1, s.technique)].id;
+    const int shape = id == "pentatonic" ? 0 : id == "pent2" ? 1 : id == "pent3" ? 2 : id == "pent4" ? 3 : id == "pent5" ? 4 : -1;
+    return shape < 0 ? std::vector<Step::Note>() : pentShape (s, shape);
 }
 
 std::vector<Step> pattern (const Settings& s)
@@ -520,6 +600,7 @@ const std::vector<Plan>& plans()
         { "Speed picking", "Builds clean, fast picking step by step.", { "alternate", "insideout", "stringskip", "economy", "tremolo" } },
         { "Metal rhythm", "Tight right hand for riffs.", { "downpick", "chugs", "gallop", "powerchords", "syncopation" } },
         { "Lead & shred", "Lead techniques for solos.", { "legato", "sweep", "tapping", "major3nps", "arp7" } },
+        { "Pentatonic shapes", "All five minor pentatonic shapes in one key, so the whole neck connects.", { "pentatonic", "pent2", "pent3", "pent4", "pent5" } },
         { "Expression", "Make single notes sing.", { "bends", "vibrato", "shifts", "stretches", "independence" } },
     };
     return p;

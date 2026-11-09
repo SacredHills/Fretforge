@@ -17,7 +17,7 @@ public:
 
         beginTest ("every technique makes a playable pattern, every seed and position");
         {
-            expectEquals ((int) tr::techniques().size(), 23);
+            expectEquals ((int) tr::techniques().size(), 27);
             for (int t = 0; t < (int) tr::techniques().size(); ++t)
                 for (juce::uint32 seed : { 1u, 2u, 7u, 99u })
                     for (int pos : { 0, 3, 5, 12 })
@@ -40,6 +40,41 @@ public:
                     }
             for (auto& p : tr::plans())
                 for (auto* id : p.techniques) expect (tr::techniqueIndex (id) >= 0, id);
+        }
+
+        beginTest ("minor pentatonic: the five shapes, as on the chart");
+        {
+            tr::Settings s;
+            s.position = 5;   // A minor
+            const char* ids[] { "pentatonic", "pent2", "pent3", "pent4", "pent5" };
+            // low E string frets of each shape in A (root at fret 5): 5-8, 8-10, 10-12, 12-15, 15-17
+            const int lowE[5][2] { { 5, 8 }, { 8, 10 }, { 10, 12 }, { 12, 15 }, { 15, 17 } };
+            for (int k = 0; k < 5; ++k)
+            {
+                s.technique = tr::techniqueIndex (ids[k]);
+                const auto d = tr::scaleDiagram (s);
+                expectEquals ((int) d.size(), 12, ids[k]);
+                expectEquals (d[0].string, 0);
+                expectEquals (d[0].fret, lowE[k][0], ids[k]);
+                expectEquals (d[1].fret, lowE[k][1], ids[k]);
+                int roots = 0;
+                for (auto& n : d)
+                {
+                    const int pitch = s.tuning[(size_t) n.string] + n.fret;
+                    const int pc = ((pitch - 45) % 12 + 12) % 12;   // A = 0
+                    const juce::String deg (n.degree);
+                    const int want = deg == "1" ? 0 : deg == "b3" ? 3 : deg == "4" ? 5 : deg == "5" ? 7 : 10;
+                    expectEquals (pc, want, juce::String (ids[k]) + " degree " + deg);
+                    roots += deg == "1" ? 1 : 0;
+                }
+                expect (roots >= 2, "every shape has at least two roots");
+                expectEquals ((int) tr::pattern (s).size(), 22, "up and down: 12 notes up, 10 back");
+            }
+            s.position = 15;   // high key: shape 5 moves down an octave
+            s.technique = tr::techniqueIndex ("pent5");
+            for (auto& n : tr::scaleDiagram (s)) expect (n.fret <= 22);
+            s.technique = tr::techniqueIndex ("spider");
+            expect (tr::scaleDiagram (s).empty());
         }
 
         beginTest ("seeds vary the pattern, the same seed repeats it");
