@@ -487,6 +487,22 @@ void PianoRoll::paint (juce::Graphics& g)
             g.setColour (p == keyboardNote ? palette::graph : juce::Colour (0xff1d2024));
             g.fillRoundedRectangle (r, 1.5f);
         }
+        // the hovered key: highlight and its name (C4 = middle C)
+        if (juce::isPositiveAndBelow (hoverPitch, 128))
+        {
+            const float y = yFor (hoverPitch);
+            const auto row = juce::Rectangle<float> ((float) keys.getX(), y, (float) keys.getWidth() - 1.0f, keyH);
+            g.setColour (juce::Colour (0x553c8cff));
+            g.fillRect (isBlackKey (hoverPitch) ? row.withWidth ((float) keys.getWidth() * 0.62f) : row);
+            const auto name = juce::MidiMessage::getMidiNoteName (hoverPitch, true, true, 4);
+            g.setFont (uiFont (11.0f, true));
+            const float w = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), name) + 10.0f;
+            const auto badge = juce::Rectangle<float> ((float) keys.getRight() - w - 2.0f, y + keyH * 0.5f - 8.0f, w, 16.0f);
+            g.setColour (palette::bg.withAlpha (0.92f));
+            g.fillRoundedRectangle (badge, 3.0f);
+            g.setColour (palette::text);
+            g.drawText (name, badge, juce::Justification::centred);
+        }
     }
 
     // velocity lane
@@ -744,8 +760,18 @@ void PianoRoll::mouseUp (const juce::MouseEvent&)
     repaint();
 }
 
+void PianoRoll::mouseExit (const juce::MouseEvent&)
+{
+    if (hoverPitch >= 0) { hoverPitch = -1; repaint (keysArea()); }
+}
+
 void PianoRoll::mouseMove (const juce::MouseEvent& e)
 {
+    {
+        const bool overRows = keysArea().contains (e.getPosition()) || gridArea().contains (e.getPosition());
+        const int p = overRows ? juce::jlimit (0, 127, pitchFor (e.position.y)) : -1;
+        if (p != hoverPitch) { hoverPitch = p; repaint (keysArea()); }
+    }
     bool edge = false;
     const int hit = gridArea().contains (e.getPosition()) ? noteAt (e.position, edge) : -1;
     if (rulerArea().contains (e.getPosition())) { setMouseCursor (juce::MouseCursor::PointingHandCursor); return; }

@@ -372,7 +372,7 @@ void MainComponent::saveAsThen (std::function<void()> continuation)
 
 void MainComponent::openProjectDialog()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Open project (choose the .ravenyr folder or its project.rvn)",
+    chooser = std::make_unique<juce::FileChooser> ("Open project (choose the .ravenyr folder or its .rvn file)",
                                                    juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.rvn;*.ravenyr;*.ffp;*.ffproj");
     juce::Component::SafePointer<MainComponent> safe (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles

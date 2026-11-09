@@ -236,6 +236,46 @@ public:
             expect (! g->tracks[0].idle.sleeping, "sound wakes it up");
         }
 
+        beginTest ("interface outputs: a track or a send can play to Out 3+4 instead of the master");
+        {
+            juce::ValueTree tracks ("TRACKS");
+            auto a = track (tracks, "Click for drummer"), b = track (tracks, "Vocal");
+            a.setProperty (tl::ids::output, tl::hardwareRoute (2), nullptr);     // Out 3+4
+            tl::addSend (b, tl::hardwareRoute (4), -6.0206, true, nullptr);       // headphone mix on Out 5+6, pre-fader
+            b.setProperty (tl::ids::gainDb, -100.0, nullptr);                     // fader down: the pre-fader send still plays
+            expect (tl::isHardwareRoute (tl::outputOf (a)) && tl::hardwareChannelOf (tl::outputOf (a)) == 2);
+            expectEquals (tl::hardwareRouteName (2), juce::String ("Out 3+4"));
+
+            auto g = buildPlaybackGraph (tracks, noBundle, cache, {});
+            expectEquals (g->tracks[0].hwOutput, 2);
+            expectEquals (g->tracks[0].output, -1);
+            expectEquals ((int) g->tracks[1].hwSends.size(), 1);
+            expectEquals ((int) g->tracks[1].sends.size(), 0);
+
+            GraphMixer m;
+            m.prepare (64, 48000.0);
+            ConstSource src;
+            src.levels = { 0.4f, 0.3f };
+            std::vector<std::vector<float>> dev (6, std::vector<float> (64, 0.0f));
+            float* hw[6];
+            for (int c = 0; c < 6; ++c) hw[c] = dev[(size_t) c].data();
+            std::vector<float> L (64, 0.0f), R (64, 0.0f);
+            m.mix (*g, src, L.data(), R.data(), 64, hw, 6);
+            expectWithinAbsoluteError (L[63], 0.0f, 1.0e-4f, "neither reaches the master");
+            expectWithinAbsoluteError (dev[2][63], 0.4f, 1.0e-4f);
+            expectWithinAbsoluteError (dev[3][63], 0.4f, 1.0e-4f);
+            expectWithinAbsoluteError (dev[4][63], 0.15f, 1.0e-4f);
+            expectWithinAbsoluteError (dev[5][63], 0.15f, 1.0e-4f);
+            expectWithinAbsoluteError (dev[0][63] + dev[1][63], 0.0f, 1.0e-6f);
+
+            // the device has no Out 3+4 (or export): the track plays through the master, the send is left out
+            std::fill (L.begin(), L.end(), 0.0f);
+            for (auto& d : dev) std::fill (d.begin(), d.end(), 0.0f);
+            m.mix (*g, src, L.data(), R.data(), 64, hw, 2);
+            expectWithinAbsoluteError (L[63], 0.4f, 1.0e-4f);
+            expectWithinAbsoluteError (dev[4][63], 0.0f, 1.0e-6f);
+        }
+
         beginTest ("export plays tracks through their bus");
         {
             const double sr = 48000.0;

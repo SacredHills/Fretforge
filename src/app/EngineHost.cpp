@@ -62,6 +62,20 @@ juce::String EngineHost::deviceSummary() const
            + juce::String (bs) + " smp" + dot + juce::String (latencyMs, 1) + " ms";
 }
 
+juce::StringArray EngineHost::activeOutputChannelNames (juce::Array<int>& channels) const
+{
+    juce::StringArray result;
+    channels.clear();
+    if (auto* d = deviceManager.getCurrentAudioDevice())
+    {
+        const auto names = d->getOutputChannelNames();
+        const auto active = d->getActiveOutputChannels();
+        for (int i = 0; i < juce::jmin (names.size(), timeline::maxHardwareChannels); ++i)
+            if (active[i]) { result.add (names[i]); channels.add (i); }
+    }
+    return result;
+}
+
 juce::StringArray EngineHost::activeInputChannelNames() const
 {
     juce::StringArray result;
@@ -93,16 +107,29 @@ void EngineHost::enableAllInputsIfNewDevice()
     const auto key = d->getTypeName() + "/" + d->getName();
     if (key == inputsEnabledFor) return;
     inputsEnabledFor = key;
+    // the same for outputs, so tracks can be sent to the interface's other outputs (Out 3+4...); the master stays on 1+2
     const int n = d->getInputChannelNames().size();
+    const int nOut = juce::jmin (d->getOutputChannelNames().size(), timeline::maxHardwareChannels);
     auto setup = deviceManager.getAudioDeviceSetup();
-    if (n <= 0 || (! setup.useDefaultInputChannels && setup.inputChannels.countNumberOfSetBits() >= n)) return;
-    setup.useDefaultInputChannels = false;
-    setup.inputChannels.clear();
-    setup.inputChannels.setRange (0, n, true);
+    const bool inputsDone = n <= 0 || (! setup.useDefaultInputChannels && setup.inputChannels.countNumberOfSetBits() >= n);
+    const bool outputsDone = nOut <= 0 || (! setup.useDefaultOutputChannels && setup.outputChannels.countNumberOfSetBits() >= nOut);
+    if (inputsDone && outputsDone) return;
+    if (! inputsDone)
+    {
+        setup.useDefaultInputChannels = false;
+        setup.inputChannels.clear();
+        setup.inputChannels.setRange (0, n, true);
+    }
+    if (! outputsDone)
+    {
+        setup.useDefaultOutputChannels = false;
+        setup.outputChannels.clear();
+        setup.outputChannels.setRange (0, nOut, true);
+    }
     const juce::ScopedValueSetter<bool> svs (changingInputs, true);
     const auto err = deviceManager.setAudioDeviceSetup (setup, true);
-    juce::Logger::writeToLog (err.isEmpty() ? "Enabled all " + juce::String (n) + " inputs of " + d->getName()
-                                            : "Could not enable all inputs: " + err);
+    juce::Logger::writeToLog (err.isEmpty() ? "Enabled all " + juce::String (n) + " inputs and " + juce::String (nOut) + " outputs of " + d->getName()
+                                            : "Could not enable all inputs / outputs: " + err);
 }
 
 void EngineHost::changeListenerCallback (juce::ChangeBroadcaster*)

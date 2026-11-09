@@ -522,14 +522,39 @@ void SessionController::showAddTrackMenu (juce::Component* target, int insertInd
 
 juce::String SessionController::outputName (const juce::ValueTree& track) const
 {
-    const auto bus = timeline::findTrack (doc.tracks(), outputOf (track));
-    return bus.isValid() ? bus[ids::name].toString() : juce::String ("Master");
+    return routeName (outputOf (track));
+}
+
+juce::String SessionController::routeName (const juce::String& id) const
+{
+    if (timeline::isHardwareRoute (id)) return timeline::hardwareRouteName (timeline::hardwareChannelOf (id));
+    if (id.isEmpty()) return "Master";
+    const auto t = timeline::findTrack (doc.tracks(), id);
+    return t.isValid() ? t[ids::name].toString() : juce::String ("Master");
+}
+
+juce::Array<std::pair<int, juce::String>> SessionController::interfaceOutputPairs() const
+{
+    juce::Array<int> channels;
+    const auto names = host.activeOutputChannelNames (channels);
+    juce::Array<std::pair<int, juce::String>> pairs;
+    for (int i = 0; i < channels.size(); ++i)
+    {
+        const int ch = channels[i];
+        if (ch < 2 || ch % 2 != 0) continue;   // pairs from Out 3+4 on (the master plays on 1+2)
+        const bool right = channels.contains (ch + 1);
+        juce::String label = right ? timeline::hardwareRouteName (ch) : "Out " + juce::String (ch + 1);
+        const auto devName = names[i] + (right ? " / " + names[channels.indexOf (ch + 1)] : juce::String());
+        if (devName.isNotEmpty() && ! devName.containsIgnoreCase ("Output " + juce::String (ch + 1))) label << "  (" << devName << ")";
+        pairs.add ({ ch, label });
+    }
+    return pairs;
 }
 
 void SessionController::setOutput (juce::ValueTree track, const juce::String& busId)
 {
     const auto bus = timeline::findTrack (doc.tracks(), busId);
-    if (busId.isNotEmpty() && ! canRouteTo (doc.tracks(), track, bus))
+    if (busId.isNotEmpty() && ! timeline::isHardwareRoute (busId) && ! canRouteTo (doc.tracks(), track, bus))
     {
         if (onError) onError ("Routing", "\"" + track[ids::name].toString() + "\" cannot play into \"" + bus[ids::name].toString()
                                          + "\": that would feed the sound back into itself.");
@@ -543,7 +568,7 @@ void SessionController::showRoutingMenu (juce::ValueTree track, juce::Component*
 {
     auto tracks = doc.tracks();
     juce::PopupMenu out, sends;
-    out.addItem (1, "Master", true, outputOf (track).isEmpty() || ! timeline::findTrack (tracks, outputOf (track)).isValid());
+    out.addItem (1, "Master", true, outputOf (track).isEmpty() || (! timeline::isHardwareRoute (outputOf (track)) && ! timeline::findTrack (tracks, outputOf (track)).isValid()));
     int i = 0;
     juce::Array<juce::ValueTree> targets;
     for (auto t : tracks)
@@ -558,6 +583,25 @@ void SessionController::showRoutingMenu (juce::ValueTree track, juce::Component*
             sends.addItem (300 + i, "Send to " + t[ids::name].toString(), ok && ! hasSend);
             ++i;
         }
+    }
+    // interface outputs (Out 3+4...): straight to the audio interface, not through the master
+    const auto hw = interfaceOutputPairs();
+    if (! hw.isEmpty())
+    {
+        out.addSectionHeader ("Interface outputs");
+        sends.addSectionHeader ("Interface outputs");
+        for (int k = 0; k < hw.size(); ++k)
+        {
+            const auto id = timeline::hardwareRoute (hw[k].first);
+            out.addItem (700 + k, hw[k].second, true, outputOf (track) == id);
+            bool hasSend = false;
+            for (auto c : track) hasSend = hasSend || (c.hasType (ids::SEND) && c[ids::target].toString() == id);
+            sends.addItem (800 + k, "Send to " + hw[k].second, ! hasSend);
+        }
+    }
+    else
+    {
+        out.addItem (-1, "(Interface outputs: the audio device has only 2 outputs switched on)", false);
     }
     out.addSeparator();
     out.addItem (2, "New bus for this track");
@@ -576,15 +620,23 @@ void SessionController::showRoutingMenu (juce::ValueTree track, juce::Component*
         for (auto c : track)
             if (c.hasType (ids::SEND))
             {
-                const auto dest = timeline::findTrack (tracks, c[ids::target].toString());
-                m.addItem (500 + k++, "Send to " + (dest.isValid() ? dest[ids::name].toString() : juce::String ("(missing)"))
+                const auto tid = c[ids::target].toString();
+                const auto dest = timeline::findTrack (tracks, tid);
+                m.addItem (500 + k++, "Send to " + (timeline::isHardwareRoute (tid) ? routeName (tid) : dest.isValid() ? dest[ids::name].toString() : juce::String ("(missing)"))
                                           + ":  " + juce::String ((double) c[ids::level], 1) + " dB" + ((bool) c[ids::pre] ? " pre" : "") + "...");
             }
     }
     juce::Component::SafePointer<juce::Component> safe (target);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, targets, safe] (int r) {
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track, targets, safe, hw] (int r) {
         if (r == 0) return;
         auto tracks2 = doc.tracks();
+        if (r >= 700 && r < 800 && r - 700 < hw.size()) { setOutput (track, timeline::hardwareRoute (hw[r - 700].first)); return; }
+        if (r >= 800 && r < 900 && r - 800 < hw.size())
+        {
+            doc.undo().beginNewTransaction ("Add send");
+            addSend (juce::ValueTree (track), timeline::hardwareRoute (hw[r - 800].first), 0.0, false, &doc.undo());
+            return;
+        }
         if (r == 1) setOutput (track, {});
         else if (r >= 100 && r < 300) setOutput (track, targets[r - 100][ids::id].toString());
         else if (r >= 300 && r < 500)
@@ -602,7 +654,7 @@ void SessionController::showRoutingMenu (juce::ValueTree track, juce::Component*
             else addSend (t, bus[ids::id].toString(), -6.0, false, &doc.undo());
             setSelectedTracks ({ track });
         }
-        else if (r >= 500)
+        else if (r >= 500 && r < 700)
         {
             int k = 0;
             for (auto c : track)
@@ -614,9 +666,10 @@ void SessionController::showRoutingMenu (juce::ValueTree track, juce::Component*
 void SessionController::showSendMenu (juce::ValueTree track, juce::ValueTree send, juce::Component* target)
 {
     if (! send.isValid()) return;
-    const auto dest = timeline::findTrack (doc.tracks(), send[ids::target].toString());
+    const auto tid = send[ids::target].toString();
+    const auto dest = timeline::findTrack (doc.tracks(), tid);
     juce::PopupMenu m;
-    m.addSectionHeader ("Send to " + (dest.isValid() ? dest[ids::name].toString() : juce::String ("(missing track)")));
+    m.addSectionHeader ("Send to " + (timeline::isHardwareRoute (tid) ? routeName (tid) : dest.isValid() ? dest[ids::name].toString() : juce::String ("(missing track)")));
     static constexpr double levels[] = { 6.0, 3.0, 0.0, -3.0, -6.0, -9.0, -12.0, -18.0, -24.0, -36.0 };
     juce::PopupMenu lv;
     for (int i = 0; i < (int) std::size (levels); ++i)

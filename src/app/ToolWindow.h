@@ -5,6 +5,28 @@
 
 namespace ff
 {
+/** Keeps a floating window (plugin editor, tool window) above RAVENYR's own windows only while RAVENYR is the active
+    app: when you switch to a browser or another program the window drops back instead of covering it. */
+class FloatAboveApp : private juce::Timer
+{
+public:
+    explicit FloatAboveApp (juce::DocumentWindow& w) : window (w)
+    {
+       #if ! JUCE_LINUX   // X11 cannot change "always on top" in place (JUCE would recreate the window), so Linux leaves it to the window manager
+        timerCallback();
+        startTimerHz (5);
+       #endif
+    }
+
+private:
+    juce::DocumentWindow& window;
+    void timerCallback() override
+    {
+        const bool front = juce::Process::isForegroundProcess();
+        if (front != window.isAlwaysOnTop()) window.setAlwaysOnTop (front);
+    }
+};
+
 /** A floating window (like a plugin window) showing a component that lives elsewhere: closing only hides it,
     and its position and size are remembered in the settings under `key`. */
 class ToolWindow : public juce::DocumentWindow
@@ -18,7 +40,6 @@ public:
         setContentNonOwned (&content, false);
         setResizable (true, false);
         setResizeLimits (360, 240, 3000, 2000);
-        setAlwaysOnTop (true);
         const auto saved = settings.getValue (key);
         if (saved.isEmpty() || ! restoreWindowStateFromString (saved))
             centreWithSize (w, h);
@@ -42,5 +63,6 @@ public:
 private:
     juce::PropertiesFile& settings;
     juce::String key;
+    FloatAboveApp floating { *this };
 };
 } // namespace ff

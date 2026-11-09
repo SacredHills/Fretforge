@@ -27,8 +27,11 @@ public:
     bool allowIdle = true;             // skip rigs and plugins on tracks that have been silent for a while
 
     /** Mixes the graph into outL / outR, which must start out silent (the master plugins process the result).
-        n <= maxBlock(). */
-    void mix (PlaybackGraph&, Source&, float* outL, float* outR, int n) noexcept;
+        n <= maxBlock(). hwOut (optional): the audio device's output channels by channel number (nullptr where a channel
+        is off); tracks and sends routed to an interface output are added there. A track whose interface output is not
+        available plays through the master instead (so export, which has none, still contains it); a send to one is
+        left out. */
+    void mix (PlaybackGraph&, Source&, float* outL, float* outR, int n, float* const* hwOut = nullptr, int numHw = 0) noexcept;
 
     /** Updates every track's downstreamLatency (call before Source::fill reads the clips). */
     static void updateLatencies (PlaybackGraph&) noexcept;

@@ -392,7 +392,9 @@ void AudioEngine::renderSegment (const float* const* inputs, int numInputs, floa
     juce::FloatVectorOperations::clear (sL, len);
     juce::FloatVectorOperations::clear (sR, len);
     Segment seg (*this, inputs, numInputs, offset, rolling, recordingNow);
-    mixer.mix (*graph, seg, sL, sR, len);
+    for (int ch = 0; ch < numHwOut; ++ch)
+        hwSeg[(size_t) ch] = hwOut[(size_t) ch] != nullptr ? hwOut[(size_t) ch] + offset : nullptr;
+    mixer.mix (*graph, seg, sL, sR, len, hwSeg.data(), numHwOut);
     juce::FloatVectorOperations::add (bus[0] + offset, sL, len);
     if (numBus > 1)
         juce::FloatVectorOperations::add (bus[1] + offset, sR, len);
@@ -484,6 +486,15 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
     for (int i = 0; i < numOutputs; ++i)
         if (outputs[i] != nullptr)
             juce::FloatVectorOperations::clear (outputs[i], numSamples);
+
+    // interface outputs by device channel (tracks / sends routed to "Out 3+4" etc.)
+    numHwOut = 0;
+    for (int ch = 0; ch < timeline::maxHardwareChannels; ++ch)
+    {
+        const int slot = haveOutputSlots ? outputSlot[(size_t) ch] : ch;
+        hwOut[(size_t) ch] = juce::isPositiveAndBelow (slot, numOutputs) ? outputs[slot] : nullptr;
+        if (hwOut[(size_t) ch] != nullptr) numHwOut = ch + 1;
+    }
 
     float* bus[2] = { nullptr, nullptr };
     int numBus = 0;
@@ -633,6 +644,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, 
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
     prepare (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples());
+    const auto active = device->getActiveOutputChannels();
+    int slot = 0;
+    for (int ch = 0; ch < timeline::maxHardwareChannels; ++ch)
+        outputSlot[(size_t) ch] = active[ch] ? slot++ : -1;
+    haveOutputSlots = true;
     workers.setWorkgroup (device->getWorkgroup());
     deviceRunning = true;
 }

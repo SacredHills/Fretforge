@@ -282,11 +282,19 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
     for (int i = 0; i < (int) trees.size(); ++i)
     {
         auto& pt = g->tracks[(size_t) i];
-        const int o = indexOf (outputOf (trees[(size_t) i]));
+        const auto outId = outputOf (trees[(size_t) i]);
+        const int o = indexOf (outId);
         pt.output = (o >= 0 && o != i && ! isSourceKind (g->tracks[(size_t) o].kind)) ? o : -1;
+        pt.hwOutput = hardwareChannelOf (outId);
         for (const auto& c : trees[(size_t) i])
-            if (c.hasType (ids::SEND) && (int) pt.sends.size() < maxSends)
+            if (c.hasType (ids::SEND) && (int) (pt.sends.size() + pt.hwSends.size()) < maxSends)
             {
+                if (isHardwareRoute (c[ids::target].toString()))
+                {
+                    pt.hwSends.push_back ({ hardwareChannelOf (c[ids::target].toString()),
+                                            juce::Decibels::decibelsToGain ((float) (double) c[ids::level], -96.0f), (bool) c[ids::pre] });
+                    continue;
+                }
                 const int target = indexOf (c[ids::target].toString());
                 if (target < 0 || target == i || isSourceKind (g->tracks[(size_t) target].kind)) continue;
                 pt.sends.push_back ({ target, juce::Decibels::decibelsToGain ((float) (double) c[ids::level], -96.0f), (bool) c[ids::pre] });
@@ -357,6 +365,7 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
             auto onPath = [&] (int d) { return down[(size_t) d] || up[(size_t) d]; };
             pt.sends.erase (std::remove_if (pt.sends.begin(), pt.sends.end(), [&] (const PlayTrack::Send& x) { return ! onPath (x.target); }),
                             pt.sends.end());
+            if (! down[(size_t) i]) pt.hwSends.clear();   // only soloed tracks (and what they play through) are heard on interface outputs
             if (pt.output >= 0) pt.outputMuted = ! onPath (pt.output);
             else pt.outputMuted = ! down[(size_t) i];   // only soloed tracks and what they play through reach the master
         }

@@ -48,7 +48,18 @@ bool acceptsClip (const juce::ValueTree& track, const juce::ValueTree& clip);
 juce::String kindName (TrackKind);
 juce::ValueTree createBusTrack (const juce::String& name, int paletteIndex, TrackKind kind);
 juce::ValueTree findTrack (const juce::ValueTree& tracks, const juce::String& id);
-/** The bus a track plays into ("" = master); a missing bus also means master. */
+/** Interface outputs: a track's output or a send can go straight to a pair of the audio device's outputs instead of a
+    track ("hw:<n>": n = the device output channel of the left side, 0-based; "hw:2" = outputs 3+4). The master always
+    plays on the first two outputs. */
+constexpr const char* hardwareRoutePrefix = "hw:";
+constexpr int maxHardwareChannels = 64;
+inline bool isHardwareRoute (const juce::String& id) { return id.startsWith (hardwareRoutePrefix); }
+inline int hardwareChannelOf (const juce::String& id) { return isHardwareRoute (id) ? juce::jlimit (0, maxHardwareChannels - 1, id.substring (3).getIntValue()) : -1; }
+inline juce::String hardwareRoute (int channel) { return hardwareRoutePrefix + juce::String (channel); }
+/** "Out 3+4" for channel 2 (one-based like the interface labels). */
+inline juce::String hardwareRouteName (int channel) { return "Out " + juce::String (channel + 1) + "+" + juce::String (channel + 2); }
+
+/** The bus a track plays into ("" = master); a missing bus also means master. May be an interface output (hw:). */
 juce::String outputOf (const juce::ValueTree& track);
 /** False if routing `from` into `to` (output or send) would feed `to` back into itself, or `to` cannot take input. */
 bool canRouteTo (const juce::ValueTree& tracks, const juce::ValueTree& from, const juce::ValueTree& to);

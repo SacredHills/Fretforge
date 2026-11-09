@@ -1250,7 +1250,7 @@ void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
 
 void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
 {
-    if (owner.automationMode() && autoLane.isValid()) { autoMouseDrag (e); return; }
+    if (owner.automationMode() && (autoLane.isValid() || autoPending)) { autoMouseDrag (e); return; }
     if (mode == Mode::marquee)
     {
         if (! dragged && e.getDistanceFromDragStart() < 4) return;
@@ -1369,6 +1369,7 @@ void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
 
 void TimelineCanvas::mouseUp (const juce::MouseEvent& e)
 {
+    if (autoPending) { autoPending = false; repaint(); return; }
     if (autoLane.isValid()) { autoLane = {}; autoPoint = -1; autoTrack = -1; repaint(); return; }
     if (mode == Mode::marquee)
     {
@@ -1454,6 +1455,11 @@ int TimelineCanvas::pointAt (juce::Point<float> at, const std::vector<automation
 void TimelineCanvas::drawAutomation (juce::Graphics& g)
 {
     const int n = owner.numTracks();
+    if (autoPending)   // holding on an empty spot: a ring shows where the point will go
+    {
+        g.setColour (palette::text.withAlpha (0.8f));
+        g.drawEllipse (juce::Rectangle<float> (14.0f, 14.0f).withCentre (autoPendingPos), 1.5f);
+    }
     for (int i = 0; i < n; ++i)
     {
         const auto row = laneRect (i);
@@ -1531,42 +1537,83 @@ bool TimelineCanvas::autoMouseDown (const juce::MouseEvent& e)
         });
         return true;
     }
-    owner.doc.undo().beginNewTransaction ("Automation");
-    autoLane = automation::lane (t, prm, true, &owner.doc.undo());
-    autoTrack = ti;
-    if (hit >= 0) autoPoint = hit;
-    else
+    autoMoved = false;
+    if (hit >= 0)
     {
-        automation::Point np;
-        np.time = owner.geo.snap (owner.geo.timeFor (e.position.x), ! e.mods.isAltDown());
-        np.value = automation::fromNormal (prm, (row.getBottom() - e.position.y) / row.getHeight());
-        if (pts.empty())   // the first point: hold the current value up to here
-        {
-            const float v0 = automation::defaultValue (prm, t);
-            if (np.time > 0.001) pts.push_back ({ 0.0, v0 });
-        }
-        pts.push_back (np);
-        std::stable_sort (pts.begin(), pts.end(), [] (const automation::Point& a, const automation::Point& b) { return a.time < b.time; });
-        for (int k = 0; k < (int) pts.size(); ++k)
-            if (pts[(size_t) k].time == np.time && pts[(size_t) k].value == np.value) autoPoint = k;
-        automation::setPoints (autoLane, pts, &owner.doc.undo());
+        owner.doc.undo().beginNewTransaction ("Move automation point");
+        autoLane = automation::lane (t, prm, true, &owner.doc.undo());
+        autoTrack = ti;
+        autoPoint = hit;
+        autoPts = automation::pointsOf (autoLane);
+        autoGrabOffset = pointPos (prm, autoPts[(size_t) hit], row) - e.position;
+        repaint();
+        return true;
     }
-    autoPts = automation::pointsOf (autoLane);
+    // empty spot: the point appears once the button has been held for a moment
+    autoPending = true;
+    autoPendingTrack = ti;
+    autoPendingPos = e.position;
+    autoPendingAlt = e.mods.isAltDown();
+    const int token = ++autoPendingToken;
+    juce::Component::SafePointer<TimelineCanvas> safe (this);
+    juce::Timer::callAfterDelay (autoHoldMs, [safe, token] {
+        if (safe == nullptr || ! safe->autoPending || safe->autoPendingToken != token) return;
+        if (! juce::ModifierKeys::currentModifiers.isLeftButtonDown()) { safe->autoPending = false; safe->repaint(); return; }
+        safe->autoPending = false;
+        safe->addAutoPoint (safe->autoPendingTrack, safe->autoPendingPos, safe->autoPendingAlt);
+        safe->autoGrabOffset = {};
+        safe->autoMoved = true;   // already held: it follows the mouse straight away
+    });
     repaint();
     return true;
 }
 
+void TimelineCanvas::addAutoPoint (int ti, juce::Point<float> pos, bool noSnap)
+{
+    auto t = owner.trackAtIndex (ti);
+    if (! t.isValid()) return;
+    const auto prm = owner.laneParamFor (t);
+    const auto row = laneRect (ti);
+    owner.doc.undo().beginNewTransaction ("Add automation point");
+    autoLane = automation::lane (t, prm, true, &owner.doc.undo());
+    autoTrack = ti;
+    auto pts = automation::pointsOf (autoLane);
+    automation::Point np;
+    np.time = owner.geo.snap (owner.geo.timeFor (pos.x), ! noSnap);
+    np.value = automation::fromNormal (prm, juce::jlimit (0.0f, 1.0f, (row.getBottom() - pos.y) / row.getHeight()));
+    if (pts.empty())   // the first point: hold the current value up to here
+    {
+        const float v0 = automation::defaultValue (prm, t);
+        if (np.time > 0.001) pts.push_back ({ 0.0, v0 });
+    }
+    pts.push_back (np);
+    std::stable_sort (pts.begin(), pts.end(), [] (const automation::Point& a, const automation::Point& b) { return a.time < b.time; });
+    for (int k = 0; k < (int) pts.size(); ++k)
+        if (pts[(size_t) k].time == np.time && pts[(size_t) k].value == np.value) autoPoint = k;
+    automation::setPoints (autoLane, pts, &owner.doc.undo());
+    autoPts = automation::pointsOf (autoLane);
+    repaint();
+}
+
 void TimelineCanvas::autoMouseDrag (const juce::MouseEvent& e)
 {
+    if (autoPending)
+    {
+        if (e.getDistanceFromDragStart() > 4) { autoPending = false; repaint(); }   // moved before the hold: no point
+        return;
+    }
     if (! autoLane.isValid() || ! juce::isPositiveAndBelow (autoPoint, (int) autoPts.size())) return;
+    if (! autoMoved && e.getDistanceFromDragStart() < 4) return;   // a click on a point does not nudge it
+    autoMoved = true;
     const auto t = owner.trackAtIndex (autoTrack);
     const auto prm = owner.laneParamFor (t);
     const auto row = laneRect (autoTrack);
+    const auto pos = e.position + autoGrabOffset;
     auto& p = autoPts[(size_t) autoPoint];
     const double lo = autoPoint > 0 ? autoPts[(size_t) autoPoint - 1].time : 0.0;
     const double hi = autoPoint + 1 < (int) autoPts.size() ? autoPts[(size_t) autoPoint + 1].time : 1.0e9;
-    p.time = juce::jlimit (lo, hi, owner.geo.snap (owner.geo.timeFor (e.position.x), ! e.mods.isAltDown()));
-    p.value = automation::fromNormal (prm, (row.getBottom() - e.position.y) / row.getHeight());
+    p.time = juce::jlimit (lo, hi, owner.geo.snap (owner.geo.timeFor (pos.x), ! e.mods.isAltDown()));
+    p.value = automation::fromNormal (prm, juce::jlimit (0.0f, 1.0f, (row.getBottom() - pos.y) / row.getHeight()));
     automation::setPoints (autoLane, autoPts, &owner.doc.undo());
     repaint();
 }
@@ -1584,7 +1631,15 @@ void TimelineCanvas::mouseDoubleClick (const juce::MouseEvent& e)
         auto l = automation::lane (t, prm, false, nullptr);
         auto pts = automation::pointsOf (l);
         const int hit = pointAt (e.position, pts, prm, laneRect (ti));
-        if (hit < 0) return;
+        if (hit < 0)
+        {
+            autoPending = false;
+            addAutoPoint (ti, e.position, e.mods.isAltDown());
+            autoLane = {};
+            autoPoint = -1;
+            autoTrack = -1;
+            return;
+        }
         // type in the point's value
         auto* w = new juce::AlertWindow ("Automation point", owner.laneLabel (t, prm) + " at " + juce::String (pts[(size_t) hit].time, 2)
                                              + " s.  Type the value (" + (prm == automation::volumeParam ? juce::String ("dB, e.g. -6")

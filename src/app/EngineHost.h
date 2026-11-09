@@ -24,6 +24,8 @@ public:
     bool hasDevice() const;
     juce::String deviceSummary() const;       // "ALSA · hw:0 · 48 kHz · 256 smp · 10.7 ms"
     juce::StringArray activeInputChannelNames() const;
+    /** Names of the device's switched-on outputs and their channel numbers. */
+    juce::StringArray activeOutputChannelNames (juce::Array<int>& channels) const;
     double cpuUsage() const { return deviceManager.getCpuUsage(); }
     int xruns() const;
 

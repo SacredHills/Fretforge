@@ -84,8 +84,16 @@ void GraphMixer::processJob (void* ctx, int i) noexcept
     self.processTrack (c.graph->tracks[(size_t) ti], self.bufL[(size_t) ti].data(), self.bufR[(size_t) ti].data(), c.n);
 }
 
-void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR, int n) noexcept
+void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR, int n, float* const* hwOut, int numHw) noexcept
 {
+    // an interface output pair: its left channel and its right (the left again if the right is off)
+    auto hwPair = [hwOut, numHw] (int ch, float*& l, float*& r) {
+        l = r = nullptr;
+        if (hwOut == nullptr || ! juce::isPositiveAndBelow (ch, numHw) || hwOut[ch] == nullptr) return false;
+        l = hwOut[ch];
+        r = ch + 1 < numHw && hwOut[ch + 1] != nullptr ? hwOut[ch + 1] : hwOut[ch];
+        return true;
+    };
     const int numTracks = juce::jmin ((int) g.tracks.size(), (int) bufL.size());
     if (numTracks == 0 || n <= 0 || n > blockSize) return;
     updateLatencies (g);
@@ -144,6 +152,13 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
                 addScaled (bufL[(size_t) s.target].data(), L, s.gain * (s.pre ? 1.0f : t.gainL), n);
                 addScaled (bufR[(size_t) s.target].data(), R, s.gain * (s.pre ? 1.0f : t.gainR), n);
             }
+            for (const auto& s : t.hwSends)
+            {
+                float *hl, *hr;
+                if (! hwPair (s.target, hl, hr)) continue;
+                addScaled (hl, L, s.gain * (s.pre ? 1.0f : t.gainL), n);
+                addScaled (hr, R, s.gain * (s.pre ? 1.0f : t.gainR), n);
+            }
             // fader / pan (ramped when automation moved them since the last block)
             auto applyGain = [n] (float* x, float from, float to) {
                 if (from < 0.0f || std::abs (from - to) < 1.0e-6f) { juce::FloatVectorOperations::multiply (x, to, n); return; }
@@ -159,6 +174,7 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
             float* dL = outL;
             float* dR = outR;
             if (juce::isPositiveAndBelow (t.output, numTracks)) { dL = bufL[(size_t) t.output].data(); dR = bufR[(size_t) t.output].data(); }
+            else if (float *hl, *hr; t.hwOutput >= 0 && hwPair (t.hwOutput, hl, hr)) { dL = hl; dR = hr; }
             juce::FloatVectorOperations::add (dL, L, n);
             juce::FloatVectorOperations::add (dR, R, n);
         }

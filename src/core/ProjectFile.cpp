@@ -328,15 +328,24 @@ juce::Result Bundle::save (const juce::ValueTree& projectTree, const juce::File&
     const auto text = serialise (copy);
 
     const auto doc = documentFile (bundleDir);
+    const auto named = namedDocumentFile (bundleDir);
+    const auto stem = named.getFileNameWithoutExtension();
     if (doc.existsAsFile() && backupsToKeep > 0)
     {
         const auto dir = backupsDir (bundleDir);
         const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
-        auto backup = dir.getChildFile ("project-" + stamp + ".rvn").getNonexistentSibling (false);
+        auto backup = dir.getChildFile (stem + "-" + stamp + documentExtension).getNonexistentSibling (false);
         doc.copyFileTo (backup);
 
-        auto backups = dir.findChildFiles (juce::File::findFiles, false, "project-*.rvn");
-        backups.addArray (dir.findChildFiles (juce::File::findFiles, false, "project-*.ffp"));
+        // timestamped backups of this project (also those from before documents were named after the project)
+        juce::Array<juce::File> backups;
+        for (auto& f : dir.findChildFiles (juce::File::findFiles, false))
+        {
+            const auto n = f.getFileName();
+            if ((n.startsWith (stem + "-") || n.startsWith ("project-")) && ! n.contains ("before-rename")
+                && (n.endsWith (documentExtension) || n.endsWith (".ffp")))
+                backups.add (f);
+        }
         backups.sort();
         while (backups.size() > backupsToKeep)
         {
@@ -345,15 +354,38 @@ juce::Result Bundle::save (const juce::ValueTree& projectTree, const juce::File&
         }
     }
 
-    r = writeFileAtomically (bundleDir.getChildFile (documentName), text);
+    r = writeFileAtomically (named, text);
     if (r.wasOk())
     {
         discardAutosave (bundleDir);
-        // an older project.ffp has been replaced by project.rvn: keep it among the backups
-        if (const auto old = bundleDir.getChildFile (legacyDocumentName); old.existsAsFile())
-            old.moveFileTo (backupsDir (bundleDir).getChildFile ("project-before-rename.ffp").getNonexistentSibling (false));
+        // an older document (project.rvn, project.ffp, or one named before the folder was renamed) has been replaced
+        // by "<name>.rvn": keep it among the backups so the folder has a single document
+        if (doc != named && doc.existsAsFile())
+            doc.moveFileTo (backupsDir (bundleDir).getChildFile (doc.getFileNameWithoutExtension() + "-before-rename" + doc.getFileExtension())
+                                .getNonexistentSibling (false));
     }
     return r;
+}
+
+juce::File Bundle::documentFile (const juce::File& bundleDir)
+{
+    const auto named = namedDocumentFile (bundleDir);
+    if (named.existsAsFile()) return named;
+    for (auto* old : { documentName, legacyDocumentName })
+        if (const auto f = bundleDir.getChildFile (old); f.existsAsFile()) return f;
+    auto others = bundleDir.findChildFiles (juce::File::findFiles, false, juce::String ("*") + documentExtension);
+    others.sort();
+    return others.isEmpty() ? named : others.getFirst();
+}
+
+juce::File Bundle::autosaveFile (const juce::File& bundleDir)
+{
+    const auto dir = bundleDir.getChildFile ("Autosave");
+    const auto named = dir.getChildFile (juce::File::createLegalFileName (bundleDir.getFileNameWithoutExtension()) + ".autosave" + documentExtension);
+    if (named.existsAsFile()) return named;
+    for (auto* old : { autosaveName, legacyAutosaveName })
+        if (const auto f = dir.getChildFile (old); f.existsAsFile()) return f;
+    return named;
 }
 
 LoadResult Bundle::load (const juce::File& bundleDir)
@@ -376,7 +408,9 @@ LoadResult Bundle::load (const juce::File& bundleDir)
 
 juce::Result Bundle::writeAutosave (const juce::ValueTree& projectTree, const juce::File& bundleDir)
 {
-    return writeFileAtomically (bundleDir.getChildFile ("Autosave").getChildFile (autosaveName), serialise (projectTree));
+    const auto dir = bundleDir.getChildFile ("Autosave");
+    return writeFileAtomically (dir.getChildFile (juce::File::createLegalFileName (bundleDir.getFileNameWithoutExtension()) + ".autosave" + documentExtension),
+                                serialise (projectTree));
 }
 
 bool Bundle::hasNewerAutosave (const juce::File& bundleDir)

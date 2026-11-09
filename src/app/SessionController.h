@@ -44,6 +44,10 @@ public:
     void showSendMenu (juce::ValueTree track, juce::ValueTree send, juce::Component* target);
     /** "Master" or the bus name. */
     juce::String outputName (const juce::ValueTree& track) const;
+    /** Display name of a route target: a track's name, an interface output ("Out 3+4"), or "Master" for "". */
+    juce::String routeName (const juce::String& targetId) const;
+    /** The interface output pairs that can take a track (left channel numbers, from Out 3+4 on) with their labels. */
+    juce::Array<std::pair<int, juce::String>> interfaceOutputPairs() const;
 
     void deleteTrack (juce::ValueTree track);
     juce::ValueTree duplicateTrack (juce::ValueTree track);

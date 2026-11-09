@@ -129,10 +129,44 @@ struct ProjectFileTests : juce::UnitTest
             expect (r.result.wasOk(), r.result.getErrorMessage());
             expectEquals ((double) r.tree.getChildWithName (ids::TRANSPORT)[ids::bpm], 133.0);
             expect (Bundle::save (r.tree, old).wasOk());
-            expect (old.getChildFile ("project.rvn").existsAsFile());
+            expect (old.getChildFile ("Old.rvn").existsAsFile());
             expect (! old.getChildFile ("project.ffp").existsAsFile(), "the old document moves into Backups");
             expect (Bundle::backupsDir (old).getChildFile ("project-before-rename.ffp").existsAsFile());
             expect (Bundle::load (old).result.wasOk());
+        }
+
+        beginTest ("the document is named after the project; older project.rvn and renamed folders still open");
+        {
+            auto b = tmp.getChildFile ("My Song.ravenyr");
+            expect (Bundle::createStructure (b).wasOk());
+            auto p = createDefault ("My Song");
+            expect (Bundle::save (p, b).wasOk());
+            expect (b.getChildFile ("My Song.rvn").existsAsFile());
+            expect (! b.getChildFile ("project.rvn").existsAsFile());
+            expect (Bundle::writeAutosave (p, b).wasOk());
+            expect (b.getChildFile ("Autosave").getChildFile ("My Song.autosave.rvn").existsAsFile());
+            expect (Bundle::save (p, b).wasOk());
+            expect (! Bundle::autosaveFile (b).existsAsFile());
+
+            // a project saved with the old fixed name opens, and saving renames its document
+            auto o = tmp.getChildFile ("Older.ravenyr");
+            expect (Bundle::createStructure (o).wasOk());
+            p.getChildWithName (ids::TRANSPORT).setProperty (ids::bpm, 97.0, nullptr);
+            expect (o.getChildFile ("project.rvn").replaceWithText (serialise (p)));
+            expect (Bundle::isBundle (o));
+            auto r = Bundle::load (o);
+            expectEquals ((double) r.tree.getChildWithName (ids::TRANSPORT)[ids::bpm], 97.0);
+            expect (Bundle::save (r.tree, o).wasOk());
+            expect (o.getChildFile ("Older.rvn").existsAsFile() && ! o.getChildFile ("project.rvn").existsAsFile());
+            expectEquals (o.findChildFiles (juce::File::findFiles, false, "*.rvn").size(), 1);
+
+            // the folder renamed outside the app: its document is still found
+            auto moved = tmp.getChildFile ("Renamed.ravenyr");
+            expect (o.moveFileTo (moved));
+            expect (Bundle::isBundle (moved));
+            expectEquals ((double) Bundle::load (moved).tree.getChildWithName (ids::TRANSPORT)[ids::bpm], 97.0);
+            expect (Bundle::save (r.tree, moved).wasOk());
+            expect (moved.getChildFile ("Renamed.rvn").existsAsFile() && ! moved.getChildFile ("Older.rvn").existsAsFile());
         }
 
         beginTest ("atomic write leaves no temp files and preserves content");

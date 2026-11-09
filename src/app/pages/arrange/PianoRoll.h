@@ -28,6 +28,7 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed (const juce::KeyPress&) override;
@@ -64,6 +65,7 @@ private:
     juce::Point<float> downPos;
     juce::Rectangle<float> marquee;
     int keyboardNote = -1;
+    int hoverPitch = -1;   // pitch row under the mouse (keyboard or grid): its name is shown on the key
     bool changed = false, writing = false, fitted = false;
 
     // geometry

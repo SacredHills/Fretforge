@@ -201,6 +201,12 @@ private:
     void meterMix (float* const* bus, int numBus, int offset, int len) noexcept;
     void renderSegment (const float* const* inputs, int numInputs, float* const* bus, int numBus,
                         int offset, int len, bool rolling, bool recordingNow) noexcept;
+    // interface outputs: device output channel -> index in the callback's (active-only) output array, set when the
+    // device starts (-1 = channel off); without a device (tests) channel n is output n. hwOut: this callback's buffers.
+    std::array<int, timeline::maxHardwareChannels> outputSlot {};
+    bool haveOutputSlots = false;
+    std::array<float*, timeline::maxHardwareChannels> hwOut {}, hwSeg {};
+    int numHwOut = 0;
     GraphMixer mixer;
     TrackWorkers workers;
     double workersRate = 0.0;

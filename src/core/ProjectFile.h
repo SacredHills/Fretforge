@@ -6,6 +6,8 @@ namespace ff::project
 constexpr int currentFormatVersion = 1;
 constexpr const char* formatTag = "RavenyrProject";
 constexpr const char* bundleExtension = ".ravenyr";
+constexpr const char* documentExtension = ".rvn";   // the document is "<Project name>.rvn" (named after the bundle folder)
+// projects saved before documents were named after the project use these names; they open and are renamed on save
 constexpr const char* documentName = "project.rvn";
 constexpr const char* autosaveName = "project.autosave.rvn";
 // projects saved before the app was renamed (RAVENYR) still open; they are saved with the new names
@@ -54,17 +56,15 @@ void validate (juce::ValueTree& project, juce::StringArray& warnings);
 struct Bundle
 {
     static const juce::StringArray& mediaFolders();
-    /** The document to read: project.rvn, or an older project.ffp if that is all there is. Saving always writes project.rvn. */
-    static juce::File documentFile (const juce::File& bundleDir)
+    /** The document named after the project: "My Song.ravenyr/My Song.rvn". Saving always writes this one. */
+    static juce::File namedDocumentFile (const juce::File& bundleDir)
     {
-        const auto f = bundleDir.getChildFile (documentName), old = bundleDir.getChildFile (legacyDocumentName);
-        return ! f.existsAsFile() && old.existsAsFile() ? old : f;
+        return bundleDir.getChildFile (juce::File::createLegalFileName (bundleDir.getFileNameWithoutExtension()) + documentExtension);
     }
-    static juce::File autosaveFile (const juce::File& bundleDir)
-    {
-        const auto f = bundleDir.getChildFile ("Autosave").getChildFile (autosaveName), old = bundleDir.getChildFile ("Autosave").getChildFile (legacyAutosaveName);
-        return ! f.existsAsFile() && old.existsAsFile() ? old : f;
-    }
+    /** The document to read: "<name>.rvn"; else an older project.rvn / project.ffp; else any other .rvn in the folder
+        (the folder was renamed). Returns namedDocumentFile() if there is none. */
+    static juce::File documentFile (const juce::File& bundleDir);
+    static juce::File autosaveFile (const juce::File& bundleDir);
     static juce::File backupsDir (const juce::File& bundleDir) { return bundleDir.getChildFile ("Backups"); }
 
     /** Ensures `dir` ends with the bundle extension. */
@@ -83,8 +83,8 @@ struct Bundle
     static LoadResult loadAutosave (const juce::File& bundleDir);
     static void discardAutosave (const juce::File& bundleDir)
     {
-        bundleDir.getChildFile ("Autosave").getChildFile (autosaveName).deleteFile();
-        bundleDir.getChildFile ("Autosave").getChildFile (legacyAutosaveName).deleteFile();
+        for (auto& f : bundleDir.getChildFile ("Autosave").findChildFiles (juce::File::findFiles, false, "*.autosave.*"))
+            f.deleteFile();
     }
     static bool isBundleFolderName (const juce::File& dir) { return dir.hasFileExtension (bundleExtension) || dir.hasFileExtension (legacyBundleExtension); }
 

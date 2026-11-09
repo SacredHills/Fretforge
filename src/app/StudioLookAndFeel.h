@@ -55,6 +55,7 @@ public:
     void drawComboBox (juce::Graphics&, int w, int h, bool down, int bx, int by, int bw, int bh, juce::ComboBox&) override;
     void drawTabButton (juce::TabBarButton&, juce::Graphics&, bool over, bool down) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+    void drawButtonText (juce::Graphics&, juce::TextButton&, bool highlighted, bool down) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override { return uiFont (14.0f); }
     juce::Font getLabelFont (juce::Label& l) override { return l.getFont(); }
     juce::Font getPopupMenuFont() override { return uiFont (14.0f); }

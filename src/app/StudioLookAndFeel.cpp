@@ -62,6 +62,28 @@ juce::Font StudioLookAndFeel::getTextButtonFont (juce::TextButton&, int h)
     return uiFont (juce::jmin (15.0f, h * 0.55f), true);
 }
 
+// Like JUCE's, but with small side margins and squeezing instead of "..." so narrow buttons (M / S / R on mixer
+// strips) still show their letter.
+void StudioLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool)
+{
+    const auto font = getTextButtonFont (b, b.getHeight());
+    g.setFont (font);
+    g.setColour (b.findColour (b.getToggleState() ? juce::TextButton::textColourOnId : juce::TextButton::textColourOffId)
+                     .withMultipliedAlpha (b.isEnabled() ? 1.0f : 0.5f));
+    const int side = b.getWidth() < 30 ? 1 : juce::jmin (6, b.getHeight() / 3);
+    const auto text = b.getButtonText();
+    auto area = b.getLocalBounds().reduced (side, 1);
+    if (b.getWidth() < 30)
+    {
+        // short labels: draw at the font size as long as it fits at all, a little smaller if not
+        const float w = juce::GlyphArrangement::getStringWidth (font, text);
+        if (w > (float) area.getWidth()) g.setFont (font.withHeight (font.getHeight() * juce::jmax (0.6f, (float) area.getWidth() / w)));
+        g.drawText (text, area, juce::Justification::centred, false);
+        return;
+    }
+    g.drawFittedText (text, area, juce::Justification::centred, 2, 0.75f);
+}
+
 void StudioLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& base,
                                               bool highlighted, bool down)
 {

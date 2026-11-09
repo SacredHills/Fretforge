@@ -163,8 +163,17 @@ private:
     juce::ValueTree autoLane;
     int autoTrack = -1, autoPoint = -1;
     std::vector<automation::Point> autoPts;
+    // a new point needs click-and-hold (autoHoldMs) without moving, so stray clicks add nothing; a double-click adds one
+    // at once. Dragging (existing or just-made points) starts after a few pixels and keeps the grab offset, so a point
+    // does not jump when it is clicked.
+    static constexpr int autoHoldMs = 350;
+    bool autoPending = false, autoMoved = false;
+    int autoPendingTrack = -1, autoPendingToken = 0;
+    juce::Point<float> autoPendingPos, autoGrabOffset;
+    bool autoPendingAlt = false;
     bool autoMouseDown (const juce::MouseEvent&);
     void autoMouseDrag (const juce::MouseEvent&);
+    void addAutoPoint (int trackIndex, juce::Point<float> pos, bool noSnap);
     juce::Rectangle<float> laneRect (int trackIndex) const;
     juce::Point<float> pointPos (const juce::String& param, const automation::Point&, juce::Rectangle<float> row) const;
     int pointAt (juce::Point<float>, const std::vector<automation::Point>&, const juce::String& param, juce::Rectangle<float> row) const;

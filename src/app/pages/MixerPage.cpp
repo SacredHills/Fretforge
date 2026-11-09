@@ -264,7 +264,9 @@ void RouteList::paint (juce::Graphics& g)
             g.fillRoundedRectangle (r.withWidth (r.getWidth() * x), 3.0f);
             g.setColour (palette::text);
             g.setFont (uiFont (10.5f, true));
-            g.drawText ((dest.isValid() ? dest[ids::name].toString() : juce::String ("?")), r.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
+            g.drawText (timeline::isHardwareRoute (s[ids::target].toString()) ? session.routeName (s[ids::target].toString())
+                                                                             : dest.isValid() ? dest[ids::name].toString() : juce::String ("?"),
+                        r.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
             g.setFont (uiFont (10.0f));
             g.drawText (juce::String ((double) s[ids::level], 1) + ((bool) s[ids::pre] ? "p" : ""), r.reduced (4.0f, 0.0f), juce::Justification::centredRight, false);
         }

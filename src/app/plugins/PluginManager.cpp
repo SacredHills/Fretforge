@@ -1,4 +1,5 @@
 #include "PluginManager.h"
+#include "../ToolWindow.h"
 #include "../StudioLookAndFeel.h"
 #include "../GlobalKeys.h"
 #include "engine/fx/BuiltinPlugins.h"
@@ -379,7 +380,7 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         content = std::make_unique<Content> (m, plugin, *ed, std::move (bypass));
         setContentNonOwned (content.get(), true);
         setResizable (ed->isResizable(), false);
-        setAlwaysOnTop (true);
+        floating = std::make_unique<FloatAboveApp> (*this);
         centreWithSize (getWidth(), getHeight());
         setVisible (true);
     }
@@ -397,6 +398,7 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
     std::shared_ptr<juce::AudioPluginInstance> plugin;   // keeps the plugin alive while its editor is open
     std::unique_ptr<juce::AudioProcessorEditor> editor;
     std::unique_ptr<Content> content;
+    std::unique_ptr<FloatAboveApp> floating;
     std::function<void()> onClosed;
 };
 
