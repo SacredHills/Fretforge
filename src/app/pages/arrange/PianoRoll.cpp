@@ -357,16 +357,23 @@ void PianoRoll::paint (juce::Graphics& g)
     {
         juce::Graphics::ScopedSaveState ss (g);
         g.reduceClipRegion (grid);
+        // row fills on whole pixels (no seams), then the lines in a second pass so no row paints over its neighbour's
+        // line: a line under every row, stronger between E / F and at each octave (under C)
         for (int p = 127; p >= 0; --p)
         {
             const float y = yFor (p);
             if (y > (float) grid.getBottom() || y + keyH < (float) grid.getY()) continue;
+            const int y0 = juce::roundToInt (y), y1 = juce::roundToInt (y + keyH);
             g.setColour (isBlackKey (p) ? palette::bg.darker (0.45f) : palette::bg.brighter (0.07f));
-            g.fillRect ((float) grid.getX(), y, (float) grid.getWidth(), keyH);
-            // a line under every row; stronger between E / F and at each octave (under C)
+            g.fillRect (grid.getX(), y0, grid.getWidth(), y1 - y0);
+        }
+        for (int p = 127; p >= 0; --p)
+        {
+            const float y = yFor (p);
+            if (y > (float) grid.getBottom() || y + keyH < (float) grid.getY()) continue;
             const int k = p % 12;
-            g.setColour (k == 0 ? juce::Colours::white.withAlpha (0.22f) : k == 5 ? juce::Colours::white.withAlpha (0.12f) : juce::Colours::black.withAlpha (0.5f));
-            g.drawHorizontalLine ((int) (y + keyH), (float) grid.getX(), (float) grid.getRight());
+            g.setColour (k == 0 ? juce::Colours::white.withAlpha (0.24f) : k == 5 ? juce::Colours::white.withAlpha (0.15f) : juce::Colours::white.withAlpha (0.08f));
+            g.fillRect (grid.getX(), juce::roundToInt (y + keyH) - 1, grid.getWidth(), 1);
         }
         // outside the clip: darker
         const float cx0 = xFor (clipStart()), cx1 = xFor (clipEnd());
