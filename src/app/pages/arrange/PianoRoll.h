@@ -91,7 +91,10 @@ private:
     double snap (double t, bool on) const;
     /** The start of the grid cell containing t (where a new note goes when you click in a cell). */
     double snapDown (double t, bool on) const;
-    double newNoteLength() const;
+    double newNoteLength (double atSec) const;   // seconds, from where the note starts (the tempo can change along it)
+    double gridQuarter() const;                  // the grid step in quarter notes (0: off)
+    ff::TempoMap tmap;                           // the project's tempo track
+    void refreshMap() { tmap = doc.tempoMap(); }
 
     void load();
     void commit (const juce::String& undoName = {});   // writes the notes (one undo step per gesture)
@@ -112,7 +115,7 @@ private:
 
     void timerCallback() override;
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
-    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { if (! writing) load(); }
+    void valueTreeChildAdded (juce::ValueTree& p, juce::ValueTree&) override { if (p.hasType (project::ids::TRANSPORT)) refreshMap(); if (! writing) load(); }
     void valueTreeParentChanged (juce::ValueTree&) override;
 };
 } // namespace ff

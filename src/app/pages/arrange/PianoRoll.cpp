@@ -18,6 +18,7 @@ bool isBlackKey (int pitch) { const int k = pitch % 12; return k == 1 || k == 3 
 
 PianoRoll::PianoRoll (ProjectDocument& d, EngineHost& h, juce::ValueTree c) : doc (d), host (h), clip (c)
 {
+    refreshMap();
     setWantsKeyboardFocus (true);
     for (int i = 0; i < (int) std::size (gridNames); ++i) gridBox.addItem (gridNames[i], i + 1);
     gridBox.setSelectedId (5, juce::dontSendNotification);   // 1/16
@@ -91,7 +92,7 @@ void PianoRoll::updateScrollBars()
     const double view = g.getWidth() / pps;
     double end = clipEnd();
     for (auto& n : notes) end = juce::jmax (end, absStart (n) + n.length);
-    end += 4.0 * quarterSec() * juce::jmax (1, doc.tsNum());
+    end += 4.0 * quarterSec() * juce::jmax (1, doc.tsNum());   // (roughly four bars of room)
     const double lo = juce::jmin (0.0, scrollT), hi = juce::jmax (end, scrollT + view);
     hbar.setRangeLimits (lo, hi, juce::dontSendNotification);
     hbar.setCurrentRange (scrollT, view, juce::dontSendNotification);
@@ -120,25 +121,29 @@ int PianoRoll::pitchFor (float y) const { return juce::jlimit (0, 127, (int) std
 double PianoRoll::clipStart() const { return (double) clip[tl::ids::start]; }
 double PianoRoll::clipEnd() const { return clipStart() + (double) clip[tl::ids::length]; }
 double PianoRoll::offset() const { return (double) clip[tl::ids::offset]; }
-double PianoRoll::quarterSec() const { return 60.0 / juce::jmax (20.0, doc.tempo()); }
-double PianoRoll::gridSec() const { return gridQuarters[juce::jlimit (0, (int) std::size (gridQuarters) - 1, gridBox.getSelectedId() - 1)] * quarterSec(); }
+double PianoRoll::quarterSec() const { return 60.0 / juce::jmax (20.0, tmap.bpmAtSeconds (scrollT)); }   // at the left edge of the view
+double PianoRoll::gridQuarter() const { return gridQuarters[juce::jlimit (0, (int) std::size (gridQuarters) - 1, gridBox.getSelectedId() - 1)]; }
+double PianoRoll::gridSec() const { return gridQuarter() * quarterSec(); }
+// The grid is on the beats of the tempo track, so snapping works in quarter notes and converts back to seconds.
 double PianoRoll::snap (double t, bool on) const
 {
-    const double g = gridSec();
+    const double g = gridQuarter();
     if (! on || g <= 0.0) return t;
-    return std::round (t / g) * g;
+    return tmap.secondsAtQuarter (std::round (tmap.quarterAtSeconds (t) / g) * g);
 }
 double PianoRoll::snapDown (double t, bool on) const
 {
-    const double g = gridSec();
+    const double g = gridQuarter();
     if (! on || g <= 0.0) return t;
-    return std::floor (t / g + 1.0e-9) * g;
+    return tmap.secondsAtQuarter (std::floor (tmap.quarterAtSeconds (t) / g + 1.0e-9) * g);
 }
-double PianoRoll::newNoteLength() const
+double PianoRoll::newNoteLength (double atSec) const
 {
-    const double q = lengthQuarters[juce::jlimit (0, (int) std::size (lengthQuarters) - 1, lengthBox.getSelectedId() - 1)];
-    const double g = q > 0.0 ? q * quarterSec() : gridSec();
-    return g > 0.0 ? g : quarterSec() * 0.25;
+    double q = lengthQuarters[juce::jlimit (0, (int) std::size (lengthQuarters) - 1, lengthBox.getSelectedId() - 1)];
+    if (q <= 0.0) q = gridQuarter();
+    if (q <= 0.0) q = 0.25;
+    const double q0 = tmap.quarterAtSeconds (atSec);
+    return tmap.secondsAtQuarter (q0 + q) - tmap.secondsAtQuarter (q0);
 }
 
 juce::Rectangle<float> PianoRoll::noteRect (const midiclip::Note& n) const
@@ -303,9 +308,9 @@ void PianoRoll::duplicateSelected()
     for (size_t i = 0; i < notes.size(); ++i)
         if (selected[i]) { first = juce::jmin (first, absStart (notes[i])); last = juce::jmax (last, absStart (notes[i]) + notes[i].length); }
     copySelected();
-    const double gs = gridSec();
-    const double span = gs > 0.0 ? std::ceil ((last - first) / gs - 1.0e-6) * gs : last - first;
-    pasteAt (first + juce::jmax (span, gs > 0.0 ? gs : 0.01));
+    const double gq = gridQuarter(), fq = tmap.quarterAtSeconds (first), lq = tmap.quarterAtSeconds (last);
+    const double spanQ = gq > 0.0 ? std::ceil ((lq - fq) / gq - 1.0e-6) * gq : lq - fq;
+    pasteAt (tmap.secondsAtQuarter (fq + juce::jmax (spanQ, gq > 0.0 ? gq : 0.01)));
     noteClipboard = saved;   // duplicating leaves the clipboard alone
     flashTicks = 0;
     updateInfo();
@@ -330,10 +335,14 @@ void PianoRoll::transpose (int semis)
 
 void PianoRoll::nudge (int steps)
 {
-    const double g = gridSec() > 0.0 ? gridSec() : quarterSec() * 0.25;
+    const double g = gridQuarter() > 0.0 ? gridQuarter() : 0.25;
     if (numSelected() == 0) return;
     for (size_t i = 0; i < notes.size(); ++i)
-        if (selected[i]) notes[i].start = juce::jmax (offset() - clipStart() + 0.0, notes[i].start + steps * g);
+        if (selected[i])
+        {
+            const double q = tmap.quarterAtSeconds (absStart (notes[i])) + steps * g;
+            notes[i].start = juce::jmax (offset() - clipStart() + 0.0, tmap.secondsAtQuarter (juce::jmax (0.0, q)) - clipStart() + offset());
+        }
     commit ("Move notes");
 }
 
@@ -355,6 +364,7 @@ void PianoRoll::fit()
 
 void PianoRoll::paint (juce::Graphics& g)
 {
+    refreshMap();
     updateScrollBars();
     g.fillAll (palette::bg);
     const auto grid = gridArea();
@@ -394,25 +404,27 @@ void PianoRoll::paint (juce::Graphics& g)
         g.fillRect (juce::Rectangle<float> (cx1, (float) grid.getY(), (float) grid.getRight() - cx1, (float) grid.getHeight()));
 
         // grid: a line at every grid step (bars strongest, then beats, then the rest); alternate bars shaded
-        const double q = quarterSec();
         const int num = juce::jmax (1, doc.tsNum()), den = juce::jmax (1, doc.tsDen());
-        const double beat = q * 4.0 / den, bar = beat * num;
+        const double beatQ = 4.0 / den, barQ = beatQ * num;
         const double t0 = timeFor ((float) grid.getX()), t1 = timeFor ((float) grid.getRight());
-        for (auto b = (juce::int64) std::floor (t0 / bar); (double) b * bar < t1; ++b)
+        const double q0 = tmap.quarterAtSeconds (t0), q1 = tmap.quarterAtSeconds (t1);
+        for (auto b = (juce::int64) std::floor (q0 / barQ); (double) b * barQ < q1; ++b)
             if ((b & 1) != 0)
             {
+                const float xa = xFor (tmap.secondsAtQuarter ((double) b * barQ)), xb = xFor (tmap.secondsAtQuarter ((double) (b + 1) * barQ));
                 g.setColour (juce::Colours::white.withAlpha (0.025f));
-                g.fillRect (juce::Rectangle<float> (xFor ((double) b * bar), (float) grid.getY(), (float) (bar * pps), (float) grid.getHeight()));
+                g.fillRect (juce::Rectangle<float> (xa, (float) grid.getY(), xb - xa, (float) grid.getHeight()));
             }
-        double step = gridSec() > 0.0 ? gridSec() : beat;
-        while (step * pps < 6.0 && step < bar) step = step < beat ? beat : bar;   // too dense to draw: coarser lines
-        const auto onMultiple = [] (double t, double m) { return std::abs (std::remainder (t, m)) < 1.0e-6; };
-        for (auto k = (juce::int64) std::floor (t0 / step); (double) k * step < t1; ++k)
+        double step = gridQuarter() > 0.0 ? gridQuarter() : beatQ;
+        const auto stepPx = [&] (double st) { return (tmap.secondsAtQuarter (q0 + st) - tmap.secondsAtQuarter (q0)) * pps; };
+        while (stepPx (step) < 6.0 && step < barQ) step = step < beatQ ? beatQ : barQ;   // too dense to draw: coarser lines
+        const auto onMultiple = [] (double q, double m) { return std::abs (std::remainder (q, m)) < 1.0e-6; };
+        for (auto k = (juce::int64) std::floor (q0 / step); (double) k * step < q1; ++k)
         {
-            const double t = (double) k * step;
-            const bool isBar = onMultiple (t, bar), isBeat = onMultiple (t, beat);
+            const double q = (double) k * step;
+            const bool isBar = onMultiple (q, barQ), isBeat = onMultiple (q, beatQ);
             g.setColour (juce::Colours::white.withAlpha (isBar ? 0.42f : isBeat ? 0.2f : 0.08f));
-            g.drawVerticalLine ((int) xFor (t), (float) grid.getY(), (float) grid.getBottom());
+            g.drawVerticalLine ((int) xFor (tmap.secondsAtQuarter (q)), (float) grid.getY(), (float) grid.getBottom());
         }
 
         // notes
@@ -450,15 +462,16 @@ void PianoRoll::paint (juce::Graphics& g)
         g.fillRect (ruler);
         juce::Graphics::ScopedSaveState ss (g);
         g.reduceClipRegion (ruler);
-        const double q = quarterSec();
-        const double bar = q * 4.0 / juce::jmax (1, doc.tsDen()) * juce::jmax (1, doc.tsNum());
+        const double barQ = 4.0 / juce::jmax (1, doc.tsDen()) * juce::jmax (1, doc.tsNum());
         g.setFont (uiFont (10.5f));
         const double t0 = timeFor ((float) grid.getX()), t1 = timeFor ((float) grid.getRight());
-        const int step = bar * pps < 40.0 ? (bar * pps < 12.0 ? 8 : 4) : 1;
-        for (int b = juce::jmax (0, (int) std::floor (t0 / bar)); b * bar < t1; ++b)
+        const double q0 = tmap.quarterAtSeconds (t0);
+        const double barPx = (tmap.secondsAtQuarter (q0 + barQ) - tmap.secondsAtQuarter (q0)) * pps;
+        const int step = barPx < 40.0 ? (barPx < 12.0 ? 8 : 4) : 1;
+        for (int b = juce::jmax (0, (int) std::floor (q0 / barQ)); tmap.secondsAtQuarter (b * barQ) < t1; ++b)
         {
             if (b % step != 0) continue;
-            const float x = xFor (b * bar);
+            const float x = xFor (tmap.secondsAtQuarter (b * barQ));
             g.setColour (palette::textDim);
             g.drawVerticalLine ((int) x, (float) ruler.getY() + 8.0f, (float) ruler.getBottom());
             g.drawText (juce::String (b + 1), juce::Rectangle<float> (x + 3.0f, (float) ruler.getY(), 40.0f, (float) rulerH), juce::Justification::centredLeft);
@@ -684,7 +697,7 @@ void PianoRoll::mouseDown (const juce::MouseEvent& e)
         midiclip::Note n;
         const double t = snapDown (timeFor (e.position.x), snapOn);   // the cell that was clicked, not the nearest line
         n.start = t - clipStart() + offset();
-        n.length = newNoteLength();
+        n.length = newNoteLength (t);
         n.pitch = pitchFor (e.position.y);
         n.velocity = 100;
         notes.push_back (n);
@@ -751,7 +764,7 @@ void PianoRoll::mouseDrag (const juce::MouseEvent& e)
             const double aAbs = clipStart() + a.start - offset();
             const double minLen = juce::jmax (0.01, gridSec() > 0.0 ? gridSec() * 0.5 : 0.02);
             double newEnd = snap (aAbs + a.length + (e.position.x - downPos.x) / pps, snapOn);
-            if (drag == Drag::draw) newEnd = juce::jmax (aAbs + newNoteLength(), snap (timeFor (e.position.x), snapOn));
+            if (drag == Drag::draw) newEnd = juce::jmax (aAbs + newNoteLength (aAbs), snap (timeFor (e.position.x), snapOn));
             const double dl = (newEnd - aAbs) - a.length;
             for (size_t i = 0; i < notes.size(); ++i)
                 if (selected[i]) notes[i].length = juce::jmax (minLen, origs[i].length + dl);
@@ -828,7 +841,7 @@ void PianoRoll::mouseDoubleClick (const juce::MouseEvent& e)
     }
     midiclip::Note n;
     n.start = snapDown (timeFor (e.position.x), ! e.mods.isAltDown()) - clipStart() + offset();
-    n.length = newNoteLength();
+    n.length = newNoteLength (absStart (n));
     n.pitch = pitchFor (e.position.y);
     n.velocity = 100;
     notes.push_back (n);
@@ -904,6 +917,7 @@ void PianoRoll::timerCallback()
 
 void PianoRoll::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier&)
 {
+    if (node.hasType (project::ids::TRANSPORT) || node.hasType (project::ids::TEMPO)) refreshMap();
     if (writing) return;
     if (node == clip || node.hasType (midiclip::MIDI)) load();   // undo / redo, or edited elsewhere
 }
