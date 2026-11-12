@@ -646,29 +646,48 @@ void Ruler::paint (juce::Graphics& g)
             }
     }
 
-    // tempo lane: the project tempo at the start, then one tag per tempo change
+    // tempo track (like Studio One's): the tempo as an envelope, points joined by lines
+    if (tempoArea().getHeight() > 20)
     {
         const auto lane = tempoArea().toFloat();
-        g.setColour (palette::well.withAlpha (0.55f));
+        g.setColour (palette::well.withAlpha (0.7f));
         g.fillRect (lane);
-        g.setFont (uiFont (10.0f, true));
-        const auto fmt = [] (double bpm) { return juce::String (bpm, std::abs (bpm - std::round (bpm)) < 0.005 ? 0 : 2) + " bpm"; };
-        const auto drawTag = [&] (double quarter, double bpm, bool base) {
-            const auto tag = tempoTag (quarter, fmt (bpm));
-            if (tag.getRight() < 0.0f || tag.getX() > (float) getWidth()) return;
-            g.setColour ((base ? palette::textDim : palette::warn).withAlpha (base ? 0.25f : 0.85f));
-            g.fillRoundedRectangle (tag, 3.0f);
-            g.setColour (base ? palette::text : juce::Colours::black.withAlpha (0.85f));
-            g.drawText (fmt (bpm), tag.reduced (4.0f, 0.0f), juce::Justification::centredLeft);
-        };
-        drawTag (0.0, geo.tempoMap.baseBpm(), true);
-        for (auto c : owner.doc.transport())
-            if (c.hasType (pids::TEMPO)) drawTag ((double) c[pids::quarter], (double) c[pids::bpm], false);
-        if (geo.tempoMap.isConstant())
+        g.setColour (palette::outline);
+        g.drawHorizontalLine ((int) lane.getY(), 0.0f, (float) getWidth());
+        double lo, hi;
+        tempoRange (lo, hi);
+        g.setFont (uiFont (9.5f));
+        g.setColour (palette::textDim);
+        g.drawText (juce::String ((int) std::round (hi)), 4, (int) lane.getY() + 1, 40, 11, juce::Justification::left);
+        g.drawText (juce::String ((int) std::round (lo)), 4, (int) lane.getBottom() - 12, 40, 11, juce::Justification::left);
+        juce::Path curve;
+        const auto& map = geo.tempoMap;
+        for (int px = 0; px <= getWidth(); px += 2)
         {
-            g.setColour (palette::textDim.withAlpha (0.4f));
-            g.setFont (uiFont (9.5f));
-            g.drawText ("double-click to add a tempo change", lane.withTrimmedLeft (80.0f).reduced (6.0f, 0.0f), juce::Justification::centredLeft);
+            const float y = tempoY ((float) map.bpmAtSeconds (geo.timeFor ((float) px)), lo, hi);
+            if (px == 0) curve.startNewSubPath ((float) px, y); else curve.lineTo ((float) px, y);
+        }
+        g.setColour (palette::warn.withAlpha (0.9f));
+        g.strokePath (curve, juce::PathStrokeType (1.6f));
+        const auto dot = [&] (double sec, double bpm, bool base) {
+            const float x = geo.xFor (sec), y = tempoY ((float) bpm, lo, hi);
+            if (x < -8.0f || x > (float) getWidth() + 8.0f) return;
+            g.setColour (base ? palette::bg : palette::warn);
+            g.fillEllipse (x - 4.5f, y - 4.5f, 9.0f, 9.0f);
+            g.setColour (palette::warn);
+            g.drawEllipse (x - 4.5f, y - 4.5f, 9.0f, 9.0f, 1.4f);
+            g.setColour (palette::text);
+            g.setFont (uiFont (10.0f, true));
+            g.drawText (juce::String (bpm, std::abs (bpm - std::round (bpm)) < 0.005 ? 0 : 1), (int) x + 7, (int) y - 7, 46, 14, juce::Justification::left);
+        };
+        dot (0.0, map.baseBpm(), true);
+        for (auto c : owner.doc.transport())
+            if (c.hasType (pids::TEMPO)) dot ((double) c[pids::at], (double) c[pids::bpm], false);
+        if (map.isConstant())
+        {
+            g.setColour (palette::textDim.withAlpha (0.5f));
+            g.setFont (uiFont (10.0f));
+            g.drawText ("double-click to add a tempo point", lane.withTrimmedLeft (90.0f), juce::Justification::centredLeft);
         }
     }
 
@@ -695,30 +714,47 @@ void Ruler::paint (juce::Graphics& g)
     g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
 }
 
-juce::Rectangle<float> Ruler::tempoTag (double quarter, const juce::String& text) const
+void Ruler::tempoRange (double& lo, double& hi) const
 {
-    const auto lane = tempoArea().toFloat();
-    const float x = owner.geo.xFor (owner.geo.tempoMap.secondsAtQuarter (quarter));
-    return { x, lane.getY() + 2.0f, 46.0f + (text.length() > 8 ? 8.0f : 0.0f), lane.getHeight() - 4.0f };
+    if (tempoDrag.isValid() || tempoDragBase) { lo = dragLo; hi = dragHi; return; }
+    lo = hi = owner.doc.tempo();
+    for (auto c : owner.doc.transport())
+        if (c.hasType (pids::TEMPO)) { lo = juce::jmin (lo, (double) c[pids::bpm]); hi = juce::jmax (hi, (double) c[pids::bpm]); }
+    lo = juce::jmax (10.0, std::floor ((lo - 20.0) / 10.0) * 10.0);
+    hi = std::ceil ((hi + 20.0) / 10.0) * 10.0;
+    if (hi - lo < 60.0) hi = lo + 60.0;
 }
 
-juce::ValueTree Ruler::tempoAt (float x, bool& isBase) const
+float Ruler::tempoY (float bpm, double lo, double hi) const
+{
+    const auto lane = tempoArea();
+    return (float) lane.getBottom() - 8.0f - (float) ((bpm - lo) / (hi - lo)) * (float) (lane.getHeight() - 16);
+}
+
+double Ruler::tempoBpmAt (float y, double lo, double hi) const
+{
+    const auto lane = tempoArea();
+    return juce::jlimit (10.0, 999.0, lo + (double) ((float) lane.getBottom() - 8.0f - y) / (double) (lane.getHeight() - 16) * (hi - lo));
+}
+
+juce::ValueTree Ruler::tempoAt (juce::Point<int> p, bool& isBase) const
 {
     isBase = false;
-    const auto fmtLen = [] (double bpm) { return juce::String (bpm, 2); };
+    double lo, hi;
+    tempoRange (lo, hi);
+    const auto near = [&] (double sec, double bpm) { return std::abs (owner.geo.xFor (sec) - (float) p.x) < 8.0f && std::abs (tempoY ((float) bpm, lo, hi) - (float) p.y) < 9.0f; };
     for (auto c : owner.doc.transport())
-        if (c.hasType (pids::TEMPO) && tempoTag ((double) c[pids::quarter], fmtLen ((double) c[pids::bpm])).expanded (2.0f, 0.0f).contains (x, (float) tempoArea().getCentreY()))
-            return c;
-    if (tempoTag (0.0, "000 bpm").contains (x, (float) tempoArea().getCentreY())) isBase = true;
+        if (c.hasType (pids::TEMPO) && near ((double) c[pids::at], (double) c[pids::bpm])) return c;
+    if (near (0.0, owner.doc.tempo())) isBase = true;
     return {};
 }
 
-void Ruler::editTempo (juce::ValueTree change, double quarter)
+void Ruler::editTempo (juce::ValueTree point, double seconds, bool isBase)
 {
-    const double current = change.isValid() ? (double) change[pids::bpm] : owner.geo.tempoMap.bpmAtQuarter (quarter);
-    owner.renameDialog ("Tempo (bpm)", juce::String (current, 2), [this, quarter] (juce::String text) {
+    const double current = point.isValid() ? (double) point[pids::bpm] : owner.geo.tempoMap.bpmAtSeconds (seconds);
+    owner.renameDialog ("Tempo (bpm)", juce::String (isBase ? owner.doc.tempo() : current, 2), [this, seconds, isBase] (juce::String text) {
         const double bpm = text.getDoubleValue();
-        if (bpm >= 10.0 && bpm <= 999.0) owner.doc.setTempoChange (quarter, bpm);
+        if (bpm >= 10.0 && bpm <= 999.0) owner.doc.setTempoPoint (isBase ? 0.0 : seconds, bpm);
         repaint();
     });
 }
@@ -726,40 +762,42 @@ void Ruler::editTempo (juce::ValueTree change, double quarter)
 void Ruler::mouseDown (const juce::MouseEvent& e)
 {
     dragStart = -1.0;
-    if (tempoArea().contains (e.getPosition()))
+    if (tempoArea().getHeight() > 20 && tempoArea().contains (e.getPosition()))
     {
         bool isBase = false;
-        auto ch = tempoAt ((float) e.x, isBase);
-        const double beatQ = owner.geo.beatQuarters();
-        const double clickQ = juce::jmax (beatQ, std::round (owner.geo.tempoMap.quarterAtSeconds (owner.geo.timeFor ((float) e.x)) / beatQ) * beatQ);
+        auto ch = tempoAt (e.getPosition(), isBase);
+        const double at = juce::jmax (0.0, owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown()));
         if (e.mods.isPopupMenu())
         {
             juce::PopupMenu m;
             if (ch.isValid() || isBase)
             {
                 m.addItem (1, "Set tempo...");
-                if (ch.isValid()) m.addItem (2, "Delete this tempo change");
+                if (ch.isValid()) m.addItem (2, "Delete this point");
             }
-            else m.addItem (3, "Add a tempo change here...");
+            else m.addItem (3, "Add a tempo point here...");
             juce::Component::SafePointer<Ruler> safe (this);
-            m.showMenuAsync ({}, [safe, ch, isBase, clickQ] (int r) mutable {
+            m.showMenuAsync ({}, [safe, ch, isBase, at] (int r) mutable {
                 if (safe == nullptr || r == 0) return;
-                if (r == 1) safe->editTempo (ch, isBase ? 0.0 : (double) ch[pids::quarter]);
-                else if (r == 2) safe->owner.doc.removeTempoChange (ch);
-                else if (r == 3) safe->editTempo ({}, clickQ);
+                if (r == 1) safe->editTempo (ch, ch.isValid() ? (double) ch[pids::at] : 0.0, isBase);
+                else if (r == 2) safe->owner.doc.removeTempoPoint (ch);
+                else if (r == 3) safe->editTempo ({}, at, false);
             });
             return;
         }
         tempoDrag = {};
-        if (ch.isValid())
+        tempoDragBase = false;
+        if (ch.isValid() || isBase)
         {
-            // drag it along the beats; the pointer is read against the tempo map without this change, so it does not chase itself
-            tempoDrag = ch;
+            // the pointer is read against the tempo map without this point, so a dragged point does not chase itself
             std::vector<TempoMap::Point> pts;
             for (auto c : owner.doc.transport())
-                if (c.hasType (pids::TEMPO) && c != ch) pts.push_back ({ (double) c[pids::quarter], (double) c[pids::bpm] });
+                if (c.hasType (pids::TEMPO) && c != ch) pts.push_back ({ (double) c[pids::at], (double) c[pids::bpm] });
             tempoDragMap.set (owner.doc.tempo(), std::move (pts));
-            owner.doc.undo().beginNewTransaction ("Move tempo change");
+            tempoRange (dragLo, dragHi);          // the scale stays put while dragging
+            tempoDrag = ch;
+            tempoDragBase = isBase;
+            owner.doc.undo().beginNewTransaction ("Move tempo point");
         }
         return;
     }
@@ -845,7 +883,7 @@ Ruler::LoopDrag Ruler::loopHit (float x, bool exportRange) const
 
 void Ruler::mouseMove (const juce::MouseEvent& e)
 {
-    if (tempoArea().contains (e.getPosition())) { setMouseCursor (juce::MouseCursor::PointingHandCursor); return; }
+    if (tempoArea().getHeight() > 20 && tempoArea().contains (e.getPosition())) { setMouseCursor (juce::MouseCursor::PointingHandCursor); return; }
     if (e.y >= numbersTop)
     {
         setMouseCursor (e.y < getHeight() - markerLane ? juce::MouseCursor::UpDownLeftRightResizeCursor : juce::MouseCursor::NormalCursor);
@@ -858,11 +896,18 @@ void Ruler::mouseMove (const juce::MouseEvent& e)
 
 void Ruler::mouseDrag (const juce::MouseEvent& e)
 {
-    if (tempoDrag.isValid())
+    if (tempoDrag.isValid() || tempoDragBase)
     {
-        const double beatQ = owner.geo.beatQuarters();
-        const double q = juce::jmax (beatQ, std::round (tempoDragMap.quarterAtSeconds (owner.geo.timeFor ((float) e.x)) / beatQ) * beatQ);
-        if (std::abs (q - (double) tempoDrag[pids::quarter]) > 1.0e-9) owner.doc.set (tempoDrag, pids::quarter, q);
+        const double bpm = juce::jlimit (10.0, 999.0, e.mods.isAltDown() ? tempoBpmAt ((float) e.y, dragLo, dragHi) : std::round (tempoBpmAt ((float) e.y, dragLo, dragHi)));
+        if (tempoDragBase) { if (std::abs (bpm - owner.doc.tempo()) > 1.0e-9) owner.doc.set (owner.doc.transport(), pids::bpm, bpm); return; }
+        const auto& map = tempoDragMap;
+        const double t = juce::jmax (0.001, owner.geo.timeFor ((float) e.x));
+        double at = t;
+        if (! e.mods.isAltDown() && owner.geo.snapBeats > 0.0)
+            at = juce::jmax (0.001, map.secondsAtQuarter (std::round (map.quarterAtSeconds (t) / owner.geo.snapBeats) * owner.geo.snapBeats));
+        at = std::round (at * 1000.0) / 1000.0;
+        if (std::abs (at - (double) tempoDrag[pids::at]) > 1.0e-9) owner.doc.set (tempoDrag, pids::at, at);
+        if (std::abs (bpm - (double) tempoDrag[pids::bpm]) > 1.0e-9) owner.doc.set (tempoDrag, pids::bpm, bpm);
         return;
     }
     const bool snapOn = ! e.mods.isAltDown();
@@ -908,7 +953,7 @@ void Ruler::mouseDrag (const juce::MouseEvent& e)
 
 void Ruler::mouseUp (const juce::MouseEvent&)
 {
-    if (tempoDrag.isValid()) { tempoDrag = {}; return; }
+    if (tempoDrag.isValid() || tempoDragBase) { tempoDrag = {}; tempoDragBase = false; repaint(); return; }
     dragStart = -1.0;
     loopDrag = LoopDrag::none;
     scrubbing = zooming = false;
@@ -916,13 +961,16 @@ void Ruler::mouseUp (const juce::MouseEvent&)
 
 void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (tempoArea().contains (e.getPosition()))
+    if (tempoArea().getHeight() > 20 && tempoArea().contains (e.getPosition()))
     {
         bool isBase = false;
-        auto ch = tempoAt ((float) e.x, isBase);
-        const double beatQ = owner.geo.beatQuarters();
-        const double q = juce::jmax (beatQ, std::round (owner.geo.tempoMap.quarterAtSeconds (owner.geo.timeFor ((float) e.x)) / beatQ) * beatQ);
-        editTempo (ch, isBase ? 0.0 : ch.isValid() ? (double) ch[pids::quarter] : q);
+        auto ch = tempoAt (e.getPosition(), isBase);
+        if (ch.isValid() || isBase) { editTempo (ch, ch.isValid() ? (double) ch[pids::at] : 0.0, isBase); return; }
+        // a new point where you clicked (on the beat grid), at the height you clicked
+        double lo, hi;
+        tempoRange (lo, hi);
+        const double at = juce::jmax (0.001, owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown()));
+        owner.doc.setTempoPoint (at, std::round (tempoBpmAt ((float) e.y, lo, hi)));
         return;
     }
     if (e.y >= loopLane && e.y < numbersTop && loopHit ((float) e.x, true) != LoopDrag::draw)   // double-click the export bar: clear it
@@ -2013,7 +2061,17 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
         for (auto* h : headers) h->refreshAutomation();
         repaintAll();
     };
-    for (auto* b : { &followButton, &sliceButton, &autoButton })
+    tempoButton.setClickingTogglesState (true);
+    tempoButton.setTooltip ("Tempo Track: show the tempo as an envelope above the tracks. Double-click it to add a point, drag a point to change "
+                            "the tempo (up / down) or move it (left / right); points joined by lines make tempo ramps. "
+                            "The click, bar lines and snap grid follow it.");
+    tempoButton.onClick = [this] {
+        tempoTrackShown = tempoButton.getToggleState();
+        doc.set (doc.transport(), juce::Identifier ("tempoTrack"), tempoTrackShown, false);
+        resized();
+        repaintAll();
+    };
+    for (auto* b : { &followButton, &sliceButton, &autoButton, &tempoButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -2069,6 +2127,12 @@ void ArrangeView::syncGeometry()
 {
     geo.bpm = doc.tempo();
     geo.tempoMap = doc.tempoMap();
+    if (const bool shown = (bool) doc.transport()["tempoTrack"]; shown != tempoTrackShown)
+    {
+        tempoTrackShown = shown;
+        tempoButton.setToggleState (shown, juce::dontSendNotification);
+        resized();
+    }
     geo.tsNum = doc.tsNum();
     geo.tsDen = doc.tsDen();
     const double beatQ = 4.0 / geo.tsDen;
@@ -2244,12 +2308,23 @@ void ArrangeView::paint (juce::Graphics& g)
     g.fillRect (tb);
     g.setColour (palette::outline);
     g.drawHorizontalLine (tb.getBottom() - 1, 0.0f, (float) getWidth());
-    auto corner = juce::Rectangle<int> (0, toolbarHeight, headerWidth, rulerHeight);
+    auto corner = juce::Rectangle<int> (0, toolbarHeight, headerWidth, rulerHeight());
     g.setColour (palette::panel);
     g.fillRect (corner);
     g.setColour (palette::textDim);
     g.setFont (uiFont (11.0f, true));
-    g.drawText (juce::String (numTracks()) + (numTracks() == 1 ? " TRACK" : " TRACKS"), corner.reduced (12, 0), juce::Justification::centredLeft);
+    g.drawText (juce::String (numTracks()) + (numTracks() == 1 ? " TRACK" : " TRACKS"), corner.withHeight (Ruler::baseHeight).reduced (12, 0), juce::Justification::centredLeft);
+    if (tempoTrackShown)
+    {
+        auto lane = corner.withTrimmedTop (Ruler::baseHeight - Ruler::markerLane).withHeight (tempoTrackHeight);
+        g.setColour (palette::warn);
+        g.setFont (uiFont (11.0f, true));
+        g.drawText ("TEMPO TRACK", juce::Rectangle<int> (lane.getX() + 12, lane.getY() + 8, lane.getWidth() - 24, 14), juce::Justification::centredLeft);
+        g.setColour (palette::text);
+        g.setFont (uiFont (18.0f, true));
+        const double bpm = geo.tempoMap.bpmAtSeconds (host.engine.getPositionSeconds());
+        g.drawText (juce::String (bpm, 1) + " bpm", lane.reduced (12, 6).withTrimmedTop (16), juce::Justification::centredLeft);
+    }
     g.setColour (palette::outline);
     g.drawVerticalLine (headerWidth - 1, (float) toolbarHeight, (float) getHeight());
 }
@@ -2270,13 +2345,15 @@ void ArrangeView::resized()
     autoButton.setBounds (tb.removeFromLeft (96));
     tb.removeFromLeft (6);
     followButton.setBounds (tb.removeFromLeft (70));
+    tb.removeFromLeft (6);
+    tempoButton.setBounds (tb.removeFromLeft (104));
     fitButton.setBounds (tb.removeFromRight (44));
     tb.removeFromRight (4);
     zoomInButton.setBounds (tb.removeFromRight (30));
     tb.removeFromRight (4);
     zoomOutButton.setBounds (tb.removeFromRight (30));
 
-    auto rulerRow = r.removeFromTop (rulerHeight);
+    auto rulerRow = r.removeFromTop (rulerHeight());
     rulerRow.removeFromLeft (headerWidth);
     ruler.setBounds (rulerRow.withTrimmedRight (12));
     auto bottom = r.removeFromBottom (12);

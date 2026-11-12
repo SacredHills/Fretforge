@@ -169,36 +169,36 @@ TempoMap ProjectDocument::tempoMap()
 {
     std::vector<TempoMap::Point> pts;
     for (auto c : transport())
-        if (c.hasType (ids::TEMPO)) pts.push_back ({ (double) c[ids::quarter], (double) c[ids::bpm] });
+        if (c.hasType (ids::TEMPO)) pts.push_back ({ (double) c[ids::at], (double) c[ids::bpm] });
     TempoMap m;
     m.set (tempo(), std::move (pts));
     return m;
 }
 
-void ProjectDocument::setTempoChange (double quarter, double bpm)
+void ProjectDocument::setTempoPoint (double seconds, double bpm)
 {
     bpm = juce::jlimit (10.0, 999.0, std::round (bpm * 100.0) / 100.0);
-    quarter = juce::jmax (0.0, std::round (quarter * 1000.0) / 1000.0);
-    if (quarter < 1.0e-6) { setTempo (bpm); return; }   // at the very start it is the project tempo
+    seconds = juce::jmax (0.0, std::round (seconds * 1000.0) / 1000.0);
+    if (seconds < 1.0e-6) { setTempo (bpm); return; }   // at the very start it is the project tempo
     for (auto c : transport())
-        if (c.hasType (ids::TEMPO) && std::abs ((double) c[ids::quarter] - quarter) < 1.0e-6)
+        if (c.hasType (ids::TEMPO) && std::abs ((double) c[ids::at] - seconds) < 5.0e-4)
         {
-            undoManager.beginNewTransaction ("Tempo change");
+            undoManager.beginNewTransaction ("Tempo");
             set (c, ids::bpm, bpm);
             return;
         }
-    undoManager.beginNewTransaction ("Add tempo change");
+    undoManager.beginNewTransaction ("Add tempo point");
     juce::ValueTree n (ids::TEMPO);
-    n.setProperty (ids::quarter, quarter, nullptr);
+    n.setProperty (ids::at, seconds, nullptr);
     n.setProperty (ids::bpm, bpm, nullptr);
     transport().appendChild (n, &undoManager);
 }
 
-void ProjectDocument::removeTempoChange (juce::ValueTree change)
+void ProjectDocument::removeTempoPoint (juce::ValueTree point)
 {
-    if (! change.isValid() || change.getParent() != transport()) return;
-    undoManager.beginNewTransaction ("Delete tempo change");
-    transport().removeChild (change, &undoManager);
+    if (! point.isValid() || point.getParent() != transport()) return;
+    undoManager.beginNewTransaction ("Delete tempo point");
+    transport().removeChild (point, &undoManager);
 }
 
 void ProjectDocument::setTimeSignature (int num, int den)

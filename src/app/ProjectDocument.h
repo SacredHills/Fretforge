@@ -42,11 +42,11 @@ public:
     int tsNum() { return (int) transport()[project::ids::tsNum]; }
     int tsDen() { return (int) transport()[project::ids::tsDen]; }
     void setTempo (double bpm);
-    /** The tempo track: tempo changes (TEMPO {quarter, bpm} children of the transport) on top of the base tempo. */
+    /** The tempo track: tempo points (TEMPO {at (seconds), bpm} children of the transport) on top of the base tempo. */
     TempoMap tempoMap();
-    /** Adds a tempo change at `quarter` (quarter notes from the start), or changes the one already there. */
-    void setTempoChange (double quarter, double bpm);
-    void removeTempoChange (juce::ValueTree change);
+    /** Adds a tempo point at `seconds`, or changes the one already there (at 0 it is the project tempo). */
+    void setTempoPoint (double seconds, double bpm);
+    void removeTempoPoint (juce::ValueTree point);
     void setTimeSignature (int num, int den);
     /** Generic undoable property edit. */
     void set (juce::ValueTree node, const juce::Identifier& id, const juce::var& value, bool undoable = true);

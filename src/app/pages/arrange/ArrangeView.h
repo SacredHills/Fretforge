@@ -200,7 +200,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     static constexpr int markerLane = 18;
-    static constexpr int tempoLane = 16;  // just above the markers: tempo changes (double-click to add one)
+    static constexpr int baseHeight = 58;  // the ruler without the tempo track
     static constexpr int loopLane = 14;   // the loop bar's strip at the top
     static constexpr int exportLane = 12; // below it: the export range (what File > Export renders)
     static constexpr int numbersTop = loopLane + exportLane;
@@ -210,12 +210,16 @@ private:
     ArrangeView& owner;
     double dragStart = -1.0;
     juce::ValueTree markerAt (float x) const;
-    // tempo lane
-    juce::Rectangle<int> tempoArea() const { return { 0, getHeight() - markerLane - tempoLane, getWidth(), tempoLane }; }
-    juce::ValueTree tempoAt (float x, bool& isBase) const;
-    juce::Rectangle<float> tempoTag (double quarter, const juce::String& text) const;
-    void editTempo (juce::ValueTree change, double quarter);
+    // tempo track: an envelope in the lane that appears above the markers when the ruler is taller than its base height
+    juce::Rectangle<int> tempoArea() const { const int h = juce::jmax (0, getHeight() - baseHeight); return { 0, getHeight() - markerLane - h, getWidth(), h }; }
+    juce::ValueTree tempoAt (juce::Point<int> p, bool& isBase) const;
+    void tempoRange (double& lo, double& hi) const;
+    float tempoY (float bpm, double lo, double hi) const;
+    double tempoBpmAt (float y, double lo, double hi) const;
+    void editTempo (juce::ValueTree point, double seconds, bool isBase);
     juce::ValueTree tempoDrag;
+    bool tempoDragBase = false;
+    double dragLo = 60.0, dragHi = 180.0;
     TempoMap tempoDragMap;
     // loop bar (like Studio One): drag the bar to move it, its ends to resize it, the empty strip to draw a new one
     enum class LoopDrag { none, move, left, right, draw } loopDrag = LoopDrag::none;
@@ -302,7 +306,7 @@ private:
     juce::ScrollBar hScroll { false }, vScroll { true };
     ContextButton addTrackButton { "+ Track" };
     juce::TextButton importButton { "Import" }, zoomInButton { "+" }, zoomOutButton { "-" },
-        fitButton { "Fit" }, followButton { "Follow" }, sliceButton { "Slice" }, autoButton { "Automation" };
+        fitButton { "Fit" }, followButton { "Follow" }, sliceButton { "Slice" }, autoButton { "Automation" }, tempoButton { "Tempo Track" };
 public:
     /** Automation mode: tracks show an automation lane (volume, pan, plugin parameters) over their clips. */
     bool automationMode() const { return autoButton.getToggleState(); }
@@ -346,7 +350,9 @@ private:
     void valueTreeRedirected (juce::ValueTree&) override { rebuildHeaders(); }
 
     static constexpr int headerWidth = 250;
-    static constexpr int rulerHeight = 58 + 16;   // + the tempo lane
+    static constexpr int tempoTrackHeight = 84;
+    int rulerHeight() const { return Ruler::baseHeight + (tempoTrackShown ? tempoTrackHeight : 0); }
+    bool tempoTrackShown = false;
     static constexpr int toolbarHeight = 38;
 };
 } // namespace ff

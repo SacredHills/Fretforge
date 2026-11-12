@@ -17,25 +17,24 @@ public:
             expectWithinAbsoluteError (m.secondsAtQuarter (4.0), 2.0, 1e-9);
             expectWithinAbsoluteError (m.quarterAtSeconds (3.0), 6.0, 1e-9);
         }
-        beginTest ("tempo changes are steps, seconds and quarters convert both ways");
+        beginTest ("a ramp integrates the tempo, both ways");
         {
             ff::TempoMap m;
-            m.set (120.0, { { 8.0, 60.0 }, { 4.0, 240.0 } });   // unsorted on purpose
+            m.set (120.0, { { 10.0, 180.0 }, { 4.0, 120.0 } });   // flat 120 until 4 s, then a ramp to 180 at 10 s (unsorted input)
             expect (! m.isConstant());
-            expectEquals (m.numSegments(), 3);
-            expectWithinAbsoluteError (m.secondsAtQuarter (4.0), 2.0, 1e-9);        // 4 quarters at 120
-            expectWithinAbsoluteError (m.secondsAtQuarter (8.0), 3.0, 1e-9);        // + 4 quarters at 240
-            expectWithinAbsoluteError (m.secondsAtQuarter (10.0), 5.0, 1e-9);       // + 2 quarters at 60
-            for (double q : { 0.0, 1.5, 4.0, 6.0, 8.0, 9.25, 20.0 })
-                expectWithinAbsoluteError (m.quarterAtSeconds (m.secondsAtQuarter (q)), q, 1e-9);
-            expectWithinAbsoluteError (m.bpmAtQuarter (5.0), 240.0, 1e-9);
-            expectWithinAbsoluteError (m.bpmAtSeconds (4.0), 60.0, 1e-9);
+            expectEquals (m.numPoints(), 3);
+            expectWithinAbsoluteError (m.quarterAtSeconds (4.0), 8.0, 1e-9);
+            expectWithinAbsoluteError (m.quarterAtSeconds (10.0), 8.0 + 6.0 * 150.0 / 60.0, 1e-9);   // average 150 bpm over 6 s
+            expectWithinAbsoluteError (m.quarterAtSeconds (12.0), 8.0 + 15.0 + 2.0 * 3.0, 1e-9);     // then 180 bpm
+            expectWithinAbsoluteError (m.bpmAtSeconds (7.0), 150.0, 1e-9);
+            for (double t : { 0.0, 1.5, 4.0, 5.3, 7.0, 10.0, 13.7 })
+                expectWithinAbsoluteError (m.secondsAtQuarter (m.quarterAtSeconds (t)), t, 1e-9);
         }
-        beginTest ("changes at the start or duplicates are ignored");
+        beginTest ("points at the start or on top of each other are ignored");
         {
             ff::TempoMap m;
             m.set (100.0, { { 0.0, 200.0 }, { 4.0, 80.0 }, { 4.0, 90.0 } });
-            expectEquals (m.numSegments(), 2);
+            expectEquals (m.numPoints(), 2);
             expectWithinAbsoluteError (m.baseBpm(), 100.0, 1e-9);
         }
     }
