@@ -1,4 +1,6 @@
 #include "ProjectDocument.h"
+#include "core/MidiClip.h"
+#include "core/Timeline.h"
 
 namespace ff
 {
@@ -42,6 +44,8 @@ void ProjectDocument::replaceTree (juce::ValueTree newTree, const juce::File& ne
     root.addListener (this);
     dirty = markAsDirty;
     autosaveDirty = markAsDirty;
+    lastMap = tempoMap();
+    haveLastMap = true;
     pushAllToEngine();
     writeSessionLock();
     if (onTreeReplaced) onTreeReplaced();
@@ -201,6 +205,41 @@ void ProjectDocument::setTimeSignature (int num, int den)
     set (transport(), ids::tsDen, den);
 }
 
+void ProjectDocument::tempoEdited()
+{
+    const auto now = tempoMap();
+    if (haveLastMap && ! undoManager.isPerformingUndoRedo() && ! now.sameAs (lastMap) && ! (now.isConstant() && lastMap.isConstant()))
+        retimeMidi (lastMap, now);   // (a plain change of the project tempo, with no tempo points, leaves the clips where they are)
+    lastMap = now;
+    haveLastMap = true;
+    pushAllToEngine();
+}
+
+void ProjectDocument::retimeMidi (const TempoMap& from, const TempoMap& to)
+{
+    const double fb = from.baseBpm(), tb = to.baseBpm();
+    auto f = [&] (double t) { return t < 0.0 ? t * fb / tb : to.secondsAtQuarter (from.quarterAtSeconds (t)); };
+    for (auto track : tracks())
+        for (auto c : track)
+        {
+            if (! midiclip::isMidiClip (c)) continue;
+            const double cs = (double) c[timeline::ids::start], len = (double) c[timeline::ids::length], off = (double) c[timeline::ids::offset];
+            const double ncs = f (cs);
+            auto ns = midiclip::notesOf (c);
+            auto pd = midiclip::pedalOf (c);
+            for (auto& n : ns)
+            {
+                const double a = cs + n.start - off;
+                n.start = f (a) - ncs + off;
+                n.length = juce::jmax (1.0e-4, f (a + n.length) - f (a));
+            }
+            for (auto& p : pd) p.time = f (cs + p.time - off) - ncs + off;
+            midiclip::setNotes (c, ns, pd, &undoManager);
+            c.setProperty (timeline::ids::start, ncs, &undoManager);
+            c.setProperty (timeline::ids::length, f (cs + len) - ncs, &undoManager);
+        }
+}
+
 void ProjectDocument::pushAllToEngine()
 {
     auto& e = host.engine;
@@ -256,7 +295,9 @@ void ProjectDocument::markDirty()
 
 void ProjectDocument::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& id)
 {
-    if (node.getType() == ids::TRANSPORT || node.getType() == ids::METRONOME)
+    if (node.getType() == ids::TRANSPORT || node.getType() == ids::TEMPO)
+        tempoEdited();
+    else if (node.getType() == ids::METRONOME)
         pushAllToEngine();
     if (id == ids::name && onStateChanged)
         onStateChanged();

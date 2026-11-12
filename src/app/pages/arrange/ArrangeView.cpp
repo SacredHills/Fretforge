@@ -2276,6 +2276,7 @@ void ArrangeView::timerCallback()
             updateScrollBars();
         }
     }
+    if (tempoTrackShown) repaint (0, toolbarHeight, headerWidth, rulerHeight());   // the bpm at the playhead
     repaintAll();
 }
 

@@ -96,6 +96,11 @@ private:
 
     void replaceTree (juce::ValueTree newTree, const juce::File& newBundle, bool markDirty);
     void pushAllToEngine();
+    /** The tempo track changed: MIDI clips are musical, so they are re-timed from the old tempo map to the new one. */
+    void tempoEdited();
+    void retimeMidi (const TempoMap& from, const TempoMap& to);
+    TempoMap lastMap;
+    bool haveLastMap = false;
     void markDirty();
     void timerCallback() override;
     juce::File untitledRecoveryBundle() const;
@@ -103,8 +108,8 @@ private:
     void addToRecent (const juce::File&);
 
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
-    void valueTreeChildAdded (juce::ValueTree& p, juce::ValueTree&) override { if (p.getType() == project::ids::TRANSPORT) pushAllToEngine(); markDirty(); }
-    void valueTreeChildRemoved (juce::ValueTree& p, juce::ValueTree&, int) override { if (p.getType() == project::ids::TRANSPORT) pushAllToEngine(); markDirty(); }
+    void valueTreeChildAdded (juce::ValueTree& p, juce::ValueTree&) override { if (p.getType() == project::ids::TRANSPORT) tempoEdited(); markDirty(); }
+    void valueTreeChildRemoved (juce::ValueTree& p, juce::ValueTree&, int) override { if (p.getType() == project::ids::TRANSPORT) tempoEdited(); markDirty(); }
     void valueTreeChildOrderChanged (juce::ValueTree&, int, int) override { markDirty(); }
 };
 } // namespace ff

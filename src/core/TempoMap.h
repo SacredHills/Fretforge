@@ -42,6 +42,13 @@ public:
         }
     }
 
+    bool sameAs (const TempoMap& o) const noexcept
+    {
+        if (pts.size() != o.pts.size()) return false;
+        for (size_t i = 0; i < pts.size(); ++i)
+            if (std::abs (pts[i].quarter - o.pts[i].quarter) > 1.0e-12 || std::abs (pts[i].bpm - o.pts[i].bpm) > 1.0e-12) return false;
+        return true;
+    }
     bool isConstant() const noexcept { return pts.size() == 1; }
     int numPoints() const noexcept { return (int) pts.size(); }
     double baseBpm() const noexcept { return pts.front().bpm; }
