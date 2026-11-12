@@ -143,7 +143,7 @@ juce::Rectangle<float> PianoRoll::noteRect (const midiclip::Note& n) const
 
 int PianoRoll::noteAt (juce::Point<float> p, bool& edge) const
 {
-    const auto edgeOf = [] (const juce::Rectangle<float>& r, juce::Point<float> q) { return q.x > r.getRight() - juce::jmin (7.0f, r.getWidth() * 0.35f); };
+    const auto edgeOf = [] (const juce::Rectangle<float>& r, juce::Point<float> q) { return q.x > r.getRight() - juce::jmin (6.0f, r.getWidth() * 0.25f); };
     // 1. the note really under the cursor
     for (int i = (int) notes.size(); --i >= 0;)
     {
@@ -155,7 +155,7 @@ int PianoRoll::noteAt (juce::Point<float> p, bool& edge) const
     for (int i = 0; i < (int) notes.size(); ++i)
     {
         const auto r = noteRect (notes[(size_t) i]);
-        if (r.withWidth (r.getWidth() + 4.0f).expanded (0.0f, 1.0f).contains (p)) { edge = p.x > r.getRight() - juce::jmin (7.0f, r.getWidth() * 0.35f); return i; }
+        if (r.withWidth (r.getWidth() + 4.0f).expanded (0.0f, 1.0f).contains (p)) { edge = p.x > r.getRight() - juce::jmin (6.0f, r.getWidth() * 0.25f); return i; }
     }
     edge = false;
     return -1;
@@ -737,6 +737,9 @@ void PianoRoll::mouseDrag (const juce::MouseEvent& e)
         case Drag::draw:
         {
             if (anchor < 0) return;
+            // a plain click on a note's end must not change it: snapping the end to the grid would otherwise stretch or
+            // shrink the note up to the next grid line the moment the mouse moves a pixel
+            if (drag == Drag::resize && e.getDistanceFromDragStart() < 4) return;
             const auto& a = origs[(size_t) anchor];
             const double aAbs = clipStart() + a.start - offset();
             const double minLen = juce::jmax (0.01, gridSec() > 0.0 ? gridSec() * 0.5 : 0.02);
