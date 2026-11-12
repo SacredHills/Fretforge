@@ -166,7 +166,7 @@ void ProjectDocument::set (juce::ValueTree node, const juce::Identifier& id, con
 
 void ProjectDocument::setTempo (double bpm)
 {
-    set (transport(), ids::bpm, juce::jlimit (10.0, 999.0, std::round (bpm * 100.0) / 100.0));
+    set (transport(), ids::bpm, juce::jlimit (10.0, 500.0, std::round (bpm * 100.0) / 100.0));
 }
 
 TempoMap ProjectDocument::tempoMap()
@@ -181,7 +181,7 @@ TempoMap ProjectDocument::tempoMap()
 
 void ProjectDocument::addTempoPoint (double quarter, double bpm)
 {
-    bpm = juce::jlimit (10.0, 999.0, std::round (bpm * 100.0) / 100.0);
+    bpm = juce::jlimit (10.0, 500.0, std::round (bpm * 100.0) / 100.0);
     quarter = juce::jmax (0.0, std::round (quarter * 1000.0) / 1000.0);
     if (quarter < 1.0e-6) { setTempo (bpm); return; }   // at the very start it is the project tempo
     undoManager.beginNewTransaction ("Add tempo point");

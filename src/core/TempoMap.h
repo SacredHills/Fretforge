@@ -79,7 +79,7 @@ private:
     struct Seg { double q0, t0, b0, k; };
     std::vector<Point> pts;
     std::vector<Seg> segs;
-    static double clampBpm (double b) { return juce::jlimit (10.0, 999.0, b); }
+    static double clampBpm (double b) { return juce::jlimit (10.0, 500.0, b); }
     /** Seconds to travel dq quarters from the start of a segment (tempo changes linearly with the position). */
     static double secondsFor (const Seg& s, double dq) noexcept
     {

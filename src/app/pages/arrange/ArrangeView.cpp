@@ -723,6 +723,7 @@ void Ruler::tempoRange (double& lo, double& hi) const
     lo = juce::jmax (10.0, std::floor ((lo - 20.0) / 10.0) * 10.0);
     hi = std::ceil ((hi + 20.0) / 10.0) * 10.0;
     if (hi - lo < 60.0) hi = lo + 60.0;
+    if (hi > 500.0) { hi = 500.0; lo = juce::jmin (lo, 440.0); }
 }
 
 float Ruler::tempoY (float bpm, double lo, double hi) const
@@ -734,7 +735,7 @@ float Ruler::tempoY (float bpm, double lo, double hi) const
 double Ruler::tempoBpmAt (float y, double lo, double hi) const
 {
     const auto lane = tempoArea();
-    return juce::jlimit (10.0, 999.0, lo + (double) ((float) lane.getBottom() - 8.0f - y) / (double) (lane.getHeight() - 16) * (hi - lo));
+    return juce::jlimit (juce::jmax (10.0, lo), juce::jmin (500.0, hi), lo + (double) ((float) lane.getBottom() - 8.0f - y) / (double) (lane.getHeight() - 16) * (hi - lo));
 }
 
 juce::ValueTree Ruler::tempoAt (juce::Point<int> p, bool& isBase) const
@@ -753,13 +754,35 @@ void Ruler::editTempo (juce::ValueTree point, double quarter, bool isBase)
 {
     const double current = isBase ? owner.doc.tempo() : point.isValid() ? (double) point[pids::bpm] : owner.geo.tempoMap.bpmAtQuarter (quarter);
     owner.renameDialog ("Tempo (bpm)", juce::String (current, 2), [this, point, quarter, isBase] (juce::String text) mutable {
-        const double bpm = juce::jlimit (10.0, 999.0, text.getDoubleValue());
+        const double bpm = juce::jlimit (10.0, 500.0, text.getDoubleValue());
         if (text.getDoubleValue() < 10.0) return;
         if (isBase) owner.doc.setTempo (bpm);
         else if (point.isValid()) { owner.doc.undo().beginNewTransaction ("Tempo"); owner.doc.set (point, pids::bpm, bpm); }
         else owner.doc.addTempoPoint (quarter, bpm);
         repaint();
     });
+}
+
+/** Where the dragged point must sit (quarter notes) so that it ends up under the pointer: the point's own time depends on its
+    tempo and position, so this solves for it instead of reading the pointer against a map without the point. */
+double Ruler::dragQuarterFor (float x, double bpm, bool snapOn) const
+{
+    const double t = owner.geo.timeFor (x);
+    const auto timeAt = [&] (double q) {
+        auto pts = tempoDragOthers;
+        pts.push_back ({ q, bpm });
+        TempoMap m;
+        m.set (owner.doc.tempo(), std::move (pts));
+        return m.secondsAtQuarter (q);
+    };
+    double lo = 0.001, hi = 4096.0;
+    for (int i = 0; i < 48; ++i)
+    {
+        const double mid = 0.5 * (lo + hi);
+        (timeAt (mid) < t ? lo : hi) = mid;
+    }
+    const double q = 0.5 * (lo + hi), g = owner.geo.snapBeats;
+    return juce::jmax (0.001, snapOn && g > 0.0 ? std::round (q / g) * g : std::round (q * 1000.0) / 1000.0);
 }
 
 /** The beat-grid position (quarter notes) under x: on the snap grid, or free with Alt / snap off. */
@@ -804,6 +827,7 @@ void Ruler::mouseDown (const juce::MouseEvent& e)
             std::vector<TempoMap::Point> pts;
             for (auto c : owner.doc.transport())
                 if (c.hasType (pids::TEMPO) && c != ch) pts.push_back ({ (double) c[pids::beat], (double) c[pids::bpm] });
+            tempoDragOthers = pts;
             tempoDragMap.set (owner.doc.tempo(), std::move (pts));
             tempoRange (dragLo, dragHi);          // the scale stays put while dragging
             tempoDrag = ch;
@@ -909,9 +933,9 @@ void Ruler::mouseDrag (const juce::MouseEvent& e)
 {
     if (tempoDrag.isValid() || tempoDragBase)
     {
-        const double bpm = juce::jlimit (10.0, 999.0, e.mods.isAltDown() ? tempoBpmAt ((float) e.y, dragLo, dragHi) : std::round (tempoBpmAt ((float) e.y, dragLo, dragHi)));
+        const double bpm = juce::jlimit (10.0, 500.0, e.mods.isAltDown() ? tempoBpmAt ((float) e.y, dragLo, dragHi) : std::round (tempoBpmAt ((float) e.y, dragLo, dragHi)));
         if (tempoDragBase) { if (std::abs (bpm - owner.doc.tempo()) > 1.0e-9) owner.doc.set (owner.doc.transport(), pids::bpm, bpm); return; }
-        const double q = tempoQuarterAt ((float) e.x, tempoDragMap, ! e.mods.isAltDown());
+        const double q = dragQuarterFor ((float) e.x, bpm, ! e.mods.isAltDown());
         if (std::abs (q - (double) tempoDrag[pids::beat]) > 1.0e-9) owner.doc.set (tempoDrag, pids::beat, q);
         if (std::abs (bpm - (double) tempoDrag[pids::bpm]) > 1.0e-9) owner.doc.set (tempoDrag, pids::bpm, bpm);
         return;

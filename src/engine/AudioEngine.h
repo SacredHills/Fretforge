@@ -62,7 +62,7 @@ public:
     int getBlockSize() const noexcept { return blockSize.load(); }
 
     /** Project tempo (quarter-note BPM) and time signature. */
-    void setTempo (double bpm) noexcept { metronome.bpm = juce::jlimit (10.0, 999.0, bpm); }
+    void setTempo (double bpm) noexcept { metronome.bpm = juce::jlimit (10.0, 500.0, bpm); }
     void setTimeSignature (int num, int den) noexcept;
 
     // ---- loop / punch (seconds) ----

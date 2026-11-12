@@ -75,7 +75,7 @@ struct ProjectFileTests : juce::UnitTest
             auto r = parse (serialise (p));
             expect (r.result.wasOk());
             expect (r.tree.getChildWithName (ids::METRONOME).isValid());
-            expectEquals ((double) r.tree.getChildWithName (ids::TRANSPORT)[ids::bpm], 999.0);
+            expectEquals ((double) r.tree.getChildWithName (ids::TRANSPORT)[ids::bpm], 500.0);
             expectEquals ((int) r.tree.getChildWithName (ids::TRANSPORT)[ids::tsDen], 4);
             expect (r.warnings.size() >= 3);
         }

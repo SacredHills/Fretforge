@@ -222,6 +222,8 @@ private:
     bool tempoDragBase = false;
     double dragLo = 60.0, dragHi = 180.0;
     TempoMap tempoDragMap;
+    std::vector<TempoMap::Point> tempoDragOthers;   // the other points while one is dragged
+    double dragQuarterFor (float x, double bpm, bool snapOn) const;
     // loop bar (like Studio One): drag the bar to move it, its ends to resize it, the empty strip to draw a new one
     enum class LoopDrag { none, move, left, right, draw } loopDrag = LoopDrag::none;
     double loopA0 = 0.0, loopB0 = 0.0;

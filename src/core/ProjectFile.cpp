@@ -172,7 +172,7 @@ void validate (juce::ValueTree& root, juce::StringArray& warnings)
             warnings.add ("Property " + prop.toString() + " was invalid and has been corrected.");
         node.setProperty (prop, c, nullptr);
     };
-    clampProp (t, bpm, 10.0, 999.0, 120.0);
+    clampProp (t, bpm, 10.0, 500.0, 120.0);
     clampProp (t, tsNum, 1.0, 16.0, 4.0);
     t.setProperty (tsNum, (int) t.getProperty (tsNum), nullptr);
 
