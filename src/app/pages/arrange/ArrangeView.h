@@ -43,6 +43,12 @@ struct ArrangeGeometry
     }
     int totalHeight() const { return topOf ((int) heights.size()); }
     double snapBeats = 1.0;      // grid in quarter notes; 0 = off
+    TempoMap tempoMap;           // tempo changes of the project (the constant tempo `bpm` when there are none)
+    double barQuarters() const { return tsNum * 4.0 / tsDen; }
+    double beatQuarters() const { return 4.0 / tsDen; }
+    double barSecAt (int bar) const { return tempoMap.secondsAtQuarter (bar * barQuarters()); }
+    double beatSecAt (int bar, int k) const { return tempoMap.secondsAtQuarter (bar * barQuarters() + k * beatQuarters()); }
+    int barAt (double t) const { return (int) std::floor (tempoMap.quarterAtSeconds (juce::jmax (0.0, t)) / barQuarters() + 1.0e-9); }
     double bpm = 120.0;
     int tsNum = 4, tsDen = 4;
 
@@ -54,6 +60,8 @@ struct ArrangeGeometry
     double snap (double t, bool enabled = true) const
     {
         if (! enabled || snapBeats <= 0.0) return juce::jmax (0.0, t);
+        if (! tempoMap.isConstant())   // the grid follows the tempo changes
+            return juce::jmax (0.0, tempoMap.secondsAtQuarter (std::round (tempoMap.quarterAtSeconds (juce::jmax (0.0, t)) / snapBeats) * snapBeats));
         const double g = gridSec();
         return juce::jmax (0.0, std::round (t / g) * g);
     }
@@ -192,6 +200,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     static constexpr int markerLane = 18;
+    static constexpr int tempoLane = 16;  // just above the markers: tempo changes (double-click to add one)
     static constexpr int loopLane = 14;   // the loop bar's strip at the top
     static constexpr int exportLane = 12; // below it: the export range (what File > Export renders)
     static constexpr int numbersTop = loopLane + exportLane;
@@ -201,6 +210,13 @@ private:
     ArrangeView& owner;
     double dragStart = -1.0;
     juce::ValueTree markerAt (float x) const;
+    // tempo lane
+    juce::Rectangle<int> tempoArea() const { return { 0, getHeight() - markerLane - tempoLane, getWidth(), tempoLane }; }
+    juce::ValueTree tempoAt (float x, bool& isBase) const;
+    juce::Rectangle<float> tempoTag (double quarter, const juce::String& text) const;
+    void editTempo (juce::ValueTree change, double quarter);
+    juce::ValueTree tempoDrag;
+    TempoMap tempoDragMap;
     // loop bar (like Studio One): drag the bar to move it, its ends to resize it, the empty strip to draw a new one
     enum class LoopDrag { none, move, left, right, draw } loopDrag = LoopDrag::none;
     double loopA0 = 0.0, loopB0 = 0.0;
@@ -330,7 +346,7 @@ private:
     void valueTreeRedirected (juce::ValueTree&) override { rebuildHeaders(); }
 
     static constexpr int headerWidth = 250;
-    static constexpr int rulerHeight = 58;
+    static constexpr int rulerHeight = 58 + 16;   // + the tempo lane
     static constexpr int toolbarHeight = 38;
 };
 } // namespace ff

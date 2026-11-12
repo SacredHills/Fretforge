@@ -1,4 +1,5 @@
 #pragma once
+#include "core/TempoMap.h"
 #include <juce_data_structures/juce_data_structures.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "core/ProjectFile.h"
@@ -41,6 +42,11 @@ public:
     int tsNum() { return (int) transport()[project::ids::tsNum]; }
     int tsDen() { return (int) transport()[project::ids::tsDen]; }
     void setTempo (double bpm);
+    /** The tempo track: tempo changes (TEMPO {quarter, bpm} children of the transport) on top of the base tempo. */
+    TempoMap tempoMap();
+    /** Adds a tempo change at `quarter` (quarter notes from the start), or changes the one already there. */
+    void setTempoChange (double quarter, double bpm);
+    void removeTempoChange (juce::ValueTree change);
     void setTimeSignature (int num, int den);
     /** Generic undoable property edit. */
     void set (juce::ValueTree node, const juce::Identifier& id, const juce::var& value, bool undoable = true);
@@ -96,8 +102,8 @@ private:
     void addToRecent (const juce::File&);
 
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
-    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override { markDirty(); }
-    void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override { markDirty(); }
+    void valueTreeChildAdded (juce::ValueTree& p, juce::ValueTree&) override { if (p.getType() == project::ids::TRANSPORT) pushAllToEngine(); markDirty(); }
+    void valueTreeChildRemoved (juce::ValueTree& p, juce::ValueTree&, int) override { if (p.getType() == project::ids::TRANSPORT) pushAllToEngine(); markDirty(); }
     void valueTreeChildOrderChanged (juce::ValueTree&, int, int) override { markDirty(); }
 };
 } // namespace ff

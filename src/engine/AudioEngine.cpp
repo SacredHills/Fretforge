@@ -32,6 +32,7 @@ AudioEngine::AudioEngine()
     analysis.prepare (1 << 18);
     retired.prepare (1024);
     retiredTabs.prepare (256);
+    retiredClickMaps.prepare (64);
     liveMidiIn.prepare (1024);
     pendingSamples.prepare (128);
     retiredSamples.prepare (256);
@@ -42,6 +43,8 @@ AudioEngine::~AudioEngine()
     workers.stop();
     delete pendingGraph.exchange (nullptr);
     delete pendingTab.exchange (nullptr);
+    delete pendingClicks.exchange (nullptr);
+    delete clickMap;
     collectGarbage();
     delete graph;
     delete tabSeq;
@@ -70,6 +73,13 @@ void AudioEngine::waitForAudioCallback()
     const auto start = callbackCounter.load();
     for (int i = 0; i < 200 && deviceRunning.load() && callbackCounter.load() - start < 2; ++i)
         juce::Thread::sleep (2);
+}
+
+void AudioEngine::submitClickMap (std::unique_ptr<ClickList> clicks)
+{
+    if (clicks != nullptr && clicks->empty()) clicks.reset();
+    // nullptr is a message too (back to the constant click): an empty list stands for it
+    delete pendingClicks.exchange (clicks != nullptr ? clicks.release() : new ClickList());
 }
 
 void AudioEngine::submitTabSequence (std::unique_ptr<TabSequence> seq)
@@ -220,6 +230,10 @@ void AudioEngine::collectGarbage()
     while ((n = retiredSamples.pop (oldSamples, 32)) > 0)
         for (int i = 0; i < n; ++i)
             delete oldSamples[i];
+    ClickList* oldClicks[32];
+    while ((n = retiredClickMaps.pop (oldClicks, 32)) > 0)
+        for (int i = 0; i < n; ++i)
+            delete oldClicks[i];
     TabSequence* oldTabs[32];
     while ((n = retiredTabs.pop (oldTabs, 32)) > 0)
         for (int i = 0; i < n; ++i)
@@ -242,7 +256,7 @@ void AudioEngine::prepare (double sr, int maximumBlockSize)
     metronome.prepare (sr);
     synth.prepare (sr);
     drumSynth.prepare (sr);
-    tabNeedsSeek = tabNeedsSeekClicks = true;
+    tabNeedsSeek = tabNeedsSeekClicks = mapNeedsSeek = true;
     smoothedGain.reset (sr, 0.02);
     smoothedGain.setCurrentAndTargetValue (masterGain.load());
     const int scratch = juce::jmax (maximumBlockSize, 4096);
@@ -422,11 +436,17 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
         }
         graph = g;
     }
+    if (auto* cm = pendingClicks.exchange (nullptr))
+    {
+        if (clickMap != nullptr && retiredClickMaps.push (&clickMap, 1) == 0) {}
+        if (cm->empty()) { delete cm; clickMap = nullptr; } else clickMap = cm;
+        mapNeedsSeek = true;
+    }
     if (auto* t = pendingTab.exchange (nullptr))
     {
         if (tabSeq != nullptr && retiredTabs.push (&tabSeq, 1) == 0) {}
         tabSeq = t;
-        tabNeedsSeek = tabNeedsSeekClicks = true;
+        tabNeedsSeek = tabNeedsSeekClicks = mapNeedsSeek = true;
     }
     const bool tab = tabMode.load();
     liveMidiCount = liveMidiIn.pop (liveMidiBlock.data(), (int) liveMidiBlock.size());
@@ -437,7 +457,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
     {
         pos = loc;
         closeRecordSegments();
-        tabNeedsSeek = tabNeedsSeekClicks = true;
+        tabNeedsSeek = tabNeedsSeekClicks = mapNeedsSeek = true;
         synth.allNotesOff();
         drumSynth.allNotesOff();
         if (playing && countInRemaining == 0)
@@ -448,7 +468,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
     if (wantPlay && ! playing)
     {
         playing = true;
-        tabNeedsSeek = tabNeedsSeekClicks = true;
+        tabNeedsSeek = tabNeedsSeekClicks = mapNeedsSeek = true;
         countInRemaining = countInRequest.exchange (0);
         if (countInRemaining > 0)
             metronome.reset();
@@ -553,7 +573,39 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
             renderTab (bus, numBus, done, len);
         meterMix (bus, numBus, done, len);   // the mix (after the master plugins), before the click is added
 
-        if (numBus > 0 && ((playing && clickWhilePlaying.load() && ! tab) || (! playing && practice)))
+        if (clickMap != nullptr && playing && ! tab)
+        {
+            // the project has tempo changes: the click follows the beat times from the tempo map
+            if (mapNeedsSeek)
+            {
+                const double t = (double) pos / sr - 1.0e-9;
+                mapNextClick = (size_t) (std::lower_bound (clickMap->begin(), clickMap->end(), t,
+                                                           [] (const TabSequence::Click& k, double v) { return k.sec < v; }) - clickMap->begin());
+                mapNeedsSeek = false;
+            }
+            const double t1 = (double) (pos + len) / sr;
+            int ccur = 0;
+            const bool audible = numBus > 0 && clickWhilePlaying.load();
+            while (mapNextClick < clickMap->size() && (*clickMap)[mapNextClick].sec < t1)
+            {
+                const auto& ck = (*clickMap)[mapNextClick];
+                if (audible)
+                {
+                    const int off = juce::jlimit (ccur, len, (int) (std::llround (ck.sec * sr) - pos));
+                    float* seg[2] = { clickOut[0] + ccur, clickOut[1] != nullptr ? clickOut[1] + ccur : nullptr };
+                    metronome.renderTriggered (seg, numBus, off - ccur);
+                    ccur = off;
+                    metronome.triggerClick (ck.accent);
+                }
+                ++mapNextClick;
+            }
+            if (audible)
+            {
+                float* seg[2] = { clickOut[0] + ccur, clickOut[1] != nullptr ? clickOut[1] + ccur : nullptr };
+                metronome.renderTriggered (seg, numBus, len - ccur);
+            }
+        }
+        else if (numBus > 0 && ((playing && clickWhilePlaying.load() && ! tab) || (! playing && practice)))
             metronome.process (clickOut, numBus, len);
 
         if (playing)
@@ -564,7 +616,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
                 pos = loopS;
                 closeRecordSegments();
                 metronome.resetAtBeat (beatsAt (pos));
-                tabNeedsSeek = tabNeedsSeekClicks = true;
+                tabNeedsSeek = tabNeedsSeekClicks = mapNeedsSeek = true;
                 synth.allNotesOff();
         drumSynth.allNotesOff();
             }

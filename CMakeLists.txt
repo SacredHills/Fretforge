@@ -219,6 +219,7 @@ if(FF_BUILD_TESTS)
         tests/MusicTheoryTests.cpp
         tests/PitchDetectorTests.cpp
         tests/MetronomeTests.cpp
+        tests/TempoMapTests.cpp
         tests/ExerciseTests.cpp
         tests/ProjectFileTests.cpp
         tests/AudioEngineTests.cpp

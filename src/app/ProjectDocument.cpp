@@ -165,6 +165,42 @@ void ProjectDocument::setTempo (double bpm)
     set (transport(), ids::bpm, juce::jlimit (10.0, 999.0, std::round (bpm * 100.0) / 100.0));
 }
 
+TempoMap ProjectDocument::tempoMap()
+{
+    std::vector<TempoMap::Point> pts;
+    for (auto c : transport())
+        if (c.hasType (ids::TEMPO)) pts.push_back ({ (double) c[ids::quarter], (double) c[ids::bpm] });
+    TempoMap m;
+    m.set (tempo(), std::move (pts));
+    return m;
+}
+
+void ProjectDocument::setTempoChange (double quarter, double bpm)
+{
+    bpm = juce::jlimit (10.0, 999.0, std::round (bpm * 100.0) / 100.0);
+    quarter = juce::jmax (0.0, std::round (quarter * 1000.0) / 1000.0);
+    if (quarter < 1.0e-6) { setTempo (bpm); return; }   // at the very start it is the project tempo
+    for (auto c : transport())
+        if (c.hasType (ids::TEMPO) && std::abs ((double) c[ids::quarter] - quarter) < 1.0e-6)
+        {
+            undoManager.beginNewTransaction ("Tempo change");
+            set (c, ids::bpm, bpm);
+            return;
+        }
+    undoManager.beginNewTransaction ("Add tempo change");
+    juce::ValueTree n (ids::TEMPO);
+    n.setProperty (ids::quarter, quarter, nullptr);
+    n.setProperty (ids::bpm, bpm, nullptr);
+    transport().appendChild (n, &undoManager);
+}
+
+void ProjectDocument::removeTempoChange (juce::ValueTree change)
+{
+    if (! change.isValid() || change.getParent() != transport()) return;
+    undoManager.beginNewTransaction ("Delete tempo change");
+    transport().removeChild (change, &undoManager);
+}
+
 void ProjectDocument::setTimeSignature (int num, int den)
 {
     undoManager.beginNewTransaction ("Time signature");
@@ -177,6 +213,24 @@ void ProjectDocument::pushAllToEngine()
     auto& e = host.engine;
     e.setTempo (tempo());
     e.setTimeSignature (tsNum(), tsDen());
+    {
+        // tempo changes: the click follows the tempo map (beat times for the first two hours of the song)
+        const auto map = tempoMap();
+        if (map.isConstant()) e.submitClickMap (nullptr);
+        else
+        {
+            auto clicks = std::make_unique<std::vector<TabSequence::Click>>();
+            const double beatQ = 4.0 / juce::jmax (1, tsDen());
+            const int perBar = juce::jmax (1, tsNum());
+            for (int k = 0; k < 40000; ++k)
+            {
+                const double sec = map.secondsAtQuarter (k * beatQ);
+                if (sec > 7200.0) break;
+                clicks->push_back ({ sec, k % perBar == 0 });
+            }
+            e.submitClickMap (std::move (clicks));
+        }
+    }
 
     auto m = metronome();
     e.clickWhilePlaying = (bool) m[ids::enabled];

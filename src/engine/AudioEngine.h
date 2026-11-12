@@ -111,6 +111,9 @@ public:
     DrumSynth& drums() noexcept { return drumSynth; }
     void previewDrum (int piece, float velocity) noexcept { drumPreview.store ((piece & 0xff) | (juce::jlimit (1, 127, (int) (velocity * 127.0f)) << 8)); }
     void submitTabSequence (std::unique_ptr<TabSequence> seq);
+    /** The DAW click when the project has tempo changes: the beat times (seconds) and which are bar starts. An empty list (or
+        nullptr) returns to the plain constant-tempo click. */
+    void submitClickMap (std::unique_ptr<std::vector<TabSequence::Click>> clicks);
     /** Starts playback after `countInSamples` of metronome count-in. */
     void playWithCountIn (juce::int64 countInSamples) noexcept { countInRequest = juce::jmax ((juce::int64) 0, countInSamples); playRequested = true; }
 
@@ -166,6 +169,12 @@ private:
     std::atomic<TabSequence*> pendingTab { nullptr };
     TabSequence* tabSeq = nullptr;
     SpscFifo<TabSequence*> retiredTabs;
+    using ClickList = std::vector<TabSequence::Click>;
+    std::atomic<ClickList*> pendingClicks { nullptr };
+    ClickList* clickMap = nullptr;
+    SpscFifo<ClickList*> retiredClickMaps;
+    size_t mapNextClick = 0;
+    bool mapNeedsSeek = true;
     // live MIDI (keyboard) for armed instrument tracks
     struct LiveMidi { juce::uint8 b[3] {}; juce::uint8 size = 0; int target = -1; };
     SpscFifo<LiveMidi> liveMidiIn;

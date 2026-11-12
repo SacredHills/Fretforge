@@ -274,7 +274,9 @@ void TransportBar::timerCallback()
     playButton.setToggleState (playing, juce::dontSendNotification);
     playButton.setIcon (playing ? IconButton::Icon::stop : IconButton::Icon::play);
 
-    const double ppq = e.getPositionPpq();
+    const double sr0 = e.getSampleRate();
+    const auto tempoMap = doc.tempoMap();
+    const double ppq = tempoMap.isConstant() ? e.getPositionPpq() : tempoMap.quarterAtSeconds (sr0 > 0 ? (double) e.getPositionSamples() / sr0 : 0.0);
     const int num = doc.tsNum(), den = doc.tsDen();
     const double qPerBar = num * 4.0 / den;
     const int bar = (int) std::floor (ppq / qPerBar) + 1;
