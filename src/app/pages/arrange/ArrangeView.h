@@ -216,7 +216,8 @@ private:
     void tempoRange (double& lo, double& hi) const;
     float tempoY (float bpm, double lo, double hi) const;
     double tempoBpmAt (float y, double lo, double hi) const;
-    void editTempo (juce::ValueTree point, double seconds, bool isBase);
+    void editTempo (juce::ValueTree point, double quarter, bool isBase);
+    double tempoQuarterAt (float x, const TempoMap& map, bool snapOn) const;
     juce::ValueTree tempoDrag;
     bool tempoDragBase = false;
     double dragLo = 60.0, dragHi = 180.0;

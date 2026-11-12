@@ -17,23 +17,29 @@ public:
             expectWithinAbsoluteError (m.secondsAtQuarter (4.0), 2.0, 1e-9);
             expectWithinAbsoluteError (m.quarterAtSeconds (3.0), 6.0, 1e-9);
         }
-        beginTest ("a ramp integrates the tempo, both ways");
+        beginTest ("a ramp over quarters, both ways");
         {
             ff::TempoMap m;
-            m.set (120.0, { { 10.0, 180.0 }, { 4.0, 120.0 } });   // flat 120 until 4 s, then a ramp to 180 at 10 s (unsorted input)
-            expect (! m.isConstant());
+            m.set (120.0, { { 8.0, 180.0 }, { 4.0, 120.0 } });   // flat 120 to quarter 4, ramp to 180 at quarter 8 (unsorted)
             expectEquals (m.numPoints(), 3);
-            expectWithinAbsoluteError (m.quarterAtSeconds (4.0), 8.0, 1e-9);
-            expectWithinAbsoluteError (m.quarterAtSeconds (10.0), 8.0 + 6.0 * 150.0 / 60.0, 1e-9);   // average 150 bpm over 6 s
-            expectWithinAbsoluteError (m.quarterAtSeconds (12.0), 8.0 + 15.0 + 2.0 * 3.0, 1e-9);     // then 180 bpm
-            expectWithinAbsoluteError (m.bpmAtSeconds (7.0), 150.0, 1e-9);
-            for (double t : { 0.0, 1.5, 4.0, 5.3, 7.0, 10.0, 13.7 })
+            expectWithinAbsoluteError (m.secondsAtQuarter (4.0), 2.0, 1e-9);
+            expectWithinAbsoluteError (m.bpmAtQuarter (6.0), 150.0, 1e-9);
+            expectWithinAbsoluteError (m.secondsAtQuarter (8.0), 2.0 + 60.0 * std::log (1.5) / 15.0, 1e-9);
+            expectWithinAbsoluteError (m.bpmAtQuarter (12.0), 180.0, 1e-9);
+            for (double t : { 0.0, 1.5, 2.0, 3.3, 4.0, 5.0, 9.7 })
                 expectWithinAbsoluteError (m.secondsAtQuarter (m.quarterAtSeconds (t)), t, 1e-9);
         }
-        beginTest ("points at the start or on top of each other are ignored");
+        beginTest ("points stack for an instant change, and stay on the grid");
         {
             ff::TempoMap m;
-            m.set (100.0, { { 0.0, 200.0 }, { 4.0, 80.0 }, { 4.0, 90.0 } });
+            m.set (120.0, { { 4.0, 120.0 }, { 4.0, 60.0 } });   // jump to 60 bpm at quarter 4
+            expectEquals (m.numPoints(), 3);
+            expectWithinAbsoluteError (m.secondsAtQuarter (4.0), 2.0, 1e-9);
+            expectWithinAbsoluteError (m.secondsAtQuarter (5.0), 3.0, 1e-9);
+            expectWithinAbsoluteError (m.bpmAtQuarter (3.9), 120.0, 1e-9);
+            expectWithinAbsoluteError (m.bpmAtQuarter (4.0), 60.0, 1e-9);
+            expectWithinAbsoluteError (m.quarterAtSeconds (3.0), 5.0, 1e-9);
+            m.set (100.0, { { 0.0, 200.0 }, { 4.0, 80.0 } });    // a point at the start is ignored
             expectEquals (m.numPoints(), 2);
             expectWithinAbsoluteError (m.baseBpm(), 100.0, 1e-9);
         }

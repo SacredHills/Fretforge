@@ -169,29 +169,22 @@ TempoMap ProjectDocument::tempoMap()
 {
     std::vector<TempoMap::Point> pts;
     for (auto c : transport())
-        if (c.hasType (ids::TEMPO)) pts.push_back ({ (double) c[ids::at], (double) c[ids::bpm] });
+        if (c.hasType (ids::TEMPO)) pts.push_back ({ (double) c[ids::beat], (double) c[ids::bpm] });
     TempoMap m;
     m.set (tempo(), std::move (pts));
     return m;
 }
 
-void ProjectDocument::setTempoPoint (double seconds, double bpm)
+void ProjectDocument::addTempoPoint (double quarter, double bpm)
 {
     bpm = juce::jlimit (10.0, 999.0, std::round (bpm * 100.0) / 100.0);
-    seconds = juce::jmax (0.0, std::round (seconds * 1000.0) / 1000.0);
-    if (seconds < 1.0e-6) { setTempo (bpm); return; }   // at the very start it is the project tempo
-    for (auto c : transport())
-        if (c.hasType (ids::TEMPO) && std::abs ((double) c[ids::at] - seconds) < 5.0e-4)
-        {
-            undoManager.beginNewTransaction ("Tempo");
-            set (c, ids::bpm, bpm);
-            return;
-        }
+    quarter = juce::jmax (0.0, std::round (quarter * 1000.0) / 1000.0);
+    if (quarter < 1.0e-6) { setTempo (bpm); return; }   // at the very start it is the project tempo
     undoManager.beginNewTransaction ("Add tempo point");
     juce::ValueTree n (ids::TEMPO);
-    n.setProperty (ids::at, seconds, nullptr);
+    n.setProperty (ids::beat, quarter, nullptr);
     n.setProperty (ids::bpm, bpm, nullptr);
-    transport().appendChild (n, &undoManager);
+    transport().appendChild (n, &undoManager);   // a second point at the same position makes an instant change
 }
 
 void ProjectDocument::removeTempoPoint (juce::ValueTree point)
