@@ -193,6 +193,7 @@ void AudioEngine::setRecording (bool shouldRecord, juce::int64 countInSamples) n
 {
     if (shouldRecord && ! playRequested.load())
     {
+        lastPlayStart = positionSamples.load();
         countInRequest = juce::jmax ((juce::int64) 0, countInSamples);
         recordRequested = true;
         playRequested = true;

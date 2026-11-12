@@ -49,7 +49,7 @@ public:
     enum Commands
     {
         cmdNew = 0x2000, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo,
-        cmdPlayStop, cmdReturnToZero, cmdToggleClick, cmdTapTempo, cmdPracticeMetronome,
+        cmdPlayStop, cmdReturnToZero, cmdBackToPlayStart, cmdToggleClick, cmdTapTempo, cmdPracticeMetronome,
         cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow, cmdPlugins,
         cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdDelete,
         cmdCopy, cmdCut, cmdPaste, cmdSelectAll, cmdAddMarker, cmdZoomIn, cmdZoomOut, cmdZoomFit,
@@ -83,6 +83,7 @@ public:
     void menuItemSelected (int, int) override;
 
 private:
+    juce::uint32 lastNumpad0Ms = 0;
     juce::PropertiesFile& settings;
     StudioLookAndFeel lnf;
     EngineHost host;

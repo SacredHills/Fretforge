@@ -528,7 +528,7 @@ void MainComponent::showShortcutEditor()
 
 void MainComponent::getAllCommands (juce::Array<juce::CommandID>& c)
 {
-    c.addArray ({ cmdNew, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo, cmdPlayStop, cmdReturnToZero,
+    c.addArray ({ cmdNew, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo, cmdPlayStop, cmdReturnToZero, cmdBackToPlayStart,
                   cmdToggleClick, cmdTapTempo, cmdPracticeMetronome, cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow, cmdPlugins,
                   cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdDelete,
                   cmdCopy, cmdCut, cmdPaste, cmdSelectAll, cmdAddMarker, cmdZoomIn, cmdZoomOut, cmdZoomFit });
@@ -561,6 +561,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
             break;
         case cmdPlayStop: info.setInfo ("Play / Stop", "Start or stop the transport", "Transport", 0); info.addDefaultKeypress (KP::spaceKey, 0); break;
         case cmdReturnToZero: info.setInfo ("Return to Start", "Move the playhead to bar 1", "Transport", 0); info.addDefaultKeypress (KP::homeKey, 0); info.addDefaultKeypress (KP::returnKey, 0); break;
+        case cmdBackToPlayStart: info.setInfo ("Back to Where You Were", "Numpad 0: back to where playback last started; twice quickly: back to the very beginning", "Transport", 0); info.addDefaultKeypress (KP::numberPad0, 0); break;
         case cmdToggleClick: info.setInfo ("Metronome Click", "Click while playing", "Transport", 0); info.setTicked ((bool) doc->metronome()[project::ids::enabled]); info.addDefaultKeypress ('c', 0); break;
         case cmdTapTempo: info.setInfo ("Tap Tempo", "Tap to set the tempo", "Transport", 0); info.addDefaultKeypress ('t', 0); break;
         case cmdPlugins: info.setInfo ("Plugins...", "Scan for and manage VST3 / Audio Unit plugins", "Track", 0); break;
@@ -569,7 +570,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdPracticeMetronome: info.setInfo ("Practice Metronome", "Start/stop the free-running metronome", "Transport", 0); info.setTicked (host.engine.practiceMetronome.load()); info.addDefaultKeypress ('m', 0); break;
         case cmdShortcuts: info.setInfo ("Keyboard Shortcuts...", "View and customise shortcuts", "Help", 0); info.addDefaultKeypress ('/', cmd); break;
         case cmdAbout: info.setInfo ("About " FF_DISPLAY_NAME, "Version information", "Help", 0); break;
-        case cmdRecord: info.setInfo ("Record", "Record on armed tracks / punch out", "Transport", 0); info.setTicked (host.engine.isRecordRequested()); info.addDefaultKeypress ('r', 0); break;
+        case cmdRecord: info.setInfo ("Record", "Record on armed tracks / punch out", "Transport", 0); info.setTicked (host.engine.isRecordRequested()); info.addDefaultKeypress ('r', 0); info.addDefaultKeypress (KP::numberPadMultiply, 0); break;
         case cmdLoop: info.setInfo ("Loop", "Toggle the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::loopEnabled]); info.addDefaultKeypress ('l', 0); break;
         case cmdPunch: info.setInfo ("Punch In/Out", "Record only inside the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::punchEnabled]); info.addDefaultKeypress ('p', 0); break;
         case cmdAddTrack: info.setInfo ("Add Track", "Add an audio track", "Track", 0); info.addDefaultKeypress ('t', cmd); break;
@@ -577,7 +578,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdExport: info.setInfo ("Export Audio...", "Export the mix or stems", "File", 0); info.addDefaultKeypress ('e', cmd); break;
         case cmdSplit: info.setInfo ("Split at Playhead", "Split clips at the playhead", "Edit", 0); info.setActive (currentSection == 0); info.addDefaultKeypress ('s', 0); break;
         case cmdDuplicate: info.setInfo ("Duplicate", "Duplicate selected clips", "Edit", 0); info.setActive (currentSection == 0 && studioPage->arrange.hasSelection()); info.addDefaultKeypress ('d', cmd); break;
-        case cmdDelete: info.setInfo ("Delete", "Delete selected clips", "Edit", 0); info.setActive (currentSection == 0 && studioPage->arrange.hasSelection()); info.addDefaultKeypress (KP::deleteKey, 0); info.addDefaultKeypress (KP::backspaceKey, 0); break;
+        case cmdDelete: info.setInfo ("Delete", "Delete selected clips", "Edit", 0); info.setActive (currentSection == 0 && (studioPage->arrange.hasSelection() || ! session->selectedTracks.isEmpty())); info.addDefaultKeypress (KP::deleteKey, 0); info.addDefaultKeypress (KP::backspaceKey, 0); break;
         case cmdCopy: info.setInfo ("Copy", "Copy selected clips", "Edit", 0); info.setActive (currentSection == 0 && studioPage->arrange.hasSelection()); info.addDefaultKeypress ('c', cmd); break;
         case cmdCut: info.setInfo ("Cut", "Cut selected clips", "Edit", 0); info.setActive (currentSection == 0 && studioPage->arrange.hasSelection()); info.addDefaultKeypress ('x', cmd); break;
         case cmdPaste: info.setInfo ("Paste", "Paste clips at the playhead", "Edit", 0); info.setActive (currentSection == 0); info.addDefaultKeypress ('v', cmd); break;
@@ -611,6 +612,14 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdRedo: pluginManager->commitPendingChanges(); doc->undo().redo(); return true;
         case cmdPlayStop: if (currentSection == tabsSection) tabPage->togglePlay(); else if (currentSection == drumSection) drumPage->togglePlay(); else if (currentSection == trainingSection) trainingPage->togglePlay(); else host.engine.togglePlay(); return true;
         case cmdReturnToZero: host.engine.returnToZero(); return true;
+        case cmdBackToPlayStart:
+        {
+            const auto now = juce::Time::getMillisecondCounter();
+            const bool twice = now - lastNumpad0Ms < 500;
+            lastNumpad0Ms = twice ? 0 : now;   // a third press starts a new pair
+            if (twice) host.engine.returnToZero(); else host.engine.locate (host.engine.getLastPlayStart());
+            return true;
+        }
         case cmdToggleClick: transport->toggleClick(); return true;
         case cmdTapTempo: transport->tapTempo(); return true;
         case cmdPracticeMetronome: metronomePanel->togglePractice(); return true;
@@ -626,7 +635,26 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdExport: ExportDialog::show (this, *doc, *session, host, settings); return true;
         case cmdSplit: studioPage->arrange.splitAtPlayhead(); return true;
         case cmdDuplicate: studioPage->arrange.duplicateSelection(); return true;
-        case cmdDelete: studioPage->arrange.deleteSelection(); return true;
+        case cmdDelete:
+        {
+            if (studioPage->arrange.hasSelection()) { studioPage->arrange.deleteSelection(); return true; }
+            if (currentSection != 0 || session->selectedTracks.isEmpty()) return true;
+            const auto tracks = session->selectedTracks;
+            juce::StringArray names;
+            for (auto& t : tracks) names.add (t[timeline::ids::name].toString());
+            const auto text = tracks.size() == 1 ? "Delete the track \"" + names[0] + "\" and everything on it?"
+                                                 : "Delete these " + juce::String (tracks.size()) + " tracks and everything on them?\n\n" + names.joinIntoString (", ");
+            juce::Component::SafePointer<MainComponent> safe (this);
+            juce::AlertWindow::showAsync (juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::QuestionIcon)
+                                              .withTitle ("Delete track").withMessage (text + "\n\nYou can undo this with Ctrl+Z.")
+                                              .withButton ("Delete").withButton ("Cancel"),
+                                          [safe, tracks] (int r) {
+                                              if (r != 1 || safe == nullptr) return;
+                                              safe->session->selectedTracks.clear();
+                                              for (auto t : tracks) if (t.getParent().isValid()) safe->session->deleteTrack (t);
+                                          });
+            return true;
+        }
         case cmdCopy: studioPage->arrange.copySelection (false); return true;
         case cmdCut: studioPage->arrange.copySelection (true); return true;
         case cmdPaste: studioPage->arrange.paste(); return true;

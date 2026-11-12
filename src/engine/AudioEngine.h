@@ -45,7 +45,9 @@ public:
     ~AudioEngine() override;
 
     // ---- transport (any thread) ----
-    void play() noexcept { playRequested = true; }
+    void play() noexcept { if (! playRequested.load()) lastPlayStart = positionSamples.load(); playRequested = true; }
+    /** Where the transport was when playback / recording last started (the "go back to where you were" key). */
+    juce::int64 getLastPlayStart() const noexcept { return lastPlayStart.load(); }
     void stop() noexcept { playRequested = false; recordRequested = false; }
     void togglePlay() noexcept { if (playRequested.load()) stop(); else play(); }
     void returnToZero() noexcept { locate (0); }
@@ -142,6 +144,7 @@ public:
     std::atomic<bool> deviceRunning { false };
 
 private:
+    std::atomic<juce::int64> lastPlayStart { 0 };
     std::atomic<bool> playRequested { false }, recordRequested { false }, recordAck { false };
     std::atomic<juce::int64> locateRequest { -1 }, countInRequest { 0 };
     std::atomic<bool> playingState { false }, countingIn { false };
