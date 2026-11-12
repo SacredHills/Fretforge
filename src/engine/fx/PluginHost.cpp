@@ -10,7 +10,25 @@ namespace
 std::atomic<PluginHost*> theHost { nullptr };
 
 // ---- crash protection state ----
-struct Names { juce::String name, id; };
+/** Notices settings changes of one plugin instance (any thread). */
+struct StateWatch final : public juce::AudioProcessorListener
+{
+    std::atomic<bool> dirty { true };   // a new plugin is captured once
+    int backoff = 0, wait = 0;          // message thread: periodic captures to skip
+    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override { dirty.store (true, std::memory_order_relaxed); }
+    void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& d) override
+    {
+        if (d.parameterInfoChanged || d.programChanged || d.nonParameterStateChanged) dirty.store (true, std::memory_order_relaxed);
+    }
+};
+struct Names
+{
+    juce::String name, id;
+    std::shared_ptr<StateWatch> watch;
+    // what the instance was last prepared for (message thread), so a device restart with the same format leaves it alone
+    double preparedRate = 0.0;
+    int preparedBlock = 0;
+};
 std::mutex registryMutex;
 std::map<const void*, Names>& registry() { static std::map<const void*, Names> r; return r; }
 
@@ -86,11 +104,53 @@ public:
 std::unique_ptr<Watchdog>& watchdog() { static std::unique_ptr<Watchdog> w; return w; }
 }
 
-void registerPluginInstance (const juce::AudioPluginInstance* p, const juce::String& name, const juce::String& id)
+void registerPluginInstance (juce::AudioPluginInstance* p, const juce::String& name, const juce::String& id)
 {
     if (p == nullptr) return;
+    auto watch = std::make_shared<StateWatch>();
+    p->addListener (watch.get());
     const std::lock_guard<std::mutex> lock (registryMutex);
-    registry()[p] = { name, id };   // an address reused by a later plugin is simply overwritten
+    registry()[p] = { name, id, watch, 0.0, 0 };   // an address reused by a later plugin is simply overwritten
+}
+
+void unregisterPluginInstance (juce::AudioPluginInstance* p)
+{
+    if (p == nullptr) return;
+    std::shared_ptr<StateWatch> watch;
+    {
+        const std::lock_guard<std::mutex> lock (registryMutex);
+        if (auto it = registry().find (p); it != registry().end()) { watch = it->second.watch; registry().erase (it); }
+    }
+    if (watch != nullptr) p->removeListener (watch.get());
+}
+
+bool pluginStateNeedsCapture (const juce::AudioPluginInstance& p)
+{
+    const std::lock_guard<std::mutex> lock (registryMutex);
+    auto it = registry().find (&p);
+    if (it == registry().end() || it->second.watch == nullptr) return true;
+    auto& w = *it->second.watch;
+    if (! w.dirty.load (std::memory_order_relaxed)) return false;
+    if (w.wait > 0) { --w.wait; return false; }
+    w.dirty.store (false, std::memory_order_relaxed);
+    return true;
+}
+
+void markPluginStateChanged (const juce::AudioPluginInstance& p)
+{
+    const std::lock_guard<std::mutex> lock (registryMutex);
+    if (auto it = registry().find (&p); it != registry().end() && it->second.watch != nullptr)
+        it->second.watch->dirty.store (true, std::memory_order_relaxed);
+}
+
+void pluginStateCaptured (const juce::AudioPluginInstance& p, bool differed)
+{
+    const std::lock_guard<std::mutex> lock (registryMutex);
+    auto it = registry().find (&p);
+    if (it == registry().end() || it->second.watch == nullptr) return;
+    auto& w = *it->second.watch;
+    w.backoff = differed ? 0 : juce::jlimit (1, 30, w.backoff * 2);   // "changed" but the same state: ask less often
+    w.wait = w.backoff;
 }
 
 PluginActivity::PluginActivity (const juce::String& name, const juce::String& id, const char* what)
@@ -114,7 +174,7 @@ static Names namesOf (const juce::AudioPluginInstance& p)
         const std::lock_guard<std::mutex> lock (registryMutex);
         if (auto it = registry().find (&p); it != registry().end()) return it->second;
     }
-    return { p.getName(), {} };
+    return { p.getName(), {}, nullptr, 0.0, 0 };
 }
 
 PluginActivity::PluginActivity (const juce::AudioPluginInstance& p, const char* what)
@@ -213,7 +273,21 @@ void runPluginStereo (juce::AudioPluginInstance& p, juce::AudioBuffer<float>& sc
 
 void preparePlugin (juce::AudioPluginInstance& p, double sampleRate, int blockSize)
 {
+    // Already running at this rate and block size (the audio device restarted with the same format): leave it alone.
+    // Changing buses on a running plugin is not allowed (plugins may stop processing or hang), and re-activating
+    // is slow for big plugins.
+    {
+        const std::lock_guard<std::mutex> lock (registryMutex);
+        if (auto it = registry().find (&p); it != registry().end())
+        {
+            if (it->second.preparedBlock == blockSize && std::abs (it->second.preparedRate - sampleRate) < 0.01) return;
+            it->second.preparedRate = sampleRate;
+            it->second.preparedBlock = blockSize;
+        }
+    }
     PluginActivity activity (p, "starting up");
+    // (callers guarantee the audio thread is not inside this plugin: it is new, or the device is stopped)
+    p.releaseResources();   // deactivate first: buses may only be changed while the plugin is not running
     // guitar chain: stereo in/out if the plugin can, otherwise mono, otherwise whatever it has; extra buses
     // (side-chains, aux outputs) are switched off where the plugin allows it
     const auto layout = p.getBusesLayout();

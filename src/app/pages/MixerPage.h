@@ -80,7 +80,8 @@ private:
     juce::ValueTree track;
     int slot;
     juce::Slider fader, pan;
-    juce::TextButton mute { "M" }, solo { "S" }, arm { "R" }, ampButton { "NAM AMP" };
+    juce::TextButton mute { "M" }, solo { "S" }, arm { "R" };
+    ContextButton ampButton { "NAM AMP" };   // instrument tracks: the instrument (right-click: change / remove)
     MonitorButton mon;
     PowerButton ampPower;
     juce::Label nameLabel;

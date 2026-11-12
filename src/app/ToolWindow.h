@@ -6,7 +6,8 @@
 namespace ff
 {
 /** Keeps a floating window (plugin editor, tool window) above RAVENYR's own windows only while RAVENYR is the active
-    app: when you switch to a browser or another program the window drops back instead of covering it. */
+    app: when you switch to a browser or another program the window drops back instead of covering it. It also drops
+    back while any dialog is open. */
 class FloatAboveApp : private juce::Timer
 {
 public:
@@ -22,7 +23,10 @@ private:
     juce::DocumentWindow& window;
     void timerCallback() override
     {
-        const bool front = juce::Process::isForegroundProcess();
+        // ...and never while a dialog is up (file chooser, alert, the save prompt): an always-on-top plugin window
+        // would cover it, and the app would look frozen while it waits for a dialog nobody can see
+        const bool dialogUp = juce::ModalComponentManager::getInstance()->getNumModalComponents() > 0;
+        const bool front = juce::Process::isForegroundProcess() && ! dialogUp;
         if (front != window.isAlwaysOnTop()) window.setAlwaysOnTop (front);
     }
 };

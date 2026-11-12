@@ -47,6 +47,9 @@ public:
     static constexpr int instrumentMenu = -100;   // pass as firstId to list instruments instead of effects
     /** Menu of RAVENYR's own effects, then the known plugins (by manufacturer). */
     void addToMenu (juce::PopupMenu& menu, int firstId) const;
+    /** The scanned plugins for a menu, one entry per distinct plugin (the same plugin installed twice is listed
+        once). `display` has names made distinct where different plugins share one; originals[i] is what to load. */
+    void menuTypes (bool instruments, juce::Array<juce::PluginDescription>& display, juce::Array<juce::PluginDescription>& originals) const;
     /** The plugin chosen from that menu, as description XML (empty if none). */
     juce::String descriptionForMenuResult (int result, int firstId, juce::String& name) const;
 

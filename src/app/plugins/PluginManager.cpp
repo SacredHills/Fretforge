@@ -2,6 +2,7 @@
 #include "../ToolWindow.h"
 #include "../StudioLookAndFeel.h"
 #include "../GlobalKeys.h"
+#include "../HardExit.h"
 #include "engine/fx/BuiltinPlugins.h"
 #include <condition_variable>
 #include <queue>
@@ -29,7 +30,10 @@ private:
         else { pending.push (mb); triggerAsyncUpdate(); }   // formats that need the message thread
     }
 
-    void handleConnectionLost() override { juce::JUCEApplicationBase::quit(); }
+    // The app closed, finished scanning or gave up on a plugin that hangs: end this scanner process at once. (A quit
+    // message would wait for the message thread, which a hung plugin never gives back: the scanner would stay in the
+    // task manager for ever.)
+    void handleConnectionLost() override { hardExit (0); }
 
     void handleAsyncUpdate() override
     {
@@ -253,6 +257,7 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         ~Content() override
         {
             commitPending();
+            fx::markPluginStateChanged (plugin);   // whatever was changed in the window gets saved
             plugin.removeListener (&tracker);
             editor.removeComponentListener (this);
         }
@@ -316,7 +321,9 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             const auto& c = manager.clipboard;
             paste.setEnabled (! c.empty() && c.identifier == plugin.getPluginDescription().createIdentifierString());
         }
-        void fit() { setSize (juce::jmax (editor.getWidth(), 580), editor.getHeight() + bar); }
+        // The window is exactly as wide as the plugin; the bar above it shrinks its buttons for narrow plugins. Only a
+        // plugin narrower than the smallest bar gets a margin, and is then centred.
+        void fit() { setSize (juce::jmax (editor.getWidth(), minBarWidth), editor.getHeight() + bar); }
         void syncBypass()
         {
             if (! bypassControl.isBypassed) return;
@@ -324,27 +331,39 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             bypass.setToggleState (on, juce::dontSendNotification);
             bypass.setButtonText (on ? "Bypassed" : "Bypass");
         }
-        void timerCallback() override { syncBypass(); pollUndo(); }
+        void timerCallback() override
+        {
+            syncBypass();
+            pollUndo();
+            if (++ticks % 50 == 0) fx::markPluginStateChanged (plugin);   // some plugins never tell the host about changes
+        }
+        int ticks = 0;
         void componentMovedOrResized (juce::Component&, bool, bool wasResized) override { if (wasResized && ! resizing) fit(); }
         void resized() override
         {
             auto r = getLocalBounds();
             auto top = r.removeFromTop (bar).reduced (6, 4);
-            undoButton.setBounds (top.removeFromLeft (52));
+            // full-size buttons when there is room, compact ones (arrows, narrower buttons, no status text) otherwise
+            const bool hasBypass = bypass.isVisible();
+            const bool compact = getWidth() < (hasBypass ? 440 : 350);
+            undoButton.setButtonText (compact ? juce::String::fromUTF8 ("\xe2\x86\x90") : juce::String ("Undo"));
+            redoButton.setButtonText (compact ? juce::String::fromUTF8 ("\xe2\x86\x92") : juce::String ("Redo"));
+            const int gap = compact ? 3 : 10;
+            undoButton.setBounds (top.removeFromLeft (compact ? 26 : 52));
             top.removeFromLeft (2);
-            redoButton.setBounds (top.removeFromLeft (52));
-            top.removeFromLeft (10);
-            presets.setBounds (top.removeFromLeft (74));
-            top.removeFromLeft (4);
-            if (bypass.isVisible()) { bypass.setBounds (top.removeFromLeft (78)); top.removeFromLeft (10); }
-            copy.setBounds (top.removeFromLeft (56));
-            top.removeFromLeft (4);
-            paste.setBounds (top.removeFromLeft (56));
-            top.removeFromLeft (10);
+            redoButton.setBounds (top.removeFromLeft (compact ? 26 : 52));
+            top.removeFromLeft (gap);
+            presets.setBounds (top.removeFromLeft (compact ? 58 : 74));
+            top.removeFromLeft (compact ? 3 : 4);
+            if (hasBypass) { bypass.setBounds (top.removeFromLeft (compact ? 66 : 78)); top.removeFromLeft (gap); }
+            copy.setBounds (top.removeFromLeft (compact ? 44 : 56));
+            top.removeFromLeft (compact ? 3 : 4);
+            paste.setBounds (top.removeFromLeft (compact ? 46 : 56));
+            top.removeFromLeft (gap);
             status.setBounds (top);
             const juce::ScopedValueSetter<bool> svs (resizing, true);
-            if (editor.isResizable()) editor.setBounds (r);
-            else editor.setTopLeftPosition (r.getPosition());
+            if (editor.isResizable() && editor.getWidth() >= minBarWidth) editor.setBounds (r);
+            else editor.setTopLeftPosition (r.getX() + juce::jmax (0, (r.getWidth() - editor.getWidth()) / 2), r.getY());
         }
         void paint (juce::Graphics& g) override
         {
@@ -353,7 +372,7 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             g.fillRect (getLocalBounds().removeFromTop (bar));
         }
         void visibilityChanged() override { refresh(); }
-        static constexpr int bar = 30;
+        static constexpr int bar = 30, minBarWidth = 300;
         PluginManager& manager;
         juce::AudioPluginInstance& plugin;
         juce::AudioProcessorEditor& editor;
@@ -503,6 +522,48 @@ void PluginManager::changeListenerCallback (juce::ChangeBroadcaster*)
     lastBlacklistSize = blacklisted;
 }
 
+void PluginManager::menuTypes (bool instruments, juce::Array<juce::PluginDescription>& display,
+                               juce::Array<juce::PluginDescription>& originals) const
+{
+    display.clear();
+    originals.clear();
+    // one entry per distinct plugin: the same plugin found in two folders (or scanned twice) is listed once
+    juce::StringArray seen;
+    for (auto& d : known.getTypes())
+    {
+        if (d.isInstrument != instruments) continue;
+        const auto key = d.name.trim().toLowerCase() + "|" + d.pluginFormatName + "|" + d.manufacturerName.trim().toLowerCase() + "|"
+                         + d.version + "|" + juce::String (d.uniqueId) + "|" + juce::String (d.numInputChannels) + "/" + juce::String (d.numOutputChannels);
+        if (seen.contains (key)) continue;
+        seen.add (key);
+        originals.add (d);
+    }
+    // plugins that share a name but are different get what differs added to the name, so they can be told apart
+    display = originals;
+    for (int i = 0; i < display.size(); ++i)
+    {
+        juce::Array<int> same;
+        for (int k = 0; k < originals.size(); ++k)
+            if (originals[k].name.trim().equalsIgnoreCase (originals[i].name.trim())) same.add (k);
+        if (same.size() < 2) continue;
+        auto differs = [&] (auto field) {
+            for (int k : same) if (field (originals[k]) != field (originals[i])) return true;
+            return false;
+        };
+        juce::StringArray extra;
+        if (differs ([] (const juce::PluginDescription& d) { return d.pluginFormatName; })) extra.add (originals[i].pluginFormatName);
+        if (differs ([] (const juce::PluginDescription& d) { return d.version; }) && originals[i].version.isNotEmpty()) extra.add ("v" + originals[i].version);
+        if (differs ([] (const juce::PluginDescription& d) { return juce::String (d.numInputChannels) + "/" + juce::String (d.numOutputChannels); }))
+            extra.add (juce::String (originals[i].numInputChannels) + " in / " + juce::String (originals[i].numOutputChannels) + " out");
+        if (extra.isEmpty() && differs ([] (const juce::PluginDescription& d) { return d.manufacturerName; }) && originals[i].manufacturerName.isNotEmpty())
+            extra.add (originals[i].manufacturerName);
+        if (extra.isEmpty())   // nothing visible differs (another id): show where each one is installed
+            extra.add (juce::File::isAbsolutePath (originals[i].fileOrIdentifier)
+                           ? juce::File (originals[i].fileOrIdentifier).getParentDirectory().getFileName() : originals[i].fileOrIdentifier);
+        display.getReference (i).name = originals[i].name + "  (" + extra.joinIntoString (", ") + ")";
+    }
+}
+
 void PluginManager::addToMenu (juce::PopupMenu& menu, int firstId) const
 {
     const bool instruments = firstId == instrumentMenu;
@@ -513,9 +574,8 @@ void PluginManager::addToMenu (juce::PopupMenu& menu, int firstId) const
         if (b.instrument == instruments) menu.addItem (builtinMenuBase + i, b.name);
         ++i;
     }
-    juce::Array<juce::PluginDescription> list;
-    for (auto& d : known.getTypes())
-        if (d.isInstrument == instruments) list.add (d);
+    juce::Array<juce::PluginDescription> list, originals;
+    menuTypes (instruments, list, originals);
     if (list.isEmpty())
     {
         if (instruments) menu.addItem (-1, "(scan your plugin folders to list your VST / AU instruments)", false);
@@ -533,10 +593,9 @@ juce::String PluginManager::descriptionForMenuResult (int result, int firstId, j
         name = b[(size_t) (result - builtinMenuBase)].name;
         return fx::builtin::descriptionXml (b[(size_t) (result - builtinMenuBase)].id);
     }
-    juce::Array<juce::PluginDescription> effects;
-    for (auto& d : known.getTypes())
-        if (d.isInstrument == instruments) effects.add (d);
-    const int idx = juce::KnownPluginList::getIndexChosenByMenu (effects, result);
+    juce::Array<juce::PluginDescription> shown, effects;
+    menuTypes (instruments, shown, effects);   // the same list the menu was built from
+    const int idx = juce::KnownPluginList::getIndexChosenByMenu (shown, result);
     if (! juce::isPositiveAndBelow (idx, effects.size())) return {};
     name = effects[idx].name;
     return effects[idx].createXml()->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());

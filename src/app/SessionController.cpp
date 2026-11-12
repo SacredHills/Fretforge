@@ -740,6 +740,75 @@ juce::StringArray SessionController::inputChoiceNames (juce::Array<std::pair<int
     return names;
 }
 
+juce::StringArray SessionController::inputChoiceNames (juce::Array<std::pair<int, bool>>& values, bool stereo) const
+{
+    juce::Array<std::pair<int, bool>> all;
+    const auto allNames = inputChoiceNames (all);
+    juce::StringArray names;
+    values.clear();
+    for (int i = 0; i < all.size(); ++i)
+        if (all[i].first < 0 || all[i].second == stereo) { names.add (allNames[i]); values.add (all[i]); }
+    return names;
+}
+
+void SessionController::setTrackStereo (juce::ValueTree track, bool stereo)
+{
+    if (! isAudioTrack (track) || (bool) track[ids::inputStereo] == stereo) return;
+    doc.undo().beginNewTransaction (stereo ? "Stereo track" : "Mono track");
+    const int numInputs = host.activeInputChannelNames().size();
+    for (auto t : tracksForEdit (track))
+    {
+        if (! isAudioTrack (t)) continue;
+        int ch = (int) t[ids::inputChannel];
+        if (stereo && ch >= 0)
+        {
+            ch -= ch % 2;                                   // the pair this input belongs to (In 2 -> In 1+2)
+            if (ch + 1 >= numInputs) ch = numInputs >= 2 ? 0 : -1;   // no such pair on this interface
+            t.setProperty (ids::inputChannel, ch, &doc.undo());
+        }
+        t.setProperty (ids::inputStereo, stereo, &doc.undo());
+    }
+}
+
+void SessionController::removeInstrument (juce::ValueTree track)
+{
+    auto in = track.getChildWithName (midiclip::INSTRUMENT);
+    if (! in.isValid()) return;
+    doc.undo().beginNewTransaction ("Remove instrument");
+    track.removeChild (in, &doc.undo());
+}
+
+void SessionController::showInstrumentContextMenu (juce::ValueTree track, juce::Component* target)
+{
+    if (plugins == nullptr || ! isInstrumentTrack (track)) return;
+    const bool has = track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isNotEmpty();
+    juce::PopupMenu m, change;
+    plugins->addToMenu (change, PluginManager::instrumentMenu);
+    if (has)
+    {
+        m.addSectionHeader (instrumentName (track));
+        m.addItem (-10, "Open");
+        m.addSubMenu ("Change instrument", change);
+        m.addItem (-11, "Remove instrument");
+    }
+    else
+    {
+        m.addSectionHeader ("Choose an instrument");
+        plugins->addToMenu (m, PluginManager::instrumentMenu);
+    }
+    m.addSeparator();
+    m.addItem (-2, "Scan for plugins / manage...");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [this, track] (int r) {
+        if (r == 0) return;
+        if (r == -2) { plugins->showManager(); return; }
+        if (r == -10) { openInstrument (track); return; }
+        if (r == -11) { removeInstrument (track); return; }
+        juce::String name;
+        const auto desc = plugins->descriptionForMenuResult (r, PluginManager::instrumentMenu, name);
+        if (desc.isNotEmpty()) setInstrument (track, desc, name);
+    });
+}
+
 // ------------------------------------------------------------------ import
 
 juce::String SessionController::instrumentName (const juce::ValueTree& track) const

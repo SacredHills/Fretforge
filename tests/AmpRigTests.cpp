@@ -766,7 +766,9 @@ struct TestPluginHost : fx::PluginHost
     {
         juce::PluginDescription d;
         if (auto x = juce::parseXML (xml)) d.loadFromXml (*x);
-        return formats.createPluginInstance (d, sr, bs, err);
+        auto inst = formats.createPluginInstance (d, sr, bs, err);
+        fx::registerPluginInstance (inst.get(), d.name, d.fileOrIdentifier);   // like the app's plugin manager
+        return inst;
     }
 };
 }
@@ -958,6 +960,63 @@ struct PluginSlotTests : juce::UnitTest
             auto big = fx::makeOfflineInserts (many, 48000.0, 512, warnings);
             expect (big != nullptr && warnings.isEmpty(), warnings.joinIntoString ("; "));
             if (big != nullptr) expectWithinAbsoluteError (run (*big, 0.4f), 0.4f * std::pow (0.75f, 10.0f), 0.002f);
+
+            // slot numbers with gaps (a damaged or hand-edited project): every plugin in the list still plays
+            juce::ValueTree gappy ("TRACK");
+            rg::addInsert (gappy, desc, "A");
+            rg::addInsert (gappy, desc, "B");
+            rg::findInserts (gappy).getChild (0).setProperty (rg::ids::slot, 2, nullptr);
+            rg::findInserts (gappy).getChild (1).setProperty (rg::ids::slot, 5, nullptr);
+            warnings.clear();
+            auto gapChain = fx::makeOfflineInserts (gappy, 48000.0, 512, warnings);
+            expect (gapChain != nullptr && warnings.isEmpty(), warnings.joinIntoString ("; "));
+            if (gapChain != nullptr) expectWithinAbsoluteError (run (*gapChain, 0.4f), 0.4f * 0.25f, 0.005f);
+
+            // live master bus plugins: they keep working when the audio device restarts (with the same or another
+            // format) after they were loaded, also with gaps in their slot numbers
+            {
+                AudioEngine e;
+                e.prepare (48000.0, 256);
+                fx::RigBank bank (e);
+                auto projectTree = project::createDefault ("T");
+                auto master = project::masterNode (projectTree);
+                rg::addInsert (master, desc, "M1");
+                rg::addInsert (master, desc, "M2");
+                rg::addInsert (master, desc, "M3");
+                rg::findInserts (master).getChild (2).setProperty (rg::ids::slot, 7, nullptr);   // 0, 1, 7
+                bank.rebind (projectTree);
+                auto live = bank.insertsForTrack (project::masterId);
+                expect (live != nullptr);
+                if (live != nullptr)
+                {
+                    expect (bank.insertStatus (master, 0).loaded && bank.insertStatus (master, 1).loaded);
+                    expectWithinAbsoluteError (run (*live, 0.4f), 0.4f * 0.125f, 0.004f);   // three gains of 0.5
+                    e.prepare (48000.0, 256);   // the device restarts with the same format (ASIO reset at start-up)
+                    expectWithinAbsoluteError (run (*live, 0.4f), 0.4f * 0.125f, 0.004f);
+                    e.prepare (44100.0, 512);   // ...and with another one
+                    expect (bank.insertsForTrack (project::masterId) == live);
+                    expectWithinAbsoluteError (run (*live, 0.4f), 0.4f * 0.125f, 0.004f);
+
+                    // settings are only read back from plugins that reported a change
+                    auto p0 = bank.insertPlugin (master, 0);
+                    expect (p0 != nullptr);
+                    if (p0 != nullptr)
+                    {
+                        bank.captureAllPluginStates (true);              // new plugins are captured once
+                        const auto before = master.getChildWithName (rg::ids::INSERTS).getChild (0)[rg::ids::state].toString();
+                        expect (before.isNotEmpty());
+                        expect (! fx::pluginStateNeedsCapture (*p0), "nothing changed since the capture");
+                        p0->getParameters()[0]->setValueNotifyingHost (0.75f);   // gain 1.5
+                        expect (fx::pluginStateNeedsCapture (*p0));
+                        fx::markPluginStateChanged (*p0);
+                        bank.captureAllPluginStates (true);
+                        expect (master.getChildWithName (rg::ids::INSERTS).getChild (0)[rg::ids::state].toString() != before);
+                        expectWithinAbsoluteError (run (*live, 0.4f), 0.4f * 1.5f * 0.25f, 0.01f);
+                    }
+                }
+                bank.rebind (project::createDefault ("Empty"));   // the project is replaced: its plugins go
+                expect (bank.insertsForTrack (project::masterId) == nullptr);
+            }
             fx::setPluginHost (nullptr);
         }
     }

@@ -103,6 +103,65 @@ public:
     }
 };
 
+/** A text button whose right-click opens something else (a context menu) instead of clicking. (A plain button
+    clicks on any mouse button, and by the time its onClick runs the right button is no longer down.) */
+class ContextButton : public juce::TextButton
+{
+public:
+    using juce::TextButton::TextButton;
+    std::function<void()> onRightClick;
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        rightDown = e.mods.isPopupMenu() && onRightClick != nullptr;
+        if (rightDown) onRightClick(); else juce::TextButton::mouseDown (e);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override { if (! rightDown) juce::TextButton::mouseDrag (e); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (rightDown) { rightDown = false; return; }
+        juce::TextButton::mouseUp (e);
+    }
+private:
+    bool rightDown = false;
+};
+
+/** Mono / stereo switch of an audio track: one ring for mono, two linked rings for stereo. */
+class ChannelModeButton : public juce::Button
+{
+public:
+    ChannelModeButton() : juce::Button ("channels")
+    {
+        setClickingTogglesState (false);
+        setWantsKeyboardFocus (false);
+    }
+    void setStereo (bool s)
+    {
+        if (stereo != s) { stereo = s; repaint(); }
+        setTooltip (stereo ? "Stereo track: records and monitors an input pair (left + right). Click to make it mono."
+                           : "Mono track: records and monitors one input. Click to make it stereo (an input pair).");
+    }
+    bool isStereo() const { return stereo; }
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (over ? palette::panelHi.brighter (0.15f) : palette::panelHi);
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (palette::outline.brighter (0.25f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+        const float d = juce::jmin (10.0f, r.getHeight() - 8.0f);
+        const auto c = r.getCentre() + juce::Point<float> (down ? 0.5f : 0.0f, down ? 0.5f : 0.0f);
+        g.setColour (over ? palette::text : palette::text.withAlpha (0.8f));
+        if (stereo)
+        {
+            g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (c.translated (-d * 0.32f, 0.0f)), 1.4f);
+            g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (c.translated (d * 0.32f, 0.0f)), 1.4f);
+        }
+        else g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (c), 1.4f);
+    }
+private:
+    bool stereo = false;
+};
+
 /** Input monitoring switch: a speaker in a button-shaped box, lit blue while you hear the input through the track. */
 class MonitorButton : public juce::Button
 {

@@ -70,9 +70,12 @@ ChannelStrip::ChannelStrip (ProjectDocument& d, EngineHost& h, SessionController
     ampButton.setTooltip ("Neural Amp Modeler amp on this track: click to add / open it");
     ampButton.onClick = [this] {
         if (! isInstrumentTrack (track)) { session.addTrackRig (track); return; }
-        if (juce::ModifierKeys::currentModifiers.isPopupMenu() || track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isEmpty())
-            session.showInstrumentMenu (track, &ampButton);
+        if (track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isEmpty())
+            session.showInstrumentContextMenu (track, &ampButton);
         else session.openInstrument (track);
+    };
+    ampButton.onRightClick = [this] {
+        if (isInstrumentTrack (track)) session.showInstrumentContextMenu (track, &ampButton);   // open / change / remove
     };
     addAndMakeVisible (ampButton);
     ampPower.setTooltip ("Switch the NAM amp on / off");
@@ -327,7 +330,7 @@ void ChannelStrip::refresh()
     if (isInstrumentTrack (track))
     {
         ampButton.setButtonText (session.instrumentName (track));
-        ampButton.setTooltip ("Instrument: click to open it, right-click to choose another");
+        ampButton.setTooltip ("Instrument: click to open it, right-click to change or remove it");
     }
     ampPower.setVisible (false);
     ampPower.setToggleState (! (bool) rig::find (track)[rig::ids::bypass], juce::dontSendNotification);
@@ -389,7 +392,14 @@ void ChannelStrip::showMenu()
     else m.addItem (10, "Add NAM amp...");
     m.addItem (12, "Add plugin...", session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
     m.addItem (13, "Output and sends...");
-    if (isInstrumentTrack (track)) { m.addItem (14, "Choose instrument..."); m.addItem (15, "Open instrument"); }
+    if (isAudioTrack (track)) m.addItem (18, "Stereo track (records an input pair)", true, (bool) track[ids::inputStereo]);
+    if (isInstrumentTrack (track))
+    {
+        const bool hasInstrument = track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isNotEmpty();
+        m.addItem (14, hasInstrument ? "Change instrument  (now: " + session.instrumentName (track) + ")..." : juce::String ("Choose instrument..."));
+        m.addItem (15, "Open instrument", hasInstrument);
+        m.addItem (19, "Remove instrument", hasInstrument);
+    }
     m.addSeparator();
     m.addItem (4, "Duplicate track");
     m.addItem (5, "Delete track");
@@ -405,6 +415,8 @@ void ChannelStrip::showMenu()
         else if (r == 13) sc.showRoutingMenu (t, safe.getComponent());
         else if (r == 14) sc.showInstrumentMenu (t, safe.getComponent());
         else if (r == 15) sc.openInstrument (t);
+        else if (r == 18) sc.setTrackStereo (t, ! (bool) t[ids::inputStereo]);
+        else if (r == 19) sc.removeInstrument (t);
         else if (r == 11) sc.removeTrackRig (t);
         else if (r == 4) sc.duplicateTrack (t);
         else if (r == 5) sc.deleteTrack (t);   // destroys this strip

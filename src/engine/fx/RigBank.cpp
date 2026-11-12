@@ -110,10 +110,15 @@ std::shared_ptr<InsertChain> makeOfflineInserts (const juce::ValueTree& track, d
     chain->prepare (sr, block);
     std::array<int, InsertChain::maxSlots> order {};
     int count = 0;
-    for (int slot = 0; slot < InsertChain::maxSlots; ++slot)
+    std::vector<juce::ValueTree> ordered;   // by slot number, like the live chain (gaps in the numbers leave nothing out)
+    for (auto c : list)
+        if (c.hasType (rig::ids::PLUGIN)) ordered.push_back (c);
+    std::stable_sort (ordered.begin(), ordered.end(), [] (const juce::ValueTree& a, const juce::ValueTree& b) {
+        return (int) a[rig::ids::slot] < (int) b[rig::ids::slot];
+    });
+    for (int slot = 0; slot < juce::jmin ((int) ordered.size(), (int) InsertChain::maxSlots); ++slot)
     {
-        const auto c = rig::insertNode (track, slot);
-        if (! c.isValid()) break;
+        const auto c = ordered[(size_t) slot];
         const auto name = c[rig::ids::name].toString();
         auto* host = pluginHost();
         if (host == nullptr) { warnings.add ("Insert \"" + name + "\" was skipped (plugin hosting is not available here)."); continue; }
@@ -167,10 +172,8 @@ RigBank::RigBank (AudioEngine& e) : engine (e)
 RigBank::~RigBank()
 {
     stopTimer();
-    releaseEntryPlugins (liveEntry);
-    for (auto& [k, e] : tracks) releaseEntryPlugins (e);
-    for (auto& [k, e] : inserts) releaseInsertPlugins (e);
-    *alive = false;
+    *alive = false;   // plugins still being created are dropped when they arrive
+    releaseAllPlugins();
     engine.setPrepareHook (nullptr);
     engine.liveRigOn.store (false);
     engine.liveRig.store (nullptr);
@@ -464,8 +467,41 @@ void RigBank::releasePlugin (std::shared_ptr<juce::AudioPluginInstance> old)
     if (old == nullptr) return;
     if (onPluginRemoved) onPluginRemoved (old.get());
     engine.waitForAudioCallback();   // the audio thread may still be inside it
-    old->releaseResources();
-    old.reset();
+    unregisterPluginInstance (old.get());
+    {
+        PluginActivity activity (*old, "shutting down");
+        old->releaseResources();
+        old.reset();
+    }
+}
+
+void RigBank::releaseAllPlugins()
+{
+    std::vector<std::shared_ptr<juce::AudioPluginInstance>> all;
+    {
+        const juce::ScopedLock lk (lock);
+        auto takeRig = [&all] (Entry& e) {
+            for (int sl = 0; sl < rig::numPluginSlots; ++sl)
+                if (auto p = e.rig->setPlugin (sl, nullptr)) all.push_back (std::move (p));
+        };
+        takeRig (liveEntry);
+        for (auto& [k, e] : tracks) takeRig (e);
+        for (auto& [k, e] : inserts)
+            for (int i = 0; i < InsertChain::maxSlots; ++i)
+                if (auto p = e.chain->setPlugin (i, nullptr)) all.push_back (std::move (p));
+        for (auto& [k, e] : instruments)
+            if (auto p = e.slot->setPlugin (nullptr)) all.push_back (std::move (p));
+    }
+    for (auto& p : all)
+        if (onPluginRemoved) onPluginRemoved (p.get());   // editor windows close first
+    engine.waitForAudioCallback();   // once for all of them: the audio thread may still be inside one
+    for (auto& p : all)
+    {
+        unregisterPluginInstance (p.get());
+        PluginActivity activity (*p, "shutting down");
+        p->releaseResources();
+        p.reset();
+    }
 }
 
 void RigBank::releaseEntryPlugins (Entry& e)
@@ -575,15 +611,20 @@ void RigBank::syncInserts (InsertEntry& e)
         for (int i = 0; i < InsertChain::maxSlots; ++i)
             if (! e.nodes[(size_t) i].isValid()) { e.nodes[(size_t) i] = c; loadInsert (e, i); break; }
     }
-    // play order and bypass from the slot numbers
+    // play order and bypass: by slot number (list position breaks ties). Gaps or repeated numbers in a project file
+    // must never leave plugins out of the chain: every plugin in the list plays.
+    std::vector<juce::ValueTree> ordered;
+    for (auto c : list)
+        if (c.hasType (rig::ids::PLUGIN)) ordered.push_back (c);
+    std::stable_sort (ordered.begin(), ordered.end(), [] (const juce::ValueTree& a, const juce::ValueTree& b) {
+        return (int) a[rig::ids::slot] < (int) b[rig::ids::slot];
+    });
     std::array<int, InsertChain::maxSlots> order {};
     int count = 0;
-    for (int slot = 0; slot < InsertChain::maxSlots; ++slot)
+    for (auto& node : ordered)
     {
-        const auto node = rig::insertNode (e.track, slot);
-        if (! node.isValid()) break;
         const int phys = physicalOf (e, node);
-        if (phys < 0) continue;
+        if (phys < 0 || count >= InsertChain::maxSlots) continue;
         order[(size_t) count++] = phys;
         e.chain->bypass[(size_t) phys] = (bool) node[rig::ids::bypass];
         e.status[(size_t) phys].name = node[rig::ids::name].toString();
@@ -692,32 +733,27 @@ void RigBank::retryFailedPlugins()
     notifyStatus();
 }
 
-void RigBank::captureAllPluginStates()
+void RigBank::captureAllPluginStates (bool onlyChanged)
 {
-    auto capture = [] (Entry& e) {
+    auto captureOne = [onlyChanged] (juce::AudioPluginInstance& p, juce::ValueTree node) {
+        if (! node.isValid()) return;
+        if (onlyChanged && ! pluginStateNeedsCapture (p)) return;
+        const auto st = capturePluginState (p);
+        const bool differs = st != node[rig::ids::state].toString();
+        if (differs) node.setProperty (rig::ids::state, st, nullptr);
+        pluginStateCaptured (p, differs);
+    };
+    auto capture = [&captureOne] (Entry& e) {
         for (int sl = 0; sl < rig::numPluginSlots; ++sl)
-            if (auto p = e.rig->getPlugin (sl))
-                if (auto node = rig::pluginNode (e.tree, sl); node.isValid())
-                {
-                    const auto st = capturePluginState (*p);
-                    if (st != node[rig::ids::state].toString()) node.setProperty (rig::ids::state, st, nullptr);
-                }
+            if (auto p = e.rig->getPlugin (sl)) captureOne (*p, rig::pluginNode (e.tree, sl));
     };
     capture (liveEntry);
     for (auto& [k, e] : tracks) capture (e);
     for (auto& [k, e] : instruments)
-        if (auto p = e.slot->getPlugin(); p != nullptr && e.node.isValid())
-        {
-            const auto st = capturePluginState (*p);
-            if (st != e.node[rig::ids::state].toString()) e.node.setProperty (rig::ids::state, st, nullptr);
-        }
+        if (auto p = e.slot->getPlugin()) captureOne (*p, e.node);
     for (auto& [k, e] : inserts)
         for (int i = 0; i < InsertChain::maxSlots; ++i)
-            if (auto p = e.chain->getPlugin (i); p != nullptr && e.nodes[(size_t) i].isValid())
-            {
-                const auto st = capturePluginState (*p);
-                if (st != e.nodes[(size_t) i][rig::ids::state].toString()) e.nodes[(size_t) i].setProperty (rig::ids::state, st, nullptr);
-            }
+            if (auto p = e.chain->getPlugin (i)) captureOne (*p, e.nodes[(size_t) i]);
 }
 
 void RigBank::requestModel (Entry& e, bool)
@@ -833,7 +869,7 @@ void RigBank::timerCallback()
     };
     service (liveEntry);
     for (auto& [id, e] : tracks) service (e);
-    if (++ticks % 20 == 0) captureAllPluginStates();
+    if (++ticks % 20 == 0) captureAllPluginStates (true);   // only plugins that reported a change
 }
 
 void RigBank::valueTreePropertyChanged (juce::ValueTree& node, const juce::Identifier& prop)

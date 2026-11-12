@@ -77,8 +77,9 @@ public:
     Status::Plugin instrumentStatus (const juce::ValueTree& track) const;
     std::shared_ptr<juce::AudioPluginInstance> instrumentPlugin (const juce::ValueTree& track) const;
 
-    /** Copies every plugin's current state into its PLUGIN node (also done every two seconds). */
-    void captureAllPluginStates();
+    /** Copies every plugin's current state into its PLUGIN node (before saving / exporting). With onlyChanged, only
+        plugins that reported a change are asked (the periodic capture: asking every plugin can stall the app). */
+    void captureAllPluginStates (bool onlyChanged = false);
     /** Tries again to load every plugin that failed to load (e.g. after it was re-enabled). */
     void retryFailedPlugins();
 
@@ -140,6 +141,8 @@ private:
     void requestIr (Entry&, bool force);
     void requestPlugin (Entry&, int slot);
     void releasePlugin (std::shared_ptr<juce::AudioPluginInstance>);
+    /** Takes every plugin out of every rig / chain / instrument and frees them after one audio callback. */
+    void releaseAllPlugins();
     void releaseEntryPlugins (Entry&);
     Entry* entryByKey (const juce::String& key);
     juce::String keyOf (const Entry&) const;

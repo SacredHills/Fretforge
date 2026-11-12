@@ -2,6 +2,7 @@
 #include "MainComponent.h"
 #include "AppInfo.h"
 #include "plugins/PluginManager.h"
+#include "HardExit.h"
 
 namespace ff
 {
@@ -96,14 +97,23 @@ public:
 
     void shutdown() override
     {
-        if (scanner != nullptr) { scanner.reset(); return; }
+        if (scanner != nullptr) { scanner.reset(); hardExit (0); }
         if (window != nullptr)
             properties.getUserSettings()->setValue ("windowState", window->getWindowStateAsString());
+        properties.saveIfNeeded();
+        // The project is saved (or the user chose not to) and the settings are written. Closing plugins and the audio
+        // device comes next; if one of them never returns, the app must still go away rather than sit in the task
+        // manager with no window.
+        juce::Logger::writeToLog ("Shutting down");
+        armShutdownWatchdog (12);
+        if (window != nullptr) window->setVisible (false);   // the window goes at once, whatever the plugins do
         window.reset();
         properties.closeFiles();
         juce::Logger::writeToLog ("Clean shutdown");
         juce::Logger::setCurrentLogger (nullptr);
         logger.reset();
+        // skip static destructors and library unloading: plugins and drivers that hang there kept the process alive
+        hardExit (0);
     }
 
     void systemRequestedQuit() override

@@ -609,14 +609,22 @@ DrumPage::DrumPage (ProjectDocument& d, EngineHost& h, SessionController& s, juc
             safe->message ("Import complete", msg);
         });
     };
-    exportButton.setTooltip ("Export the current pattern or the whole song as a General MIDI drum file");
+    exportButton.setTooltip ("Export the current pattern or the whole song as MIDI: to the Editor (a new drum track you can edit "
+                             "in the piano roll) or to a General MIDI drum file");
     exportButton.onClick = [this] {
         juce::PopupMenu m;
-        m.addItem (1, "Current pattern...", current().isValid());
-        m.addItem (2, "Whole song...", drums::song (drums).getNumChildren() > 0);
+        const bool hasPattern = current().isValid(), hasSong = drums::song (drums).getNumChildren() > 0;
+        m.addSectionHeader ("To the Editor (new MIDI drum track)");
+        m.addItem (3, "Current pattern", hasPattern);
+        m.addItem (4, "Whole song", hasSong);
+        m.addSectionHeader ("To a MIDI file");
+        m.addItem (1, "Current pattern...", hasPattern);
+        m.addItem (2, "Whole song...", hasSong);
         juce::Component::SafePointer<DrumPage> safe (this);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportButton), [safe] (int r) {
             if (safe == nullptr || r == 0) return;
+            if (r == 3) { safe->midiToEditor (safe->current()); return; }
+            if (r == 4) { safe->midiToEditor ({}); return; }
             const auto pat = r == 1 ? safe->current() : juce::ValueTree();
             const auto name = juce::File::createLegalFileName (r == 1 ? pat[dids::name].toString() : juce::String ("Drum song")) + ".mid";
             safe->chooser = std::make_unique<juce::FileChooser> ("Export MIDI drums",
@@ -1008,6 +1016,30 @@ void DrumPage::renderToStudio()
     if (r.failed()) { message ("Render failed", r.getErrorMessage()); return; }
     message ("Rendered to the Editor", "Added the track \"" + name + "\" (" + juce::String (c.lengthQ * spq, 1)
                                            + " s at " + juce::String (doc.tempo(), 1) + " BPM) to the Editor, starting at bar 1.");
+}
+
+void DrumPage::midiToEditor (const juce::ValueTree& pattern)
+{
+    const auto name = pattern.isValid() ? "Drums - " + pattern[dids::name].toString() : juce::String ("Drums");
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("RavenyrRender");
+    dir.createDirectory();
+    const auto file = dir.getChildFile (juce::File::createLegalFileName (name) + ".mid");
+    if (auto r = drums::exportMidi (drums, pattern, doc.tempo(), file); r.failed()) { message ("Export MIDI to the Editor", r.getErrorMessage()); return; }
+    const int before = doc.tracks().getNumChildren();
+    const auto r = session.importMidi (file, 0.0);   // a drum instrument track with one MIDI clip, in one undo step
+    file.deleteFile();
+    if (r.failed()) { message ("Export MIDI to the Editor", r.getErrorMessage()); return; }
+    for (int i = before; i < doc.tracks().getNumChildren(); ++i)   // named after the pattern, not the temporary file
+    {
+        auto t = doc.tracks().getChild (i);
+        t.setProperty (timeline::ids::name, name, nullptr);
+        for (auto c : t)
+            if (c.hasType (timeline::ids::CLIP)) c.setProperty (timeline::ids::name, name, nullptr);
+    }
+    const auto c = drums::compile (drums, pattern, 1);
+    message ("MIDI added to the Editor", "Added the track \"" + name + "\" (" + juce::String ((int) c.bars.size()) + (c.bars.size() == 1 ? " bar" : " bars")
+                                             + ") to the Editor, starting at bar 1. It plays the built-in Drum Kit; double-click the "
+                                               "clip to edit the notes, or right-click the instrument to use another drum plugin.");
 }
 
 // ------------------------------------------------------------------ sample kit

@@ -117,6 +117,13 @@ public:
     // ---- instrument tracks ----
     /** Menu of instruments (built-in, then your VST / AU instruments) for an instrument track. */
     void showInstrumentMenu (juce::ValueTree track, juce::Component* target);
+    /** Right-click menu of a track's instrument: open it, change it (the plugin list), or remove it. */
+    void showInstrumentContextMenu (juce::ValueTree track, juce::Component* target);
+    void removeInstrument (juce::ValueTree track);
+    /** Mono / stereo audio track: a stereo track records and monitors an input pair, a mono one a single input. */
+    void setTrackStereo (juce::ValueTree track, bool stereo);
+    /** The input choices of a track for its mode: single inputs for a mono track, pairs for a stereo one. */
+    juce::StringArray inputChoiceNames (juce::Array<std::pair<int, bool>>& values, bool stereo) const;
     void setInstrument (juce::ValueTree track, const juce::String& descXml, const juce::String& name, const juce::String& state = {});
     void openInstrument (juce::ValueTree track);
     juce::String instrumentName (const juce::ValueTree& track) const;

@@ -216,10 +216,16 @@ TrackHeader::TrackHeader (ArrangeView& v, juce::ValueTree t, int i) : track (t),
     addChildComponent (laneButton);
     route.onClick = [this] {
         if (! isInstrumentTrack (track)) { owner.session.showRoutingMenu (track, &route); return; }
-        if (juce::ModifierKeys::currentModifiers.isPopupMenu() || track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isEmpty())
-            owner.session.showInstrumentMenu (track, &route);
+        if (track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isEmpty())
+            owner.session.showInstrumentContextMenu (track, &route);
         else owner.session.openInstrument (track);
     };
+    route.onRightClick = [this] {
+        if (isInstrumentTrack (track)) owner.session.showInstrumentContextMenu (track, &route);   // open / change / remove
+        else owner.session.showRoutingMenu (track, &route);
+    };
+    channels.onClick = [this] { owner.session.setTrackStereo (track, ! (bool) track[ids::inputStereo]); };
+    addChildComponent (channels);
     addChildComponent (route);
 
     gain.setSliderStyle (juce::Slider::LinearHorizontal);
@@ -266,7 +272,8 @@ TrackHeader::~TrackHeader() { track.removeListener (this); }
 void TrackHeader::refreshInputs()
 {
     const juce::ScopedValueSetter<bool> svs (updating, true);
-    const auto names = owner.session.inputChoiceNames (inputValues);
+    channels.setStereo ((bool) track[ids::inputStereo]);
+    const auto names = owner.session.inputChoiceNames (inputValues, (bool) track[ids::inputStereo]);
     input.clear (juce::dontSendNotification);
     for (int i = 0; i < names.size(); ++i)
         input.addItem (names[i], i + 1);
@@ -301,10 +308,17 @@ void TrackHeader::refresh()
     mon.setTooltip (inst ? "Monitor: play this instrument from your MIDI keyboard without arming it"
                          : "Monitor: hear what comes into this track's input (your guitar / mic) through the track and its plugins");
     input.setVisible (audio);
+    channels.setVisible (audio);
+    if (audio && channels.isStereo() != (bool) track[ids::inputStereo])
+    {
+        channels.setStereo ((bool) track[ids::inputStereo]);
+        refreshInputs();   // the list shows single inputs for a mono track, pairs for a stereo one (calls back into refresh)
+        return;
+    }
     route.setVisible (! audio);
     if (inst) route.setButtonText ("SYNTH  " + owner.session.instrumentName (track));
     else route.setButtonText ((kindOf (track) == TrackKind::fx ? "FX  > " : "BUS  > ") + owner.session.outputName (track));
-    route.setTooltip (inst ? "Click to open the instrument; right-click to choose another" : "Where this bus / FX track plays into, and its sends");
+    route.setTooltip (inst ? "Click to open the instrument; right-click to change or remove it" : "Where this bus / FX track plays into, and its sends");
     refreshAutomation();
     mon.setToggleState ((bool) track[ids::monitor], juce::dontSendNotification);
     mute.setToggleState ((bool) track[ids::mute], juce::dontSendNotification);
@@ -396,9 +410,13 @@ void TrackHeader::resized()
     auto row = r.removeFromTop (24);
     pan.setBounds (row.removeFromRight (26));
     row.removeFromRight (4);
-    input.setBounds (row.removeFromLeft (row.getWidth() / 2 + 10));
-    route.setBounds (input.getBounds());
-    laneButton.setBounds (input.getBounds());
+    const auto inputArea = row.removeFromLeft (row.getWidth() / 2 + 10);
+    route.setBounds (inputArea);
+    laneButton.setBounds (inputArea);
+    auto ia = inputArea;
+    channels.setBounds (ia.removeFromLeft (26).reduced (0, 1));
+    ia.removeFromLeft (3);
+    input.setBounds (isAudioTrack (track) ? ia : inputArea);
     row.removeFromLeft (4);
     gain.setBounds (row);
     r.removeFromTop (6);
@@ -484,10 +502,14 @@ void TrackHeader::showMenu()
     else m.addItem (10, "Add NAM amp...");
     m.addItem (12, "Add plugin...", owner.session.plugins != nullptr && rig::numInserts (track) < rig::maxInserts);
     m.addItem (13, "Output and sends  (now: " + owner.session.outputName (track) + ")...");
+    if (isAudioTrack (track))
+        m.addItem (18, "Stereo track (records an input pair)", true, (bool) track[ids::inputStereo]);
     if (isInstrumentTrack (track))
     {
-        m.addItem (14, "Choose instrument  (now: " + owner.session.instrumentName (track) + ")...");
-        m.addItem (15, "Open instrument");
+        const bool hasInstrument = track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::desc].toString().isNotEmpty();
+        m.addItem (14, hasInstrument ? "Change instrument  (now: " + owner.session.instrumentName (track) + ")..." : juce::String ("Choose instrument..."));
+        m.addItem (15, "Open instrument", hasInstrument);
+        m.addItem (19, "Remove instrument", hasInstrument);
         m.addItem (16, "New MIDI clip at playhead");
         m.addItem (17, "Export MIDI file...");
     }
@@ -517,6 +539,8 @@ void TrackHeader::showMenu()
         else if (r == 13) o.session.showRoutingMenu (t, safe.getComponent());
         else if (r == 14) o.session.showInstrumentMenu (t, safe.getComponent());
         else if (r == 15) o.session.openInstrument (t);
+        else if (r == 18) o.session.setTrackStereo (t, ! (bool) t[ids::inputStereo]);
+        else if (r == 19) o.session.removeInstrument (t);
         else if (r == 16) o.newMidiClip (t, o.playhead());
         else if (r == 17) o.exportMidi (t);
         else if (r >= 200 && r < 200 + rig::maxInserts) o.session.showInsertMenu (t, r - 200, safe.getComponent());
@@ -1183,6 +1207,10 @@ void TimelineCanvas::mouseDown (const juce::MouseEvent& e)
             if (! owner.selection.contains (clip)) owner.select (clip, false);
             showClipMenu (clip);
         }
+        else if (ti >= owner.numTracks())
+        {
+            owner.session.showAddTrackMenu (this);   // empty space below the tracks: add a track of any kind
+        }
         else
         {
             showLaneMenu (ti, owner.geo.timeFor (p.x));
@@ -1802,7 +1830,8 @@ void TimelineCanvas::showLaneMenu (int trackIndex, double time)
     const auto laneTrack = owner.trackAtIndex (trackIndex);
     if (isInstrumentTrack (laneTrack)) m.addItem (7, "New MIDI clip here  (double-click)");
     m.addSeparator();
-    m.addItem (4, "Add track");
+    m.addItem (4, "Add audio track");
+    m.addItem (8, "Add instrument track");
     m.addItem (5, "Add bus track");
     m.addItem (6, "Add FX track");
     juce::Component::SafePointer<TimelineCanvas> safe (this);
@@ -1820,6 +1849,7 @@ void TimelineCanvas::showLaneMenu (int trackIndex, double time)
         else if (r == 4) o.addTrack();
         else if (r == 5) o.session.addTrack ({}, -1, TrackKind::bus);
         else if (r == 6) o.session.addTrack ({}, -1, TrackKind::fx);
+        else if (r == 8) o.session.addTrack ({}, -1, TrackKind::instrument);
         else if (r == 7) o.newMidiClip (o.trackAtIndex (trackIndex), time);
     });
 }
@@ -1831,20 +1861,25 @@ void TimelineCanvas::showLaneMenu (int trackIndex, double time)
 ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& s, juce::PropertiesFile& p)
     : doc (d), host (h), session (s), settings (p)
 {
-    addTrackButton.setTooltip ("Add an audio track (Ctrl+T); right-click for a bus or FX track");
+    addTrackButton.setTooltip ("Add a track: audio (Ctrl+T), instrument, bus or FX. You can also right-click the empty space below the tracks.");
     importButton.setTooltip ("Import WAV/AIFF/FLAC/OGG/MP3 onto the selected track at the playhead, or a MIDI file as instrument tracks (Ctrl+I)");
     zoomInButton.setTooltip ("Zoom in (Ctrl + mouse wheel)");
     zoomOutButton.setTooltip ("Zoom out");
     fitButton.setTooltip ("Zoom to fit the song");
+    addTrackButton.onRightClick = [this] { session.showAddTrackMenu (&addTrackButton); };
+    headerHolder.onEmptyClick = [this] (const juce::MouseEvent& e) {
+        if (e.mods.isPopupMenu()) session.showAddTrackMenu (&headerHolder);   // right-click below the track names
+        else if (e.getNumberOfClicks() == 2) addTrack();
+    };
     addTrackButton.onClick = [this] {
-        if (juce::ModifierKeys::currentModifiers.isPopupMenu()) session.showAddTrackMenu (&addTrackButton);
-        else session.showAddTrackMenu (&addTrackButton, session.primaryTrack().isValid() ? doc.tracks().indexOf (session.primaryTrack()) + 1 : -1);
+        session.showAddTrackMenu (&addTrackButton, session.primaryTrack().isValid() ? doc.tracks().indexOf (session.primaryTrack()) + 1 : -1);
     };
     importButton.onClick = [this] { importAudioDialog(); };
     zoomInButton.onClick = [this] { zoom (1.5); };
     zoomOutButton.onClick = [this] { zoom (1.0 / 1.5); };
     fitButton.onClick = [this] { zoomToFit(); };
-    for (auto* b : { &addTrackButton, &importButton, &zoomInButton, &zoomOutButton, &fitButton })
+    for (juce::Button* b : { (juce::Button*) &addTrackButton, (juce::Button*) &importButton, (juce::Button*) &zoomInButton,
+                             (juce::Button*) &zoomOutButton, (juce::Button*) &fitButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);

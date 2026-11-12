@@ -30,8 +30,22 @@ void runPluginStereo (juce::AudioPluginInstance&, juce::AudioBuffer<float>& scra
 void preparePlugin (juce::AudioPluginInstance&, double sampleRate, int blockSize);
 
 // ---- crash protection ----
-/** Remembers a plugin instance's name and file, so a crash report can name the plugin it happened in. */
-void registerPluginInstance (const juce::AudioPluginInstance*, const juce::String& name, const juce::String& fileOrIdentifier);
+/** Remembers a plugin instance's name and file, so a crash report can name the plugin it happened in, and starts
+    watching it for settings changes (see pluginStateNeedsCapture). */
+void registerPluginInstance (juce::AudioPluginInstance*, const juce::String& name, const juce::String& fileOrIdentifier);
+/** Stops watching an instance that is about to be freed. */
+void unregisterPluginInstance (juce::AudioPluginInstance*);
+
+// ---- saving settings only when they changed ----
+// Asking a plugin for its whole state can take a long time (samplers, amp sims), so the periodic save only asks
+// plugins that reported a change, and backs off for plugins that keep reporting changes without their state changing
+// (meters published as parameters).
+/** True if the plugin reported a change since the last capture and is due (always true for unregistered plugins). */
+bool pluginStateNeedsCapture (const juce::AudioPluginInstance&);
+/** Marks a plugin as changed (its window is open or was just closed: some plugins never report changes). */
+void markPluginStateChanged (const juce::AudioPluginInstance&);
+/** Tell the tracker whether that capture found a different state. */
+void pluginStateCaptured (const juce::AudioPluginInstance&, bool stateDiffered);
 
 /** While alive, marks the message thread as being inside a plugin (loading, opening its editor, restoring state...).
     A crash, or the message thread hanging there for several seconds, writes a report naming the plugin. */

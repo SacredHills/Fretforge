@@ -111,7 +111,7 @@ private:
     juce::TextButton kitButton { "Kit..." }, mixerButton { "Mixer" };
     DrumMixer mixer { doc, host };
     void pushMix();
-    juce::TextButton importButton { "Import..." }, exportButton { "Export MIDI..." }, renderButton { "Render to Editor" };
+    juce::TextButton importButton { "Import..." }, exportButton { "Export MIDI" }, renderButton { "Render to Editor" };
     // song
     juce::TextButton addSectionButton { "+ Add pattern" }, removeSectionButton { "Remove" }, leftButton { "<" }, rightButton { ">" },
                      lessButton { "x-" }, moreButton { "x+" };
@@ -146,6 +146,9 @@ private:
     void seekTo (double patternQ);
     double songOffsetQ() const;   // where the edited pattern starts in the song (selected section, else first use)
     void renderToStudio();
+    /** Adds the pattern (or the whole song when `pattern` is invalid) to the Editor as a MIDI clip on a new drum
+        instrument track, starting at bar 1, where it can be edited in the piano roll. */
+    void midiToEditor (const juce::ValueTree& pattern);
     void message (const juce::String& title, const juce::String& text);
 
     void handleAsyncUpdate() override { refresh(); rebuildSequence(); }

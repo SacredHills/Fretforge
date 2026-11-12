@@ -102,7 +102,9 @@ private:
     juce::TextButton arm { "R" }, mute { "M" }, solo { "S" };
     MonitorButton mon;
     juce::ComboBox input;
-    juce::TextButton route, laneButton;   // laneButton: automation mode, which lane the track shows
+    ChannelModeButton channels;           // mono / stereo (audio tracks)
+    ContextButton route;                  // bus / FX: output and sends; instrument track: the instrument (right-click: change / remove)
+    juce::TextButton laneButton;          // automation mode, which lane the track shows
     juce::Slider gain, pan;
     std::unique_ptr<InsertStrip> inserts;
     juce::Array<std::pair<int, bool>> inputValues;
@@ -274,10 +276,16 @@ public:
 private:
     Ruler ruler { *this };
     TimelineCanvas canvas { *this };
-    juce::Component headerHolder;
+    /** The column of track headers; its empty space below the last track offers "add track" on right-click. */
+    struct HeaderHolder : public juce::Component
+    {
+        std::function<void (const juce::MouseEvent&)> onEmptyClick;
+        void mouseDown (const juce::MouseEvent& e) override { if (onEmptyClick) onEmptyClick (e); }
+    } headerHolder;
     juce::OwnedArray<TrackHeader> headers;
     juce::ScrollBar hScroll { false }, vScroll { true };
-    juce::TextButton addTrackButton { "+ Track" }, importButton { "Import" }, zoomInButton { "+" }, zoomOutButton { "-" },
+    ContextButton addTrackButton { "+ Track" };
+    juce::TextButton importButton { "Import" }, zoomInButton { "+" }, zoomOutButton { "-" },
         fitButton { "Fit" }, followButton { "Follow" }, sliceButton { "Slice" }, autoButton { "Automation" };
 public:
     /** Automation mode: tracks show an automation lane (volume, pan, plugin parameters) over their clips. */
