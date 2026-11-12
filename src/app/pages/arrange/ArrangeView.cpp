@@ -662,10 +662,27 @@ void Ruler::paint (juce::Graphics& g)
         g.drawText (juce::String ((int) std::round (lo)), 4, (int) lane.getBottom() - 12, 40, 11, juce::Justification::left);
         juce::Path curve;
         const auto& map = geo.tempoMap;
-        for (int px = 0; px <= getWidth(); px += 2)
         {
-            const float y = tempoY ((float) map.bpmAtSeconds (geo.timeFor ((float) px)), lo, hi);
-            if (px == 0) curve.startNewSubPath ((float) px, y); else curve.lineTo ((float) px, y);
+            // base tempo, then the points in order: ramps are sampled, a jump (points on top of each other) is a straight vertical line
+            std::vector<TempoMap::Point> ps;
+            for (auto c : owner.doc.transport())
+                if (c.hasType (pids::TEMPO)) ps.push_back ({ (double) c[pids::beat], (double) c[pids::bpm] });
+            std::stable_sort (ps.begin(), ps.end(), [] (const auto& a1, const auto& b1) { return a1.quarter < b1.quarter; });
+            curve.startNewSubPath (geo.xFor (0.0), tempoY ((float) map.baseBpm(), lo, hi));
+            double prevSec = 0.0;
+            for (const auto& pt : ps)
+            {
+                const double sec = map.secondsAtQuarter (pt.quarter);
+                if (sec > prevSec + 1.0e-9)
+                {
+                    const float x0 = juce::jmax (geo.xFor (prevSec), -4.0f), x1 = juce::jmin (geo.xFor (sec), (float) getWidth() + 4.0f);
+                    for (float px = x0 + 2.0f; px < x1 - 1.0f; px += 2.0f)
+                        curve.lineTo (px, tempoY ((float) map.bpmAtSeconds (geo.timeFor (px)), lo, hi));
+                }
+                curve.lineTo (geo.xFor (sec), tempoY ((float) pt.bpm, lo, hi));
+                prevSec = juce::jmax (prevSec, sec);
+            }
+            curve.lineTo ((float) getWidth() + 4.0f, curve.getCurrentPosition().y);
         }
         g.setColour (palette::warn.withAlpha (0.9f));
         g.strokePath (curve, juce::PathStrokeType (1.6f));
@@ -743,9 +760,17 @@ juce::ValueTree Ruler::tempoAt (juce::Point<int> p, bool& isBase) const
     isBase = false;
     double lo, hi;
     tempoRange (lo, hi);
-    const auto near = [&] (double sec, double bpm) { return std::abs (owner.geo.xFor (sec) - (float) p.x) < 8.0f && std::abs (tempoY ((float) bpm, lo, hi) - (float) p.y) < 9.0f; };
-    for (auto c : owner.doc.transport())
-        if (c.hasType (pids::TEMPO) && near (owner.geo.tempoMap.secondsAtQuarter ((double) c[pids::beat]), (double) c[pids::bpm])) return c;
+    const auto dist = [&] (double sec, double bpm) {
+        const float dx = std::abs (owner.geo.xFor (sec) - (float) p.x), dy = std::abs (tempoY ((float) bpm, lo, hi) - (float) p.y);
+        return dx < 8.0f && dy < 9.0f ? dx * dx + dy * dy : 1.0e9f;
+    };
+    const auto near = [&] (double sec, double bpm) { return dist (sec, bpm) < 1.0e8f; };
+    juce::ValueTree best;
+    float bestD = 1.0e8f;
+    for (auto c : owner.doc.transport())   // stacked points: the one nearest the pointer
+        if (c.hasType (pids::TEMPO))
+            if (const float d = dist (owner.geo.tempoMap.secondsAtQuarter ((double) c[pids::beat]), (double) c[pids::bpm]); d < bestD) { bestD = d; best = c; }
+    if (best.isValid()) return best;
     if (near (0.0, owner.doc.tempo())) isBase = true;
     return {};
 }
@@ -763,16 +788,52 @@ void Ruler::editTempo (juce::ValueTree point, double quarter, bool isBase)
     });
 }
 
-/** Where the dragged point goes (quarter notes). The pointer is read against the tempo map without the dragged point, so the
-    position only depends on x and does not shift as the point's height changes. Other points are sticky: close to one, the
-    dragged point lands on exactly its position, which is how points are stacked for an instant tempo change. */
-double Ruler::dragQuarterFor (float x, double /*bpm*/, bool snapOn) const
+/** Where the dragged point goes (quarter notes). The dot is kept under the pointer (where it was grabbed): since a point's own
+    time depends on its tempo, its position is solved with the point included, using the current height. Other points are
+    sticky in what you see: near one, the dragged point lands on exactly its position (stacking them is how an instant
+    tempo change is made) and stays there until the pointer is clearly away. */
+double Ruler::dragQuarterFor (float x, double bpm, bool snapOn) const
 {
+    const float want = x - tempoGrabDx;
+    const auto timeAt = [&] (double q) {
+        auto pts = tempoDragOthers;
+        pts.push_back ({ q, bpm });
+        TempoMap m;
+        m.set (owner.doc.tempo(), std::move (pts));
+        return m.secondsAtQuarter (q);
+    };
     if (snapOn)
         for (const auto& o : tempoDragOthers)
-            if (std::abs (owner.geo.xFor (tempoDragMap.secondsAtQuarter (o.quarter)) - x) < 12.0f)
-                return o.quarter;
-    return tempoQuarterAt (x, tempoDragMap, snapOn);
+        {
+            const bool locked = std::abs ((double) tempoDrag[pids::beat] - o.quarter) < 1.0e-9;
+            if (std::abs (owner.geo.xFor (timeAt (o.quarter)) - want) < (locked ? 40.0f : 12.0f)) return o.quarter;
+        }
+    const double t = owner.geo.timeFor (want);
+    double lo = 0.001, hi = 4096.0;
+    for (int i = 0; i < 48; ++i)
+    {
+        const double mid = 0.5 * (lo + hi);
+        (timeAt (mid) < t ? lo : hi) = mid;
+    }
+    const double q = 0.5 * (lo + hi), g = owner.geo.snapBeats;
+    return juce::jmax (0.001, snapOn && g > 0.0 ? std::round (q / g) * g : std::round (q * 1000.0) / 1000.0);
+}
+
+/** Where a new point goes so that it appears under the click: it is solved like a dragged point (with every existing point as
+    the others), so it lands on the grid line or exactly on top of a point near the click. */
+double Ruler::newPointQuarter (juce::Point<int> p, bool snapOn, double bpm)
+{
+    double lo, hi;
+    tempoRange (lo, hi);
+    if (bpm <= 0.0) bpm = std::round (tempoBpmAt ((float) p.y, lo, hi));
+    tempoDragOthers.clear();
+    for (auto c : owner.doc.transport())
+        if (c.hasType (pids::TEMPO)) tempoDragOthers.push_back ({ (double) c[pids::beat], (double) c[pids::bpm] });
+    tempoGrabDx = 0.0f;
+    tempoDrag = {};
+    const double q = dragQuarterFor ((float) p.x, bpm, snapOn);
+    tempoDragOthers.clear();
+    return q;
 }
 
 /** The beat-grid position (quarter notes) under x: on the snap grid, or free with Alt / snap off. */
@@ -790,7 +851,7 @@ void Ruler::mouseDown (const juce::MouseEvent& e)
     {
         bool isBase = false;
         auto ch = tempoAt (e.getPosition(), isBase);
-        const double at = tempoQuarterAt ((float) e.x, owner.geo.tempoMap, ! e.mods.isAltDown());
+        const double at = newPointQuarter (e.getPosition(), ! e.mods.isAltDown());
         if (e.mods.isPopupMenu())
         {
             juce::PopupMenu m;
@@ -822,6 +883,7 @@ void Ruler::mouseDown (const juce::MouseEvent& e)
             tempoRange (dragLo, dragHi);          // the scale stays put while dragging
             tempoDrag = ch;
             tempoDragBase = isBase;
+            tempoGrabDx = ch.isValid() ? (float) e.x - owner.geo.xFor (owner.geo.tempoMap.secondsAtQuarter ((double) ch[pids::beat])) : 0.0f;
             owner.doc.undo().beginNewTransaction ("Move tempo point");
         }
         return;
@@ -989,7 +1051,8 @@ void Ruler::mouseDoubleClick (const juce::MouseEvent& e)
         // a new point where you clicked (on the beat grid), at the height you clicked
         double lo, hi;
         tempoRange (lo, hi);
-        owner.doc.addTempoPoint (tempoQuarterAt ((float) e.x, owner.geo.tempoMap, ! e.mods.isAltDown()), std::round (tempoBpmAt ((float) e.y, lo, hi)));
+        const double bpm = std::round (tempoBpmAt ((float) e.y, lo, hi));
+        owner.doc.addTempoPoint (newPointQuarter (e.getPosition(), ! e.mods.isAltDown(), bpm), bpm);
         return;
     }
     if (e.y >= loopLane && e.y < numbersTop && loopHit ((float) e.x, true) != LoopDrag::draw)   // double-click the export bar: clear it
@@ -2293,7 +2356,7 @@ void ArrangeView::timerCallback()
             updateScrollBars();
         }
     }
-    if (tempoTrackShown) repaint (0, toolbarHeight, headerWidth, rulerHeight());   // the bpm at the playhead
+    repaint (0, toolbarHeight, headerWidth, Ruler::baseHeight + tempoTrackHeight + 4);   // the bpm at the playhead (and a closed lane's label gone)
     repaintAll();
 }
 

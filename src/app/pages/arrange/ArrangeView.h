@@ -224,6 +224,8 @@ private:
     TempoMap tempoDragMap;
     std::vector<TempoMap::Point> tempoDragOthers;   // the other points while one is dragged
     double dragQuarterFor (float x, double bpm, bool snapOn) const;
+    double newPointQuarter (juce::Point<int> p, bool snapOn, double bpm = 0.0);
+    float tempoGrabDx = 0.0f;   // where the pointer grabbed the dot, relative to its centre
     // loop bar (like Studio One): drag the bar to move it, its ends to resize it, the empty strip to draw a new one
     enum class LoopDrag { none, move, left, right, draw } loopDrag = LoopDrag::none;
     double loopA0 = 0.0, loopB0 = 0.0;
