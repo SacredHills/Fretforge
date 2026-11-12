@@ -159,6 +159,7 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
         pt.monitor = (bool) t[ids::monitor];
         pt.armed = (bool) t[ids::armed];
         pt.inputLeft = (int) t[ids::inputChannel];
+        pt.monoPlayback = kindOf (t) == TrackKind::audio && ! (bool) t[ids::inputStereo];
         pt.inputRight = (bool) t[ids::inputStereo] ? pt.inputLeft + 1 : -1;
 
         if (opt.recorders != nullptr)
@@ -430,6 +431,7 @@ void renderTrackClips (const PlayTrack& track, juce::int64 t0, int n, float* lef
                 l = hermite (srcL, len, pos);
                 r = hermite (srcR, len, pos);
             }
+            if (track.monoPlayback) l = r = 0.5f * (l + r);
             left[t - t0] += l * g;
             right[t - t0] += r * g;
         }

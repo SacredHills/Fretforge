@@ -27,6 +27,7 @@ struct PlayTrack
     float gainL = 1.0f, gainR = 1.0f;        // fader + pan
     bool audible = true;                     // after mute / solo
     bool monitor = false, armed = false;
+    bool monoPlayback = false;               // mono audio track: stereo clips are summed to one channel
     int inputLeft = -1, inputRight = -1;     // indices into the device's active input channels
     int meterSlot = 0;
     std::shared_ptr<TrackRecorder> recorder; // only while recording
