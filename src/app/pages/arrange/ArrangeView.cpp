@@ -2100,6 +2100,9 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
     addAndMakeVisible (hScroll);
     addAndMakeVisible (vScroll);
 
+    dockHeight = settings.getIntValue ("midiDockHeight", 320);
+    dockClose.setTooltip ("Close the MIDI editor");
+    dockClose.onClick = [this] { closeMidiEditor(); };
     session.selectionChanged.addChangeListener (this);
     rebind();
     startTimerHz (30);
@@ -2359,6 +2362,16 @@ void ArrangeView::resized()
     tb.removeFromRight (4);
     zoomOutButton.setBounds (tb.removeFromRight (30));
 
+    if (dockedEditor != nullptr)
+    {
+        dockHeight = juce::jlimit (160, juce::jmax (160, getHeight() - 200), dockHeight);
+        dockedEditor->setBounds (r.removeFromBottom (dockHeight));
+        auto title = r.removeFromBottom (24);
+        dockClose.setBounds (title.removeFromRight (28).reduced (3));
+        dockTitle.setBounds (title.withTrimmedRight (0).withX (title.getX()));
+        dockTitle.setBounds (dockTitle.getBounds().withWidth (title.getWidth()));
+        dockBar.setBounds (r.removeFromBottom (6));
+    }
     auto rulerRow = r.removeFromTop (rulerHeight());
     rulerRow.removeFromLeft (headerWidth);
     ruler.setBounds (rulerRow.withTrimmedRight (12));
@@ -2425,22 +2438,31 @@ void ArrangeView::openMidiEditor (juce::ValueTree clip)
 {
     if (! midiclip::isMidiClip (clip)) return;
     const auto id = clip[ids::id].toString();
-    auto& me = midiEditors[id];
-    if (me.window == nullptr)
+    if (dockedEditor == nullptr || dockedClipId != id)
     {
-        me.editor = std::make_unique<PianoRoll> (doc, host, clip);
-        me.window = std::make_unique<ToolWindow> ("MIDI editor - " + clip.getParent()[ids::name].toString() + " / " + clip[ids::name].toString(),
-                                                  *me.editor, 1000, 560, settings, "midiEditorWindow");
-        me.window->setResizeLimits (520, 320, 4000, 3000);
-        juce::Component::SafePointer<ArrangeView> safe (this);
-        auto close = [safe, id] {
-            juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr) safe->midiEditors.erase (id); });
+        dockedEditor = std::make_unique<PianoRoll> (doc, host, clip);
+        dockedClipId = id;
+        dockTitle.text = "MIDI editor  -  " + clip.getParent()[ids::name].toString() + " / " + clip[ids::name].toString();
+        dockedEditor->onClipGone = [safe = juce::Component::SafePointer<ArrangeView> (this), id] {
+            juce::MessageManager::callAsync ([safe, id] { if (safe != nullptr && safe->dockedClipId == id) safe->closeMidiEditor(); });
         };
-        me.window->onClosed = close;
-        me.editor->onClipGone = close;
+        addAndMakeVisible (*dockedEditor);
+        addAndMakeVisible (dockBar);
+        addAndMakeVisible (dockTitle);
+        addAndMakeVisible (dockClose);
+        resized();
     }
-    me.window->showFront();
-    me.editor->grabKeyboardFocus();
+    dockedEditor->grabKeyboardFocus();
+}
+
+void ArrangeView::closeMidiEditor()
+{
+    dockedEditor.reset();
+    dockedClipId = {};
+    dockBar.setVisible (false);
+    dockTitle.setVisible (false);
+    dockClose.setVisible (false);
+    resized();
 }
 
 juce::AudioProcessorParameter* ArrangeView::laneParameter (const juce::ValueTree& track, const juce::String& prm) const

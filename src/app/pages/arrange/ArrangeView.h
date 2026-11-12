@@ -332,8 +332,46 @@ private:
     juce::Label snapLabel;
     juce::ValueTree root;
     std::unique_ptr<juce::FileChooser> chooser;
-    struct MidiEditor { std::unique_ptr<PianoRoll> editor; std::unique_ptr<ToolWindow> window; };
-    std::map<juce::String, MidiEditor> midiEditors;   // by clip id
+    // The MIDI editor docks at the bottom of the arranger (drag the bar above it to resize, like Studio One).
+    struct DockBar : juce::Component
+    {
+        explicit DockBar (ArrangeView& o) : owner (o) { setMouseCursor (juce::MouseCursor::UpDownResizeCursor); }
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (palette::outline);
+            g.fillRect (getLocalBounds());
+            g.setColour (palette::textDim.withAlpha (0.6f));
+            g.fillRoundedRectangle ((float) getWidth() * 0.5f - 18.0f, (float) getHeight() * 0.5f - 1.0f, 36.0f, 2.0f, 1.0f);
+        }
+        void mouseDown (const juce::MouseEvent&) override { startHeight = owner.dockHeight; }
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            owner.dockHeight = juce::jlimit (160, juce::jmax (160, owner.getHeight() - 200), startHeight - e.getDistanceFromDragStartY());
+            owner.resized();
+        }
+        void mouseUp (const juce::MouseEvent&) override { owner.settings.setValue ("midiDockHeight", owner.dockHeight); }
+        ArrangeView& owner;
+        int startHeight = 0;
+    };
+    struct DockTitle : juce::Component
+    {
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (palette::panel);
+            g.fillRect (getLocalBounds());
+            g.setColour (palette::text);
+            g.setFont (uiFont (12.0f, true));
+            g.drawText (text, getLocalBounds().reduced (12, 0).withTrimmedRight (30), juce::Justification::centredLeft);
+        }
+        juce::String text;
+    };
+    std::unique_ptr<PianoRoll> dockedEditor;
+    juce::String dockedClipId;
+    DockBar dockBar { *this };
+    DockTitle dockTitle;
+    juce::TextButton dockClose { "X" };
+    int dockHeight = 320;
+    void closeMidiEditor();
     struct ClipboardItem { juce::ValueTree clip; int trackOffset; double timeOffset; };
     std::vector<ClipboardItem> clipboard;
     bool rebuildPending = false;
