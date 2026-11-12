@@ -317,10 +317,12 @@ void RigBank::syncAll()
     {
         if (auto w = wantedInserts.find (it->first); w == wantedInserts.end() || w->second != it->second.track)
         {
-            for (int sl = 0; sl < InsertChain::maxSlots; ++sl)
-                if (auto p = it->second.chain->getPlugin (sl); p != nullptr && onPluginRemoved) onPluginRemoved (p.get());
+            // Take the plugins out of the chain the way a single removal does (editor closed, the audio thread let go, then
+            // shut down here on the message thread): the playback graph may still hold the chain for a moment, and it must
+            // never be what ends up destroying a running plugin.
+            releaseInsertPlugins (it->second);
             const juce::ScopedLock sl (lock);
-            it = inserts.erase (it);   // plugins die with the chain once the playback graph lets go of it
+            it = inserts.erase (it);
             changed = true;
         }
         else ++it;

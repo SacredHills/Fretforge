@@ -123,6 +123,25 @@ void prepareTrackBlock (PlayTrack& t, const BlockTiming& bt, int n) noexcept
     }
 }
 
+float applyMasterLanes (PlaybackGraph& g, double timeSec) noexcept
+{
+    float gain = 1.0f;
+    for (auto& l : g.masterLanes)
+    {
+        const float v = automation::valueAt (l.points, timeSec, -1000.0f);
+        if (v <= -999.0f) continue;
+        if (l.target == PlayTrack::Lane::volume) gain = juce::Decibels::decibelsToGain (v, -60.0f);
+        else if (l.target == PlayTrack::Lane::plugin && g.masterInserts != nullptr && std::abs (v - l.last) > 1.0e-4f)
+            if (auto* p = g.masterInserts->activePlugin (l.slot))
+            {
+                const auto& params = p->getParameters();
+                if (juce::isPositiveAndBelow (l.param, params.size())) params[l.param]->setValue (juce::jlimit (0.0f, 1.0f, v));
+                l.last = v;
+            }
+    }
+    return gain;
+}
+
 void panGains (float pan, float gain, float& left, float& right) noexcept
 {
     const float theta = (juce::jlimit (-1.0f, 1.0f, pan) + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
@@ -136,6 +155,17 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
     auto g = std::make_unique<PlaybackGraph>();
     g->sampleRate = opt.sampleRate;
     g->masterInserts = opt.masterInserts;
+    if (opt.masterNode.isValid())
+        for (const auto& lane : automation::activeLanes (opt.masterNode))
+        {
+            PlayTrack::Lane l;
+            const auto prm = lane[automation::param].toString();
+            if (prm == automation::volumeParam) l.target = PlayTrack::Lane::volume;
+            else if (automation::parsePluginParam (prm, l.slot, l.param)) l.target = PlayTrack::Lane::plugin;
+            else continue;
+            l.points = automation::pointsOf (lane);
+            if (! l.points.empty()) g->masterLanes.push_back (std::move (l));
+        }
     const double sr = opt.sampleRate;
 
     bool anySolo = false;

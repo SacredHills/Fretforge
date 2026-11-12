@@ -236,6 +236,42 @@ private:
     juce::Identifier endId (bool exportRange) const;
 };
 
+/** The master bus's automation lane, pinned under the tracks (toolbar: "Master"): its volume and the parameters of its plugins.
+    Double-click to add a point, drag a point to move it, double-click one to type its value, right-click for more. */
+class MasterLane : public juce::Component
+{
+public:
+    explicit MasterLane (ArrangeView& o) : owner (o) {}
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override { dragLane = {}; dragPoint = -1; repaint(); }
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent& e) override;
+private:
+    ArrangeView& owner;
+    juce::ValueTree dragLane;
+    std::vector<automation::Point> dragPts;
+    int dragPoint = -1;
+    bool moved = false;
+    juce::Point<float> grabOffset;
+    juce::Rectangle<float> row() const { return getLocalBounds().toFloat().reduced (0.0f, 12.0f); }
+    juce::Point<float> posOf (const juce::String& prm, const automation::Point& p) const;
+    int pointAt (juce::Point<float> at, const std::vector<automation::Point>& pts, const juce::String& prm) const;
+};
+
+/** The left side of the master lane: its name, the parameter shown, and its value at the play position. */
+class MasterHeader : public juce::Component
+{
+public:
+    explicit MasterHeader (ArrangeView&);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    juce::TextButton laneButton;
+private:
+    ArrangeView& owner;
+};
+
 /** The Studio arrange window: toolbar, ruler, track headers and the clip timeline. */
 class ArrangeView : public juce::Component, private juce::Timer, private juce::ValueTree::Listener, private juce::ScrollBar::Listener,
                     private juce::ChangeListener
@@ -311,7 +347,7 @@ private:
     juce::ScrollBar hScroll { false }, vScroll { true };
     ContextButton addTrackButton { "+ Track" };
     juce::TextButton importButton { "Import" }, zoomInButton { "+" }, zoomOutButton { "-" },
-        fitButton { "Fit" }, followButton { "Follow" }, sliceButton { "Slice" }, autoButton { "Automation" }, tempoButton { "Tempo Track" };
+        fitButton { "Fit" }, followButton { "Follow" }, sliceButton { "Slice" }, autoButton { "Automation" }, tempoButton { "Tempo Track" }, masterButton { "Master" };
 public:
     /** Automation mode: tracks show an automation lane (volume, pan, plugin parameters) over their clips. */
     bool automationMode() const { return autoButton.getToggleState(); }
@@ -396,6 +432,13 @@ private:
     static constexpr int tempoTrackHeight = 84;
     int rulerHeight() const { return Ruler::baseHeight + (tempoTrackShown ? tempoTrackHeight : 0); }
     bool tempoTrackShown = false;
+    // the master lane (automation of the main output): under the tracks, toggled by the Master button
+    static constexpr int masterLaneHeight = 104;
+    bool masterShown = false;
+    MasterLane masterLane { *this };
+    MasterHeader masterHeader { *this };
+    friend class MasterLane;
+    friend class MasterHeader;
     static constexpr int toolbarHeight = 38;
 };
 } // namespace ff

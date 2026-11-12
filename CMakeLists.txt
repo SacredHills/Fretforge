@@ -220,6 +220,7 @@ if(FF_BUILD_TESTS)
         tests/PitchDetectorTests.cpp
         tests/MetronomeTests.cpp
         tests/TempoMapTests.cpp
+        tests/MasterAutomationTests.cpp
         tests/ExerciseTests.cpp
         tests/ProjectFileTests.cpp
         tests/AudioEngineTests.cpp

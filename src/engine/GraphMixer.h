@@ -19,6 +19,8 @@ public:
         virtual bool fill (int index, PlayTrack&, float* L, float* R, int n) noexcept = 0;
         /** The track's final signal after fader and pan (meters). */
         virtual void post (int, const PlayTrack&, const float*, const float*, int) noexcept {}
+        /** Timeline position (seconds) of this block for the master bus's automation; negative: not rolling (no automation). */
+        virtual double masterTime() const noexcept { return -1.0; }
     };
 
     void prepare (int maxBlock, double sampleRate);

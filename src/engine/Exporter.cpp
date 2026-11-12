@@ -71,6 +71,7 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
     opt.instrumentFor = [&] (const juce::ValueTree& t) { return fx::makeOfflineInstrument (t, s.sampleRate, 4096, rigWarnings); };
     if (const auto master = s.master.isValid() ? s.master : tracks.getParent().getChildWithName (project::ids::MASTER); master.isValid())
         opt.masterInserts = fx::makeOfflineInserts (master, s.sampleRate, 4096, rigWarnings);
+    opt.masterNode = s.master.isValid() ? s.master : tracks.getParent().getChildWithName (project::ids::MASTER);
     juce::ScopedNoDenormals noDenormals;
     auto graph = buildPlaybackGraph (tracks, mediaBundle, cache, opt);
     if (graph->missingClips > 0)
@@ -133,6 +134,7 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
     {
         const std::vector<char>* include = nullptr;
         juce::int64 at = 0;
+        double masterTime() const noexcept override { return (double) at / sampleRate; }
         double sampleRate = 48000.0;
         bool fill (int index, PlayTrack& t, float* L, float* R, int n) noexcept override
         {
@@ -162,6 +164,8 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
         std::vector<char> include (graph->tracks.size(), 0);
         for (int ti : job.trackIndices) include[(size_t) ti] = 1;
         source.include = &include;
+        graph->masterPrevGain = -1.0f;
+        for (auto& l : graph->masterLanes) l.last = -1.0f;
         for (auto& t : graph->tracks)   // every render starts from silence
         {
             if (t.rig != nullptr) t.rig->reset();

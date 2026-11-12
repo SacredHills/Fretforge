@@ -180,7 +180,36 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
         }
         p = end;
     }
+    float autoGain = 1.0f;   // master automation: plugin parameters now, the volume after the plugins
+    if (! g.masterLanes.empty())
+    {
+        const double mt = source.masterTime();
+        if (mt >= 0.0) autoGain = applyMasterLanes (g, mt);
+    }
     if (g.masterInserts != nullptr)   // outL / outR started out silent, so this is the whole mix
         g.masterInserts->process (outL, outR, n);
+    if (! g.masterLanes.empty())
+    {
+        const float from = g.masterPrevGain < 0.0f ? autoGain : g.masterPrevGain;   // ramped, so moving automation does not click
+        if (std::abs (from - autoGain) < 1.0e-6f)
+        {
+            if (std::abs (autoGain - 1.0f) > 1.0e-6f)
+            {
+                juce::FloatVectorOperations::multiply (outL, autoGain, n);
+                juce::FloatVectorOperations::multiply (outR, autoGain, n);
+            }
+        }
+        else
+        {
+            const float step = (autoGain - from) / (float) n;
+            for (int i = 0; i < n; ++i)
+            {
+                const float k = from + step * (float) (i + 1);
+                outL[i] *= k;
+                outR[i] *= k;
+            }
+        }
+        g.masterPrevGain = autoGain;
+    }
 }
 } // namespace ff

@@ -471,6 +471,7 @@ void SessionController::rebuildGraphNow()
     };
     opt.insertsFor = [this] (const juce::ValueTree& t) { return rigBank->insertsForTrack (t[ids::id].toString()); };
     opt.masterInserts = rigBank->insertsForTrack (project::masterId);
+    opt.masterNode = project::masterNode (doc.tree());
     opt.instrumentFor = [this] (const juce::ValueTree& t) { return rigBank->instrumentForTrack (t[ids::id].toString()); };
     host.engine.submitGraph (buildPlaybackGraph (doc.tracks(), doc.mediaBundle(), cache, opt));
 }

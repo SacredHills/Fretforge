@@ -314,6 +314,12 @@ struct AudioEngine::Segment final : GraphMixer::Source
         return (ch >= 0 && ch < numInputs && inputs[ch] != nullptr) ? inputs[ch] + offset : nullptr;
     }
 
+    double masterTime() const noexcept override
+    {
+        const double sr = e.sampleRate.load (std::memory_order_relaxed);
+        return rolling && sr > 0 ? (double) e.pos / sr : -1.0;
+    }
+
     bool fill (int, PlayTrack& t, float* sL, float* sR, int len) noexcept override
     {
         auto& meter = e.trackMeters[(size_t) juce::jlimit (0, timeline::maxTracks - 1, t.meterSlot)];

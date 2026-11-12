@@ -2153,7 +2153,18 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
         resized();
         repaintAll();
     };
-    for (auto* b : { &followButton, &sliceButton, &autoButton, &tempoButton })
+    masterButton.setClickingTogglesState (true);
+    masterButton.setTooltip ("Master: show the main output's automation lane under the tracks: its volume (a fade-out, say) and the "
+                             "parameters of the plugins on the master bus. Double-click to add a point, drag to move it. Plays and exports.");
+    masterButton.onClick = [this] {
+        masterShown = masterButton.getToggleState();
+        doc.set (doc.transport(), juce::Identifier ("masterLane"), masterShown, false);
+        resized();
+        repaintAll();
+    };
+    addChildComponent (masterLane);
+    addChildComponent (masterHeader);
+    for (auto* b : { &followButton, &sliceButton, &autoButton, &tempoButton, &masterButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -2216,6 +2227,12 @@ void ArrangeView::syncGeometry()
     {
         tempoTrackShown = shown;
         tempoButton.setToggleState (shown, juce::dontSendNotification);
+        resized();
+    }
+    if (const bool shown = (bool) doc.transport()["masterLane"]; shown != masterShown)
+    {
+        masterShown = shown;
+        masterButton.setToggleState (shown, juce::dontSendNotification);
         resized();
     }
     geo.tsNum = doc.tsNum();
@@ -2339,6 +2356,7 @@ void ArrangeView::repaintAll()
 {
     canvas.repaint();
     ruler.repaint();
+    if (masterShown) { masterLane.repaint(); masterHeader.repaint(); }
 }
 
 void ArrangeView::timerCallback()
@@ -2433,6 +2451,8 @@ void ArrangeView::resized()
     followButton.setBounds (tb.removeFromLeft (70));
     tb.removeFromLeft (6);
     tempoButton.setBounds (tb.removeFromLeft (104));
+    tb.removeFromLeft (6);
+    masterButton.setBounds (tb.removeFromLeft (70));
     fitButton.setBounds (tb.removeFromRight (44));
     tb.removeFromRight (4);
     zoomInButton.setBounds (tb.removeFromRight (30));
@@ -2454,6 +2474,14 @@ void ArrangeView::resized()
     ruler.setBounds (rulerRow.withTrimmedRight (12));
     auto bottom = r.removeFromBottom (12);
     hScroll.setBounds (bottom.withTrimmedLeft (headerWidth).withTrimmedRight (12));
+    masterLane.setVisible (masterShown);
+    masterHeader.setVisible (masterShown);
+    if (masterShown)
+    {
+        auto mrow = r.removeFromBottom (masterLaneHeight);
+        masterHeader.setBounds (mrow.removeFromLeft (headerWidth));
+        masterLane.setBounds (mrow.withTrimmedRight (12));
+    }
     vScroll.setBounds (r.removeFromRight (12));
     headerHolder.setBounds (r.removeFromLeft (headerWidth));
     canvas.setBounds (r);
@@ -2605,7 +2633,7 @@ void ArrangeView::showLaneChooser (juce::ValueTree track, juce::Component* targe
     };
     m.addSectionHeader ("Automation lane  (* = has points)");
     add (m, automation::volumeParam, "Volume");
-    add (m, automation::panParam, "Pan");
+    if (! track.hasType (pids::MASTER)) add (m, automation::panParam, "Pan");
     for (int i = 0; i < rig::numInserts (track); ++i)
     {
         const auto node = rig::insertNode (track, i);
@@ -2636,6 +2664,226 @@ void ArrangeView::showLaneChooser (juce::ValueTree track, juce::Component* targe
         safe->repaintAll();
     });
 }
+
+// ------------------------------------------------------------------ master lane
+
+namespace
+{
+juce::ValueTree masterOf (ArrangeView& v) { return project::masterNode (v.doc.tree()); }
+}
+
+juce::Point<float> MasterLane::posOf (const juce::String& prm, const automation::Point& p) const
+{
+    const auto r = row();
+    return { owner.geo.xFor (p.time), r.getBottom() - automation::toNormal (prm, p.value) * r.getHeight() };
+}
+
+int MasterLane::pointAt (juce::Point<float> at, const std::vector<automation::Point>& pts, const juce::String& prm) const
+{
+    for (int k = 0; k < (int) pts.size(); ++k)
+        if (posOf (prm, pts[(size_t) k]).getDistanceFrom (at) < 7.0f) return k;
+    return -1;
+}
+
+void MasterLane::paint (juce::Graphics& g)
+{
+    g.fillAll (palette::bg.brighter (0.04f));
+    g.setColour (palette::text.withAlpha (0.15f));
+    g.drawHorizontalLine (0, 0.0f, (float) getWidth());
+    auto m = masterOf (owner);
+    if (! m.isValid()) return;
+    const auto prm = owner.laneParamFor (m);
+    const auto r = row();
+    const auto colour = palette::warn;
+    const auto pts = automation::pointsOf (automation::lane (m, prm, false, nullptr));
+    if (pts.empty())
+    {
+        const float y = r.getBottom() - automation::toNormal (prm, automation::defaultValue (prm, m)) * r.getHeight();
+        const float dashes[] = { 5.0f, 4.0f };
+        g.setColour (colour.withAlpha (0.45f));
+        g.drawDashedLine ({ 0.0f, y, (float) getWidth(), y }, dashes, 2, 1.5f);
+        g.setFont (uiFont (11.0f, false));
+        g.setColour (palette::text.withAlpha (0.5f));
+        g.drawText ("Double-click to add a point", getLocalBounds().reduced (8, 0), juce::Justification::centred, false);
+        return;
+    }
+    juce::Path p;
+    p.startNewSubPath (0.0f, posOf (prm, pts.front()).y);
+    for (auto& pt : pts) p.lineTo (posOf (prm, pt));
+    p.lineTo ((float) getWidth(), posOf (prm, pts.back()).y);
+    g.setColour (colour);
+    g.strokePath (p, juce::PathStrokeType (2.0f));
+    for (int k = 0; k < (int) pts.size(); ++k)
+    {
+        const auto c = posOf (prm, pts[(size_t) k]);
+        if (c.x < -6.0f || c.x > (float) getWidth() + 6.0f) continue;
+        const bool hot = k == dragPoint;
+        g.setColour (hot ? juce::Colours::white : colour);
+        g.fillEllipse (c.x - 4.5f, c.y - 4.5f, 9.0f, 9.0f);
+        if (hot)
+        {
+            g.setFont (uiFont (11.0f, true));
+            g.drawText (owner.laneValueText (m, prm, pts[(size_t) k].value), juce::Rectangle<float> (c.x + 8.0f, c.y - 16.0f, 120.0f, 14.0f),
+                        juce::Justification::centredLeft, false);
+        }
+    }
+}
+
+void MasterLane::mouseMove (const juce::MouseEvent& e)
+{
+    auto m = masterOf (owner);
+    if (! m.isValid()) return;
+    const auto prm = owner.laneParamFor (m);
+    const auto pts = automation::pointsOf (automation::lane (m, prm, false, nullptr));
+    setMouseCursor (pointAt (e.position, pts, prm) >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
+void MasterLane::mouseDown (const juce::MouseEvent& e)
+{
+    auto m = masterOf (owner);
+    if (! m.isValid()) return;
+    const auto prm = owner.laneParamFor (m);
+    auto pts = automation::pointsOf (automation::lane (m, prm, false, nullptr));
+    const int hit = pointAt (e.position, pts, prm);
+    moved = false;
+    if (e.mods.isPopupMenu())
+    {
+        juce::PopupMenu menu;
+        menu.addItem (1, "Delete point", hit >= 0);
+        menu.addItem (2, "Clear this lane", ! pts.empty());
+        juce::Component::SafePointer<MasterLane> safe (this);
+        menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, m, prm, hit] (int r) {
+            if (safe == nullptr || r == 0) return;
+            auto l = automation::lane (m, prm, false, nullptr);
+            if (! l.isValid()) return;
+            auto p2 = automation::pointsOf (l);
+            safe->owner.doc.undo().beginNewTransaction ("Master automation");
+            if (r == 1 && juce::isPositiveAndBelow (hit, (int) p2.size())) p2.erase (p2.begin() + hit);
+            if (r == 2) p2.clear();
+            automation::setPoints (l, p2, &safe->owner.doc.undo());
+            safe->repaint();
+        });
+        return;
+    }
+    if (hit < 0) return;
+    owner.doc.undo().beginNewTransaction ("Move master automation point");
+    dragLane = automation::lane (m, prm, true, &owner.doc.undo());
+    dragPts = automation::pointsOf (dragLane);
+    dragPoint = hit;
+    grabOffset = posOf (prm, dragPts[(size_t) hit]) - e.position;
+    repaint();
+}
+
+void MasterLane::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! dragLane.isValid() || ! juce::isPositiveAndBelow (dragPoint, (int) dragPts.size())) return;
+    if (! moved && e.getDistanceFromDragStart() < 4) return;
+    moved = true;
+    auto m = masterOf (owner);
+    const auto prm = owner.laneParamFor (m);
+    const auto r = row();
+    const auto pos = e.position + grabOffset;
+    auto& p = dragPts[(size_t) dragPoint];
+    const double lo = dragPoint > 0 ? dragPts[(size_t) dragPoint - 1].time : 0.0;
+    const double hi = dragPoint + 1 < (int) dragPts.size() ? dragPts[(size_t) dragPoint + 1].time : 1.0e9;
+    p.time = juce::jlimit (lo, hi, owner.geo.snap (owner.geo.timeFor (pos.x), ! e.mods.isAltDown()));
+    p.value = automation::fromNormal (prm, juce::jlimit (0.0f, 1.0f, (r.getBottom() - pos.y) / r.getHeight()));
+    automation::setPoints (dragLane, dragPts, &owner.doc.undo());
+    repaint();
+}
+
+void MasterLane::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    auto m = masterOf (owner);
+    if (! m.isValid()) return;
+    const auto prm = owner.laneParamFor (m);
+    auto l = automation::lane (m, prm, false, nullptr);
+    auto pts = automation::pointsOf (l);
+    const int hit = pointAt (e.position, pts, prm);
+    if (hit < 0)
+    {
+        const auto r = row();
+        owner.doc.undo().beginNewTransaction ("Add master automation point");
+        auto lane = automation::lane (m, prm, true, &owner.doc.undo());
+        auto p2 = automation::pointsOf (lane);
+        automation::Point np;
+        np.time = owner.geo.snap (owner.geo.timeFor (e.position.x), ! e.mods.isAltDown());
+        np.value = automation::fromNormal (prm, juce::jlimit (0.0f, 1.0f, (r.getBottom() - e.position.y) / r.getHeight()));
+        if (p2.empty() && np.time > 0.001) p2.push_back ({ 0.0, automation::defaultValue (prm, m) });
+        p2.push_back (np);
+        std::stable_sort (p2.begin(), p2.end(), [] (const automation::Point& a, const automation::Point& b) { return a.time < b.time; });
+        automation::setPoints (lane, p2, &owner.doc.undo());
+        dragLane = {};
+        dragPoint = -1;
+        repaint();
+        return;
+    }
+    auto* w = new juce::AlertWindow ("Master automation point", owner.laneLabel (m, prm) + " at " + juce::String (pts[(size_t) hit].time, 2)
+                                         + " s.  Type the value (" + (prm == automation::volumeParam ? juce::String ("dB, e.g. -6, or -inf for silence")
+                                                                      : juce::String ("as the plugin shows it")) + ").",
+                                     juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("v", owner.laneValueText (m, prm, pts[(size_t) hit].value));
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Delete point", 2);
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MasterLane> safe (this);
+    const double when = pts[(size_t) hit].time;
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, m, prm, when] (int res) {
+        if (safe == nullptr || res == 0) return;
+        auto lane = automation::lane (m, prm, false, nullptr);
+        auto p2 = automation::pointsOf (lane);
+        int k = -1;
+        for (int i = 0; i < (int) p2.size(); ++i) if (std::abs (p2[(size_t) i].time - when) < 1.0e-6) k = i;
+        if (k < 0) return;
+        auto& o = safe->owner;
+        if (res == 2)
+        {
+            o.doc.undo().beginNewTransaction ("Delete master automation point");
+            p2.erase (p2.begin() + k);
+        }
+        else
+        {
+            float v = 0.0f;
+            if (! o.laneValueFromText (m, prm, w->getTextEditorContents ("v"), v)) return;
+            o.doc.undo().beginNewTransaction ("Master automation value");
+            p2[(size_t) k].value = v;
+        }
+        automation::setPoints (lane, p2, &o.doc.undo());
+        safe->repaint();
+    }), true);
+}
+
+MasterHeader::MasterHeader (ArrangeView& o) : owner (o)
+{
+    addAndMakeVisible (laneButton);
+    laneButton.setTooltip ("Which master parameter the lane below shows: the master volume, or a parameter of a plugin on the master bus.");
+    laneButton.onClick = [this] { owner.showLaneChooser (masterOf (owner), &laneButton); };
+}
+
+void MasterHeader::resized()
+{
+    laneButton.setBounds (getLocalBounds().reduced (8, 0).withTrimmedTop (30).withHeight (24));
+}
+
+void MasterHeader::paint (juce::Graphics& g)
+{
+    g.fillAll (palette::bg.brighter (0.08f));
+    g.setColour (palette::text.withAlpha (0.15f));
+    g.drawHorizontalLine (0, 0.0f, (float) getWidth());
+    auto m = masterOf (owner);
+    if (! m.isValid()) return;
+    const auto prm = owner.laneParamFor (m);
+    laneButton.setButtonText ("A: " + owner.laneLabel (m, prm));
+    g.setColour (palette::text);
+    g.setFont (uiFont (13.0f, true));
+    g.drawText ("MASTER", 10, 6, 120, 20, juce::Justification::centredLeft, false);
+    const auto pts = automation::pointsOf (automation::lane (m, prm, false, nullptr));
+    g.setFont (uiFont (11.0f, false));
+    g.setColour (palette::text.withAlpha (0.7f));
+    g.drawText (pts.empty() ? juce::String ("no automation") : juce::String (pts.size()) + " points",
+                10, 62, getWidth() - 20, 16, juce::Justification::centredLeft, false);
+}
+
 
 void ArrangeView::newMidiClip (juce::ValueTree track, double time)
 {

@@ -84,6 +84,8 @@ struct PlaybackGraph
     std::vector<PlayTrack> tracks;
     std::vector<int> order;
     std::shared_ptr<fx::InsertChain> masterInserts;   // plugins on the master bus (after every track)                  // track indices sorted by level (sources before the buses they feed)
+    std::vector<PlayTrack::Lane> masterLanes;         // automation of the master bus: its volume and its plugins' parameters
+    float masterPrevGain = -1.0f;                     // audio thread: the master volume automation of the last block (-1: none yet)
     double sampleRate = 48000.0;
     int missingClips = 0; // clips whose audio is not loaded (yet)
 };
@@ -97,6 +99,7 @@ struct GraphBuildOptions
     std::function<std::shared_ptr<fx::AmpRig> (const juce::ValueTree& track)> rigFor;    // amp rig per track (optional)
     std::function<std::shared_ptr<fx::InsertChain> (const juce::ValueTree& track)> insertsFor;
     std::shared_ptr<fx::InsertChain> masterInserts;
+    juce::ValueTree masterNode;   // the master bus (its automation lanes)
     std::function<std::shared_ptr<fx::InstrumentSlot> (const juce::ValueTree& track)> instrumentFor;
 };
 
@@ -106,6 +109,10 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
 
 /** Adds one track's clips for timeline range [t0, t0+n) into L/R (does not clear). Real-time safe. */
 void renderTrackClips (const PlayTrack& track, juce::int64 t0, int n, float* left, float* right) noexcept;
+
+/** Moves the master bus's plugin parameters to their automation at `timeSec` and returns the master volume automation
+    there as a linear gain (1 without a volume lane). Audio thread. */
+float applyMasterLanes (PlaybackGraph&, double timeSec) noexcept;
 
 /** Samples the track's rig and inserts delay its sound by (audio thread). Playback reads the track's clips that much
     earlier, so recorded audio stays in time with the other tracks (live monitoring cannot be compensated). */
