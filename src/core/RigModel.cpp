@@ -52,6 +52,8 @@ namespace
         { "plug4On",       "Plugin 4",     0.0f,   1.0f,   1.0f,  "",   plug4,  true,  0.5f },
         { "delayStereo",   "Stereo",       0.0f,   1.0f,   0.0f,  "",   delay,  false, 0.5f },
         { "cabBlend",      "Cab blend",    0.0f,   1.0f,   0.5f,  "%",  cab,    false, 0.5f },
+        { "cabPhase1",     "Phase 1",      0.0f,   1.0f,   0.0f,  "",   cab,    false, 0.5f },
+        { "cabPhase2",     "Phase 2",      0.0f,   1.0f,   0.0f,  "",   cab,    false, 0.5f },
     };
 
     const char* blockIds[numBlocks]   = { "gate", "comp", "drive", "amp", "eq", "cab", "chorus", "delay", "reverb", "plug1", "plug2", "plug3", "plug4" };
@@ -64,7 +66,7 @@ namespace
 }
 
 const ParamInfo& info (int p) { return params[juce::jlimit (0, numParams - 1, p)]; }
-bool isToggle (int p) { return info (p).isSwitch || p == namNormalize || p == namCalibrate || p == delayStereo; }
+bool isToggle (int p) { return info (p).isSwitch || p == namNormalize || p == namCalibrate || p == delayStereo || p == cabPhase1 || p == cabPhase2; }
 int switchFor (int block) { return switches[juce::jlimit (0, numBlocks - 1, block)]; }
 const char* blockId (int block) { return blockIds[juce::jlimit (0, numBlocks - 1, block)]; }
 const char* blockName (int block) { return blockNames[juce::jlimit (0, numBlocks - 1, block)]; }

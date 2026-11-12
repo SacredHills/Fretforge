@@ -1,5 +1,6 @@
 #include "RigEditor.h"
 #include "engine/fx/NamModel.h"
+#include "../../tone3000/Tone3000.h"
 
 namespace ff
 {
@@ -309,6 +310,20 @@ RigEditor::RigEditor (ProjectDocument& d, EngineHost& h, SessionController& s, j
                               [this] (const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) setIrFile (fc.getResult(), true); });
     };
     clearIr2Button.onClick = [this] { setIrFile ({}, true); };
+    for (auto [btn, param] : { std::pair<juce::TextButton*, int> { &phase1Button, cabPhase1 }, { &phase2Button, cabPhase2 } })
+    {
+        btn->setTooltip ("Flip this cabinet's polarity. When two cabs sound thin or hollow together, flipping one brings the low end back");
+        btn->onClick = [this, param = param] {
+            if (! target.isValid()) return;
+            if (auto* u = um()) u->beginNewTransaction ("Cabinet phase");
+            set (target, param, get (target, param) >= 0.5f ? 0.0f : 1.0f, um());
+        };
+        addChildComponent (btn);
+    }
+    for (auto* l : { &cab1Label, &cab2Label }) { styleLabel (*l, 13.0f, palette::text, true); addChildComponent (l); }
+    models.extraFolder = irs.extraFolder = t3k::Client::libraryFolder();
+    models.rescan();
+    irs.rescan();
     addChildComponent (loadIr2Button);
     addChildComponent (clearIr2Button);
 
@@ -526,7 +541,7 @@ void RigEditor::selectBlock (int b)
         {
             const auto& pi = info (p);
             if ((pi.block != b && ! (b == amp && pi.block == eq)) || pi.isSwitch || p == namNormalize) continue;
-            if (p == delayStereo) continue;                                   // a button
+            if (p == delayStereo || p == cabPhase1 || p == cabPhase2) continue;   // buttons
             if (p == cabBlend && target[ids::irFile2].toString().isEmpty()) continue;
             if (p == ampGain && ! target[ids::namFile].toString().isEmpty()) continue;   // built-in amp only
             if (p == calLevel && (target[ids::namFile].toString().isEmpty() || get (target, namCalibrate) < 0.5f)) continue;
@@ -585,7 +600,7 @@ void RigEditor::refreshAll()
     const bool isAmp = has && b == amp, isCab = has && b == cab, isPlug = has && isPluginBlock (b);
     for (auto* c : std::initializer_list<juce::Component*> { &pluginOpenButton, &pluginReplaceButton, &pluginRemoveButton, &pluginInfo })
         c->setVisible (isPlug);
-    pluginManagerButton.setVisible (has && plugins != nullptr);
+    pluginManagerButton.setVisible (isPlug && plugins != nullptr);   // only on a plugin's own page
     chain.canAddPlugin = has && plugins != nullptr && freePluginSlot (target) >= 0;
     for (int sl = 0; sl < numPluginSlots; ++sl)
     {
@@ -616,8 +631,10 @@ void RigEditor::refreshAll()
     for (auto* c : std::initializer_list<juce::Component*> { &loadModelButton, &clearModelButton, &normaliseButton, &calibrateButton, &modelLabel,
                                                              &modelInfo, &models })
         c->setVisible (isAmp);
-    for (auto* c : std::initializer_list<juce::Component*> { &loadIrButton, &clearIrButton, &loadIr2Button, &clearIr2Button, &irLabel, &irs })
+    for (auto* c : std::initializer_list<juce::Component*> { &loadIrButton, &clearIrButton, &loadIr2Button, &clearIr2Button, &phase1Button, &phase2Button, &cab1Label, &cab2Label, &irLabel, &irs })
         c->setVisible (isCab);
+    phase1Button.setToggleState (has && get (target, cabPhase1) >= 0.5f, juce::dontSendNotification);
+    phase2Button.setToggleState (has && get (target, cabPhase2) >= 0.5f, juce::dontSendNotification);
     delayStereoButton.setVisible (has && b == delay);
     delayStereoButton.setToggleState (has && get (target, delayStereo) >= 0.5f, juce::dontSendNotification);
     for (auto* b : { &models, &irs })
@@ -680,11 +697,11 @@ void RigEditor::refreshAll()
         clearIrButton.setEnabled (status.irPath.isNotEmpty());
         clearIr2Button.setEnabled (status.irPath2.isNotEmpty());
         loadIr2Button.setEnabled (status.irPath.isNotEmpty());
-        if (status.irPath2.isNotEmpty())
-        {
-            irLabel.setText (irLabel.getText() + "\n2nd cabinet: " + (status.irLoading2 ? juce::String ("loading...") : status.irError2.isNotEmpty() ? "could not load (" + status.irError2 + ")"
-                                                                                                              : status.irName2 + "  - blend them with the Cab blend knob"), juce::dontSendNotification);
-        }
+        phase1Button.setEnabled (true);
+        phase2Button.setEnabled (status.irPath2.isNotEmpty());
+        cab1Label.setText ("Cab 1: " + (status.irLoading ? juce::String ("loading...") : status.irLoaded ? status.irName : juce::String ("built-in speaker")), juce::dontSendNotification);
+        cab2Label.setText ("Cab 2: " + (status.irPath2.isEmpty() ? juce::String ("none - load one to blend") : status.irLoading2 ? juce::String ("loading...")
+                                                                  : status.irError2.isNotEmpty() ? "could not load (" + status.irError2 + ")" : status.irName2), juce::dontSendNotification);
     }
     for (auto* k : knobs) k->refresh();
     inKnob.refresh();
@@ -725,7 +742,7 @@ void RigEditor::setIrFile (const juce::File& f, bool second)
                  f == juce::File() ? (second ? "Remove second cabinet" : "Use built-in cabinet") : (second ? "Load second cabinet" : "Load cabinet IR"));
     if (f != juce::File())
     {
-        settings.setValue ("irFolder", f.getParentDirectory().getFullPathName());
+        if (settings.getValue ("irFolder").isEmpty()) settings.setValue ("irFolder", f.getParentDirectory().getFullPathName());   // never move the user's folder away
         set (target, cabOn, 1.0f, um());
         if (second && target[ids::irFile].toString().isEmpty()) setOnTarget (ids::irFile, f.getFullPathName(), {});   // the blend needs a first cabinet
     }
@@ -1055,16 +1072,21 @@ void RigEditor::layoutDetail (juce::Rectangle<int> r)
     {
         irs.setBounds (r.removeFromRight (juce::jmin (440, r.getWidth() / 2)));
         r.removeFromRight (20);
-        auto buttons = r.removeFromTop (30);
-        loadIrButton.setBounds (buttons.removeFromLeft (120));
-        buttons.removeFromLeft (6);
-        clearIrButton.setBounds (buttons.removeFromLeft (170));
-        buttons.removeFromLeft (6);
-        loadIr2Button.setBounds (buttons.removeFromLeft (130));
-        buttons.removeFromLeft (6);
-        clearIr2Button.setBounds (buttons.removeFromLeft (130));
-        r.removeFromTop (8);
-        irLabel.setBounds (r.removeFromTop (76));
+        for (auto [label, load, phase, clear] : { std::tuple<juce::Label*, juce::TextButton*, juce::TextButton*, juce::TextButton*> { &cab1Label, &loadIrButton, &phase1Button, &clearIrButton },
+                                                  { &cab2Label, &loadIr2Button, &phase2Button, &clearIr2Button } })
+        {
+            auto row = r.removeFromTop (30);
+            clear->setBounds (row.removeFromRight (80));
+            row.removeFromRight (6);
+            phase->setBounds (row.removeFromRight (70));
+            row.removeFromRight (6);
+            load->setBounds (row.removeFromRight (80));
+            row.removeFromRight (6);
+            label->setBounds (row);
+            r.removeFromTop (6);
+        }
+        r.removeFromTop (4);
+        irLabel.setBounds (r.removeFromTop (46));
         r.removeFromTop (6);
     }
     if (isPluginBlock (b))

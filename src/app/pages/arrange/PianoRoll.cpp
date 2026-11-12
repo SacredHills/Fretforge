@@ -143,17 +143,20 @@ juce::Rectangle<float> PianoRoll::noteRect (const midiclip::Note& n) const
 
 int PianoRoll::noteAt (juce::Point<float> p, bool& edge) const
 {
-    // the note really under the cursor first; the 1 px slack only when none is
-    for (const float slack : { 0.0f, 1.0f })
-        for (int i = (int) notes.size(); --i >= 0;)
-        {
-            const auto r = noteRect (notes[(size_t) i]);
-            if (r.expanded (slack, slack).contains (p))
-            {
-                edge = p.x > r.getRight() - juce::jmin (7.0f, r.getWidth() * 0.35f);
-                return i;
-            }
-        }
+    const auto edgeOf = [] (const juce::Rectangle<float>& r, juce::Point<float> q) { return q.x > r.getRight() - juce::jmin (7.0f, r.getWidth() * 0.35f); };
+    // 1. the note really under the cursor
+    for (int i = (int) notes.size(); --i >= 0;)
+    {
+        const auto r = noteRect (notes[(size_t) i]);
+        if (r.contains (p)) { edge = edgeOf (r, p); return i; }
+    }
+    // 2. just outside one: a few pixels past its end still grab that note's end (so the edge of a note that touches the
+    //    next one is the first note's, not the neighbour's), and a pixel above / below
+    for (int i = 0; i < (int) notes.size(); ++i)
+    {
+        const auto r = noteRect (notes[(size_t) i]);
+        if (r.withWidth (r.getWidth() + 4.0f).expanded (0.0f, 1.0f).contains (p)) { edge = p.x > r.getRight() - juce::jmin (7.0f, r.getWidth() * 0.35f); return i; }
+    }
     edge = false;
     return -1;
 }

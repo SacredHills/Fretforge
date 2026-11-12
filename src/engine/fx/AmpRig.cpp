@@ -433,6 +433,7 @@ void AmpRig::runCab (float* x, int n) noexcept
         float* t2 = tmp.data();
         if (blend) std::copy (x, x + n, t2);
         convolution->process (juce::dsp::ProcessContextReplacing<float> (blk));
+        if (getParam (cabPhase1) >= 0.5f) juce::FloatVectorOperations::negate (x, x, n);
         if (blend)
         {
             float* ch2[1] = { t2 };
@@ -440,7 +441,8 @@ void AmpRig::runCab (float* x, int n) noexcept
             convolution2->process (juce::dsp::ProcessContextReplacing<float> (blk2));
             const float b = juce::jlimit (0.0f, 1.0f, getParam (cabBlend));   // equal power
             const float ga = std::cos (b * juce::MathConstants<float>::halfPi), gb = std::sin (b * juce::MathConstants<float>::halfPi);
-            for (int i = 0; i < n; ++i) x[i] = x[i] * ga + t2[i] * gb;
+            const float gb2 = getParam (cabPhase2) >= 0.5f ? -gb : gb;
+            for (int i = 0; i < n; ++i) x[i] = x[i] * ga + t2[i] * gb2;
         }
     }
     else
@@ -449,6 +451,7 @@ void AmpRig::runCab (float* x, int n) noexcept
         spkPeak.process (x, n);
         spkLp1.process (x, n);
         spkLp2.process (x, n);
+        if (getParam (cabPhase1) >= 0.5f) juce::FloatVectorOperations::negate (x, x, n);
     }
     const float lc = getParam (cabLowCut), hc = getParam (cabHighCut);
     if (lc != lastLowCut)

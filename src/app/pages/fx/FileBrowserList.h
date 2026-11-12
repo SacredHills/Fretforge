@@ -37,6 +37,7 @@ public:
     std::function<void (const juce::File&)> onPick;
     /** Right click on a row (the file); the owner shows the menu. */
     std::function<void (const juce::File&)> onContext;
+    juce::File extraFolder;                   // scanned as well (the TONE3000 downloads)
     juce::File current;                       // highlighted (the loaded file)
     juce::TextButton extraButton, refreshButton;   // extraButton: optional button next to "Folder..." (e.g. TONE3000)
 
@@ -49,19 +50,20 @@ public:
         auto oldAll = all;
         all.clear();
         const auto dir = folder();
-        if (dir.isDirectory())
+        for (const auto& root : { dir, extraFolder })
         {
-            for (const auto& e : juce::RangedDirectoryIterator (dir, true, patterns, juce::File::findFiles))
+            if (! root.isDirectory() || (root == extraFolder && (root == dir || dir.isAChildOf (root) || root.isAChildOf (dir)))) continue;
+            for (const auto& e : juce::RangedDirectoryIterator (root, true, patterns, juce::File::findFiles))
             {
-                all.add (e.getFile());
-                if (all.size() >= 5000) break;
+                all.addIfNotAlreadyThere (e.getFile());
+                if (all.size() >= 8000) break;
             }
-            std::sort (all.begin(), all.end(), [&dir] (const juce::File& a, const juce::File& b) {
-                return a.getRelativePathFrom (dir).compareNatural (b.getRelativePathFrom (dir)) < 0;
-            });
         }
+        std::sort (all.begin(), all.end(), [this] (const juce::File& a, const juce::File& b) {
+            return label (a).compareNatural (label (b)) < 0;
+        });
         if (! force && all == oldAll) return;   // nothing new: keep the list (and the scroll position)
-        title.setText (dir.isDirectory() ? juce::String (what.substring (0, 1).toUpperCase() + what.substring (1)) + " in " + dir.getFileName()
+        title.setText (dir.isDirectory() || all.size() > 0 ? juce::String (what.substring (0, 1).toUpperCase() + what.substring (1)) + (dir.isDirectory() ? " in " + dir.getFileName() : juce::String())
                                                + "  (" + juce::String (all.size()) + ")"
                                          : "Choose a folder with your " + what,
                        juce::dontSendNotification);
@@ -104,7 +106,9 @@ private:
     juce::String label (const juce::File& f) const
     {
         const auto dir = folder();
-        return f.isAChildOf (dir) ? f.getRelativePathFrom (dir) : f.getFileName();
+        if (f.isAChildOf (dir)) return f.getRelativePathFrom (dir);
+        if (extraFolder.isDirectory() && f.isAChildOf (extraFolder)) return extraFolder.getFileName() + "/" + f.getRelativePathFrom (extraFolder);
+        return f.getFileName();
     }
 
     void filter()

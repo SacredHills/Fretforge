@@ -434,6 +434,21 @@ struct AmpRigTests : juce::UnitTest
             expectGreaterThan (maxDiff, 1.0e-4f);   // stereo repeats: the sides differ
         }
 
+        beginTest ("cabinet phase flips the polarity");
+        {
+            fx::AmpRig r;
+            r.prepare (sr, 512);
+            allOff (r);
+            r.setParam (rg::cabOn, 1);
+            auto a = runRig (r, sine (200.0, sr, 9600, 0.3f), 512);
+            r.setParam (rg::cabPhase1, 1);
+            auto b = runRig (r, sine (200.0, sr, 9600, 0.3f), 512);
+            float maxSum = 0;
+            for (size_t i = 4800; i < a.size(); ++i) maxSum = juce::jmax (maxSum, std::abs (a[i] + b[i]));
+            expectLessThan (maxSum, 1.0e-4f);
+            expectGreaterThan (peakOf (a, 4800), 0.01f);
+        }
+
         beginTest ("NAM model hand-over, normalisation and garbage collection");
         {
             fx::AmpRig r;

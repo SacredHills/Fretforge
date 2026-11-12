@@ -45,6 +45,7 @@ enum Param
     plug1On, plug2On, plug3On, plug4On,
     delayStereo,                     // delay: repeats spread left/right (1) or centred (0)
     cabBlend,                        // cabinet: 0 = the first impulse response, 1 = the second
+    cabPhase1, cabPhase2,            // cabinet: flip the polarity of the first / second cabinet
     numParams
 };
 

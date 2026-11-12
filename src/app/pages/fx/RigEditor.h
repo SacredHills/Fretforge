@@ -121,8 +121,10 @@ private:
     juce::Label pluginInfo;
     void showAddPluginMenu (int slot);
     // cab: impulse response
-    juce::TextButton loadIrButton { "Load IR..." }, clearIrButton { "Use built-in cabinet" };
-    juce::TextButton loadIr2Button { "Blend 2nd cab..." }, clearIr2Button { "Remove 2nd cab" };
+    juce::TextButton loadIrButton { "Load..." }, clearIrButton { "Remove" };
+    juce::TextButton loadIr2Button { "Load..." }, clearIr2Button { "Remove" };
+    juce::TextButton phase1Button { "Phase" }, phase2Button { "Phase" };
+    juce::Label cab1Label, cab2Label;
     juce::Label irLabel;
 
     std::unique_ptr<juce::FileChooser> chooser;
