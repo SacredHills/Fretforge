@@ -763,26 +763,16 @@ void Ruler::editTempo (juce::ValueTree point, double quarter, bool isBase)
     });
 }
 
-/** Where the dragged point must sit (quarter notes) so that it ends up under the pointer: the point's own time depends on its
-    tempo and position, so this solves for it instead of reading the pointer against a map without the point. */
-double Ruler::dragQuarterFor (float x, double bpm, bool snapOn) const
+/** Where the dragged point goes (quarter notes). The pointer is read against the tempo map without the dragged point, so the
+    position only depends on x and does not shift as the point's height changes. Other points are sticky: close to one, the
+    dragged point lands on exactly its position, which is how points are stacked for an instant tempo change. */
+double Ruler::dragQuarterFor (float x, double /*bpm*/, bool snapOn) const
 {
-    const double t = owner.geo.timeFor (x);
-    const auto timeAt = [&] (double q) {
-        auto pts = tempoDragOthers;
-        pts.push_back ({ q, bpm });
-        TempoMap m;
-        m.set (owner.doc.tempo(), std::move (pts));
-        return m.secondsAtQuarter (q);
-    };
-    double lo = 0.001, hi = 4096.0;
-    for (int i = 0; i < 48; ++i)
-    {
-        const double mid = 0.5 * (lo + hi);
-        (timeAt (mid) < t ? lo : hi) = mid;
-    }
-    const double q = 0.5 * (lo + hi), g = owner.geo.snapBeats;
-    return juce::jmax (0.001, snapOn && g > 0.0 ? std::round (q / g) * g : std::round (q * 1000.0) / 1000.0);
+    if (snapOn)
+        for (const auto& o : tempoDragOthers)
+            if (std::abs (owner.geo.xFor (tempoDragMap.secondsAtQuarter (o.quarter)) - x) < 12.0f)
+                return o.quarter;
+    return tempoQuarterAt (x, tempoDragMap, snapOn);
 }
 
 /** The beat-grid position (quarter notes) under x: on the snap grid, or free with Alt / snap off. */
