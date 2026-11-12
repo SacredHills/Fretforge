@@ -85,10 +85,12 @@ private:
     double offset() const;
     double absStart (const midiclip::Note& n) const { return clipStart() + n.start - offset(); }
     juce::Rectangle<float> noteRect (const midiclip::Note&) const;
-    int noteAt (juce::Point<float>, bool& onRightEdge) const;
+    int noteAt (juce::Point<float>, bool& onRightEdge, bool grabEnds = true) const;
     double quarterSec() const;
     double gridSec() const;
     double snap (double t, bool on) const;
+    /** The start of the grid cell containing t (where a new note goes when you click in a cell). */
+    double snapDown (double t, bool on) const;
     double newNoteLength() const;
 
     void load();

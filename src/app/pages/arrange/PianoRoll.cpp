@@ -128,6 +128,12 @@ double PianoRoll::snap (double t, bool on) const
     if (! on || g <= 0.0) return t;
     return std::round (t / g) * g;
 }
+double PianoRoll::snapDown (double t, bool on) const
+{
+    const double g = gridSec();
+    if (! on || g <= 0.0) return t;
+    return std::floor (t / g + 1.0e-9) * g;
+}
 double PianoRoll::newNoteLength() const
 {
     const double q = lengthQuarters[juce::jlimit (0, (int) std::size (lengthQuarters) - 1, lengthBox.getSelectedId() - 1)];
@@ -141,7 +147,7 @@ juce::Rectangle<float> PianoRoll::noteRect (const midiclip::Note& n) const
     return { x0, yFor (n.pitch) + 1.0f, juce::jmax (3.0f, x1 - x0 - 1.0f), keyH - 2.0f };
 }
 
-int PianoRoll::noteAt (juce::Point<float> p, bool& edge) const
+int PianoRoll::noteAt (juce::Point<float> p, bool& edge, bool grabEnds) const
 {
     const auto edgeOf = [] (const juce::Rectangle<float>& r, juce::Point<float> q) { return q.x > r.getRight() - juce::jmin (6.0f, r.getWidth() * 0.25f); };
     // 1. the note really under the cursor
@@ -150,6 +156,7 @@ int PianoRoll::noteAt (juce::Point<float> p, bool& edge) const
         const auto r = noteRect (notes[(size_t) i]);
         if (r.contains (p)) { edge = edgeOf (r, p); return i; }
     }
+    if (! grabEnds) { edge = false; return -1; }
     // 2. just outside one: a few pixels past its end still grab that note's end (so the edge of a note that touches the
     //    next one is the first note's, not the neighbour's), and a pixel above / below
     for (int i = 0; i < (int) notes.size(); ++i)
@@ -675,7 +682,7 @@ void PianoRoll::mouseDown (const juce::MouseEvent& e)
     {
         // draw a note: click to add it, drag to set its length
         midiclip::Note n;
-        const double t = snap (timeFor (e.position.x), snapOn);
+        const double t = snapDown (timeFor (e.position.x), snapOn);   // the cell that was clicked, not the nearest line
         n.start = t - clipStart() + offset();
         n.length = newNoteLength();
         n.pitch = pitchFor (e.position.y);
@@ -811,7 +818,7 @@ void PianoRoll::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (! gridArea().contains (e.getPosition()) || drawButton.getToggleState()) return;
     bool edge = false;
-    const int hit = noteAt (e.position, edge);
+    const int hit = noteAt (e.position, edge, false);   // only a note really under the cursor is deleted
     if (hit >= 0)
     {
         notes.erase (notes.begin() + hit);
@@ -820,7 +827,7 @@ void PianoRoll::mouseDoubleClick (const juce::MouseEvent& e)
         return;
     }
     midiclip::Note n;
-    n.start = snap (timeFor (e.position.x), ! e.mods.isAltDown()) - clipStart() + offset();
+    n.start = snapDown (timeFor (e.position.x), ! e.mods.isAltDown()) - clipStart() + offset();
     n.length = newNoteLength();
     n.pitch = pitchFor (e.position.y);
     n.velocity = 100;
