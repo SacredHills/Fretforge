@@ -973,7 +973,7 @@ void Ruler::mouseMove (const juce::MouseEvent& e)
     if (tempoArea().getHeight() > 20 && tempoArea().contains (e.getPosition())) { setMouseCursor (juce::MouseCursor::PointingHandCursor); return; }
     if (e.y >= numbersTop)
     {
-        setMouseCursor (e.y < getHeight() - markerLane ? juce::MouseCursor::UpDownLeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+        setMouseCursor (e.y < getHeight() - markerLane ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
         return;
     }
     const auto h = loopHit ((float) e.x, e.y >= loopLane);

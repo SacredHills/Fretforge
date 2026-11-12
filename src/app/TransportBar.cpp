@@ -189,7 +189,7 @@ TransportBar::TransportBar (EngineHost& h, ProjectDocument& d, juce::PropertiesF
     addAndMakeVisible (sigNum);
     addAndMakeVisible (sigDen);
 
-    tapButton.setTooltip ("Tap tempo (T)");
+    tapButton.setTooltip ("Tap tempo (T): tap in time with the music. The tempo is set from the average gap between your taps, from the third tap on; wait two seconds to start over");
     tapButton.onClick = [this] { tapTempo(); };
     addAndMakeVisible (tapButton);
 
@@ -251,12 +251,19 @@ void TransportBar::togglePunch()
 
 void TransportBar::tapTempo()
 {
+    // Tap in time with the music: the tempo is set from the average gap between your taps (from the third tap on).
+    // A pause of two seconds starts over.
     const double bpm = tap.tap (juce::Time::getMillisecondCounterHiRes());
-    if (bpm > 0.0)
+    tapButton.setButtonText (tap.numTaps() >= 3 ? juce::String (juce::roundToInt (bpm)) : "TAP");
+    if (bpm > 0.0 && tap.numTaps() >= 3)
     {
-        if (tap.numTaps() == 2) doc.undo().beginNewTransaction ("Tap tempo");
+        if (tap.numTaps() == 3) doc.undo().beginNewTransaction ("Tap tempo");
         doc.setTempo (bpm);
     }
+    juce::Timer::callAfterDelay (2200, [safe = juce::Component::SafePointer<TransportBar> (this)] {
+        if (safe != nullptr && juce::Time::getMillisecondCounterHiRes() - safe->lastTapMs > 2000.0) safe->tapButton.setButtonText ("TAP");
+    });
+    lastTapMs = juce::Time::getMillisecondCounterHiRes();
 }
 
 void TransportBar::toggleClick()
@@ -276,6 +283,20 @@ void TransportBar::timerCallback()
 
     const double sr0 = e.getSampleRate();
     const auto tempoMap = doc.tempoMap();
+    {
+        // the tempo shown is the tempo at the play position (live while playing) once there is a tempo track
+        const bool live = ! tempoMap.isConstant();
+        bpmCaption.setText (live ? "TEMPO AT PLAYHEAD" : "TEMPO", juce::dontSendNotification);
+        if (! tempoSlider.isMouseButtonDown() && ! tempoSlider.hasKeyboardFocus (true))
+        {
+            const double shown = live ? tempoMap.bpmAtSeconds (sr0 > 0 ? (double) e.getPositionSamples() / sr0 : 0.0) : doc.tempo();
+            if (std::abs (tempoSlider.getValue() - shown) > 0.004)
+            {
+                const juce::ScopedValueSetter<bool> svs (updating, true);
+                tempoSlider.setValue (shown, juce::dontSendNotification);
+            }
+        }
+    }
     const double ppq = tempoMap.isConstant() ? e.getPositionPpq() : tempoMap.quarterAtSeconds (sr0 > 0 ? (double) e.getPositionSamples() / sr0 : 0.0);
     const int num = doc.tsNum(), den = doc.tsDen();
     const double qPerBar = num * 4.0 / den;

@@ -82,6 +82,7 @@ private:
 
     juce::Label inCaption, outCaption, cpuLabel;
     TapTempo tap;
+    double lastTapMs = 0.0;
     juce::uint32 lastMidi = 0;
     int midiFlash = 0;
     bool updating = false;

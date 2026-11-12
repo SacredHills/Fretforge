@@ -907,7 +907,8 @@ bool PianoRoll::keyPressed (const juce::KeyPress& k)
 void PianoRoll::timerCallback()
 {
     if (! fitted && isShowing() && gridArea().getWidth() > 200 && gridArea().getHeight() > 100) { fitted = true; fit(); }
-    if (! clip.getParent().isValid()) { stopTimer(); if (onClipGone) onClipGone(); return; }
+    // gone when the clip is deleted, or its whole track is (the clip then still hangs off the removed track)
+    if (! clip.getParent().isValid() || clip.getParent().getParent() != doc.tracks()) { stopTimer(); if (onClipGone) onClipGone(); return; }
     if (flashTicks > 0 && --flashTicks == 0) updateInfo();
     const double ph = host.engine.getPositionSeconds();
     if (ph != lastPlayhead)
