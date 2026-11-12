@@ -49,11 +49,12 @@ private:
     static constexpr int toolbarH = 36, rulerH = 20, keysW = 56, velH = 72, sbW = 12;
     juce::ScrollBar hbar { false }, vbar { true };
     double lastPlayhead = -1.0;
+    static bool& followOn() { static bool on = true; return on; }   // shared by the editors, on by default
     int flashTicks = 0;              // info shows a message (e.g. after Quantize) for a moment
     int velTip = -1;                 // velocity drag: value shown by the cursor
     juce::Point<float> velTipPos;
 
-    juce::TextButton drawButton { "Draw" }, quantizeButton { "Quantize" }, zoomIn { "+" }, zoomOut { "-" }, fitButton { "Fit" };
+    juce::TextButton drawButton { "Draw" }, quantizeButton { "Quantize" }, zoomIn { "+" }, zoomOut { "-" }, fitButton { "Fit" }, followButton { "Follow" };
     juce::ComboBox gridBox, lengthBox;
     juce::Label gridLabel, lengthLabel, info;
 

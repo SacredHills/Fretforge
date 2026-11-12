@@ -266,7 +266,23 @@ void MainComponent::paint (juce::Graphics& g)
         g.drawVerticalLine (logoArea.getRight() - 1, (float) logoArea.getY(), (float) logoArea.getBottom());
         g.drawHorizontalLine (logoArea.getBottom() - 1, (float) logoArea.getX(), (float) logoArea.getRight());
         if (auto img = logoImage(); img.isValid())
-            g.drawImage (img, logoArea.reduced (12, 6).toFloat(), juce::RectanglePlacement::centred);
+        {
+            // a big image drawn small aliases: halve it with smoothing until it is close to the size on screen, then draw
+            const auto dest = logoArea.reduced (8, 3).toFloat();
+            const auto fit = juce::RectanglePlacement (juce::RectanglePlacement::centred).appliedTo (img.getBounds().toFloat(), dest);
+            const float scale = juce::jmax (1.0f, (float) g.getInternalContext().getPhysicalPixelScaleFactor());
+            const int tw = juce::roundToInt (fit.getWidth() * scale), th = juce::roundToInt (fit.getHeight() * scale);
+            static juce::Image cached;
+            if (cached.getWidth() != tw || cached.getHeight() != th)
+            {
+                auto work = img;
+                while (work.getWidth() > tw * 2)
+                    work = work.rescaled (work.getWidth() / 2, work.getHeight() / 2, juce::Graphics::highResamplingQuality);
+                cached = work.rescaled (tw, th, juce::Graphics::highResamplingQuality);
+            }
+            g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+            g.drawImage (cached, fit);
+        }
     }
     auto status = getLocalBounds().removeFromBottom (26);
     g.setColour (palette::panel);

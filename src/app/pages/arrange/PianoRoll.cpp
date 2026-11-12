@@ -43,7 +43,12 @@ PianoRoll::PianoRoll (ProjectDocument& d, EngineHost& h, juce::ValueTree c) : do
     zoomIn.onClick = [this] { pps = juce::jmin (4000.0, pps * 1.4); repaint(); };
     zoomOut.onClick = [this] { pps = juce::jmax (10.0, pps / 1.4); repaint(); };
     fitButton.onClick = [this] { fit(); };
-    for (auto* c2 : std::initializer_list<juce::Component*> { &drawButton, &quantizeButton, &zoomIn, &zoomOut, &fitButton, &gridBox, &lengthBox })
+    followButton.setClickingTogglesState (true);
+    followButton.setToggleState (followOn(), juce::dontSendNotification);
+    followButton.setColour (juce::TextButton::buttonOnColourId, palette::accent);
+    followButton.setTooltip ("Follow: the editor scrolls to the play position, whether you play or click to move it in the arranger");
+    followButton.onClick = [this] { followOn() = followButton.getToggleState(); if (followOn()) lastPlayhead = -1.0; };
+    for (auto* c2 : std::initializer_list<juce::Component*> { &drawButton, &quantizeButton, &zoomIn, &zoomOut, &fitButton, &followButton, &gridBox, &lengthBox })
     {
         c2->setWantsKeyboardFocus (false);
         addAndMakeVisible (c2);
@@ -588,6 +593,7 @@ void PianoRoll::resized()
     lengthBox.setBounds (tb.removeFromLeft (80)); tb.removeFromLeft (10);
     quantizeButton.setBounds (tb.removeFromLeft (80)); tb.removeFromLeft (10);
     fitButton.setBounds (tb.removeFromRight (44)); tb.removeFromRight (4);
+    followButton.setBounds (tb.removeFromRight (64)); tb.removeFromRight (4);
     zoomIn.setBounds (tb.removeFromRight (30)); tb.removeFromRight (2);
     zoomOut.setBounds (tb.removeFromRight (30)); tb.removeFromRight (10);
     info.setBounds (tb);
@@ -907,10 +913,13 @@ void PianoRoll::timerCallback()
     if (ph != lastPlayhead)
     {
         lastPlayhead = ph;
-        // keep the playhead in view while playing
+        // Follow: bring the play position into view, however it moved (playing, or a click in the arranger)
         const double view = gridArea().getWidth() / pps;
-        if (host.engine.isPlaying() && drag == Drag::none && (ph > scrollT + view * 0.95 || ph < scrollT))
-            scrollT = ph - view * 0.05;
+        if (followOn() && drag == Drag::none && (ph > scrollT + view * 0.95 || ph < scrollT))
+        {
+            scrollT = juce::jmax (0.0, ph - view * 0.08);
+            updateScrollBars();
+        }
         repaint();
     }
 }
