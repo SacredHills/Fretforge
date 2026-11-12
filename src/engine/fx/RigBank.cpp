@@ -78,6 +78,18 @@ std::shared_ptr<AmpRig> makeOfflineRig (const juce::ValueTree& t, double sr, int
         }
         else warnings.add (err + " The built-in cabinet filter was used instead.");
     }
+    if (const auto ir2 = t[rig::ids::irFile2].toString(); ir2.isNotEmpty())
+    {
+        juce::AudioBuffer<float> b;
+        double irRate = 0;
+        juce::String err;
+        if (loadImpulseFile (juce::File (ir2), b, irRate, err))
+        {
+            rig->setImpulseResponse2 (std::move (b), irRate);
+            rig->finishLoadingOffline();
+        }
+        else warnings.add (err + " The second cabinet was left out.");
+    }
     for (auto c : t)
     {
         if (! c.hasType (rig::ids::PLUGIN)) continue;
@@ -247,6 +259,7 @@ RigBank::Status RigBank::statusFor (const juce::ValueTree& t) const
     Status s;
     s.modelPath = t[rig::ids::namFile].toString();
     s.irPath = t[rig::ids::irFile].toString();
+    s.irPath2 = t[rig::ids::irFile2].toString();
     return s;
 }
 
@@ -442,6 +455,7 @@ void RigBank::syncEntry (Entry& e)
     }
     if (e.tree[rig::ids::namFile].toString() != e.status.modelPath) requestModel (e, false);
     if (e.tree[rig::ids::irFile].toString() != e.status.irPath) requestIr (e, false);
+    if (e.tree[rig::ids::irFile2].toString() != e.status.irPath2) requestIr (e, true);
     for (int sl = 0; sl < rig::numPluginSlots; ++sl)
     {
         const auto node = rig::pluginNode (e.tree, sl);
@@ -809,47 +823,56 @@ void RigBank::requestModel (Entry& e, bool)
     notifyStatus();
 }
 
-void RigBank::requestIr (Entry& e, bool)
+void RigBank::requestIr (Entry& e, bool second)
 {
-    const auto path = e.tree[rig::ids::irFile].toString();
+    const auto path = e.tree[second ? rig::ids::irFile2 : rig::ids::irFile].toString();
     const auto key = (&e == &liveEntry) ? liveKey : e.tree.getParent()[timeline::ids::id].toString();
-    e.status.irPath = path;
-    e.status.irError = {};
-    e.status.irLoaded = false;
-    e.status.irName = {};
+    auto& st = e.status;
+    auto& statusPath = second ? st.irPath2 : st.irPath;
+    auto& error = second ? st.irError2 : st.irError;
+    auto& loaded = second ? st.irLoaded2 : st.irLoaded;
+    auto& loading = second ? st.irLoading2 : st.irLoading;
+    auto& name = second ? st.irName2 : st.irName;
+    statusPath = path;
+    error = {};
+    loaded = false;
+    name = {};
     if (path.isEmpty())
     {
-        e.rig->clearImpulseResponse();
-        e.status.irLoading = false;
+        if (second) e.rig->clearImpulseResponse2(); else e.rig->clearImpulseResponse();
+        loading = false;
         notifyStatus();
         return;
     }
-    e.status.irLoading = true;
+    loading = true;
     std::weak_ptr<bool> token = alive;
-    loader.addJob ([this, token, key, path] {
+    loader.addJob ([this, token, key, path, second] {
         auto buf = std::make_shared<juce::AudioBuffer<float>>();
         double rate = 0;
         juce::String err;
         const bool ok = loadImpulseFile (juce::File (path), *buf, rate, err);
-        juce::MessageManager::callAsync ([this, token, key, path, buf, rate, err, ok] {
+        juce::MessageManager::callAsync ([this, token, key, path, buf, rate, err, ok, second] {
             if (token.expired()) return;
             Entry* e = key == liveKey ? &liveEntry : nullptr;
             if (e == nullptr)
                 if (auto it = tracks.find (key); it != tracks.end()) e = &it->second;
-            if (e == nullptr || e->status.irPath != path) return;
-            e->status.irLoading = false;
+            if (e == nullptr) return;
+            auto& st = e->status;
+            if ((second ? st.irPath2 : st.irPath) != path) return;
+            (second ? st.irLoading2 : st.irLoading) = false;
             if (ok)
             {
-                e->status.irLoaded = true;
-                e->status.irName = juce::File (path).getFileNameWithoutExtension();
-                e->status.irSeconds = buf->getNumSamples() / rate;
+                (second ? st.irLoaded2 : st.irLoaded) = true;
+                (second ? st.irName2 : st.irName) = juce::File (path).getFileNameWithoutExtension();
+                if (! second) st.irSeconds = buf->getNumSamples() / rate;
                 const juce::ScopedLock sl (lock);
-                e->rig->setImpulseResponse (std::move (*buf), rate);
+                if (second) e->rig->setImpulseResponse2 (std::move (*buf), rate);
+                else e->rig->setImpulseResponse (std::move (*buf), rate);
             }
             else
             {
-                e->status.irError = err;
-                e->rig->clearImpulseResponse();
+                (second ? st.irError2 : st.irError) = err;
+                if (second) e->rig->clearImpulseResponse2(); else e->rig->clearImpulseResponse();
             }
             notifyStatus();
         });

@@ -44,6 +44,9 @@ public:
     /** Mono IR at its own sample rate (resampled, trimmed and normalised by the convolution engine). */
     void setImpulseResponse (juce::AudioBuffer<float>&& ir, double irSampleRate);
     void clearImpulseResponse() noexcept { irActive = false; }
+    /** A second cabinet, blended with the first by the cabBlend parameter (only heard while the first is loaded too). */
+    void setImpulseResponse2 (juce::AudioBuffer<float>&& ir, double irSampleRate);
+    void clearImpulseResponse2() noexcept { irActive2 = false; }
     void collectGarbage();
     /** For offline rendering: finishes pending IR loads (call after setImpulseResponse, before processing). */
     void finishLoadingOffline();
@@ -66,7 +69,7 @@ public:
     std::atomic<float> cpuLoad { 0.0f };                     // fraction of real time spent in process()
     std::atomic<bool> modelActive { false };                 // a NAM model is processing
     std::atomic<bool> modelNeedsPrepare { false };           // a model arrived prepared for another device rate
-    std::atomic<bool> irActive { false };
+    std::atomic<bool> irActive { false }, irActive2 { false };
     std::atomic<int> latency { 0 };                          // samples added by NAM resampling
     /** Everything the rig delays the sound by: NAM resampling + plugins that are switched on. Audio thread. */
     int totalLatency() const noexcept;
@@ -104,7 +107,7 @@ private:
     Biquad eqBass, eqMid, eqTreble, eqPresence;
     std::array<float, 4> lastEq { { 99, 99, 99, 99 } };
     // cab
-    std::unique_ptr<juce::dsp::Convolution> convolution;
+    std::unique_ptr<juce::dsp::Convolution> convolution, convolution2;
     Biquad cabHp1, cabHp2, cabLp1, cabLp2, spkHp, spkPeak, spkLp1, spkLp2;
     float lastLowCut = -1, lastHighCut = -1;
     // chorus / delay / reverb

@@ -277,7 +277,7 @@ struct NamModelTests : juce::UnitTest
         {
             juce::String err;
             auto m = fx::NamModel::load (namData ("wavenet.nam"), err);
-            expectWithinAbsoluteError (juce::Decibels::gainToDecibels (m->normalisationGain()), (float) (-18.0 - m->info().loudness), 0.01f);
+            expectWithinAbsoluteError (juce::Decibels::gainToDecibels (m->normalisationGain()), (float) (-14.0 - m->info().loudness), 0.01f);
         }
     }
 };
@@ -409,6 +409,31 @@ struct AmpRigTests : juce::UnitTest
             expectGreaterThan (peakOf (out, 4800), 0.01f);
         }
 
+        beginTest ("reverb adds no volume at zero mix; mono delay stays centred");
+        {
+            fx::AmpRig r;
+            r.prepare (sr, 512);
+            allOff (r);
+            auto dry = runRig (r, sine (200.0, sr, 9600, 0.3f), 512);
+            r.setParam (rg::reverbOn, 1);
+            r.setParam (rg::reverbMix, 0.0f);
+            auto wet = runRig (r, sine (200.0, sr, 9600, 0.3f), 512);
+            expectWithinAbsoluteError (peakOf (wet, 4800), peakOf (dry, 4800), 0.01f);
+            r.setParam (rg::reverbOn, 0);
+            r.setParam (rg::delayOn, 1);
+            r.setParam (rg::delayStereo, 0);
+            std::vector<float> right;
+            auto out = runRig (r, sine (200.0, sr, 9600, 0.3f), 512, &right);
+            float maxDiff = 0;
+            for (size_t i = 0; i < out.size(); ++i) maxDiff = juce::jmax (maxDiff, std::abs (out[i] - right[i]));
+            expectLessThan (maxDiff, 1.0e-6f);
+            r.setParam (rg::delayStereo, 1);
+            out = runRig (r, sine (200.0, sr, 9600, 0.3f), 512, &right);
+            maxDiff = 0;
+            for (size_t i = 0; i < out.size(); ++i) maxDiff = juce::jmax (maxDiff, std::abs (out[i] - right[i]));
+            expectGreaterThan (maxDiff, 1.0e-4f);   // stereo repeats: the sides differ
+        }
+
         beginTest ("NAM model hand-over, normalisation and garbage collection");
         {
             fx::AmpRig r;
@@ -425,9 +450,9 @@ struct AmpRigTests : juce::UnitTest
             expect (r.modelActive.load());
             expectWithinAbsoluteError (peakOf (out, 2400), 0.25f, 0.002f);
 
-            r.setParam (rg::namNormalize, 1);        // loudness -18 dB in the file: gain 0 dB
+            r.setParam (rg::namNormalize, 1);        // loudness -18 dB in the file, target -14: +4 dB
             out = runRig (r, sine (330.0, sr, 4800), 256);
-            expectWithinAbsoluteError (peakOf (out, 2400), 0.25f, 0.002f);
+            expectWithinAbsoluteError (peakOf (out, 2400), 0.25f * 1.5849625f, 0.004f);
 
             auto m2 = fx::NamModel::load (writeLinearModel ("quarter.nam", { 0.25f }), err);
             m2->prepare (sr, 512);

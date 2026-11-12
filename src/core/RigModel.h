@@ -18,7 +18,7 @@ namespace ff::rig
 namespace ids
 {
     #define FF_RIG_ID(n) inline const juce::Identifier n { #n };
-    FF_RIG_ID (RIG) FF_RIG_ID (enabled) FF_RIG_ID (order) FF_RIG_ID (namFile) FF_RIG_ID (irFile) FF_RIG_ID (rigName)
+    FF_RIG_ID (RIG) FF_RIG_ID (enabled) FF_RIG_ID (order) FF_RIG_ID (namFile) FF_RIG_ID (irFile) FF_RIG_ID (irFile2) FF_RIG_ID (rigName)
     FF_RIG_ID (input) FF_RIG_ID (PLUGIN) FF_RIG_ID (slot) FF_RIG_ID (desc) FF_RIG_ID (state) FF_RIG_ID (name)
     FF_RIG_ID (INSERTS) FF_RIG_ID (bypass)
     #undef FF_RIG_ID
@@ -43,6 +43,8 @@ enum Param
     reverbOn, reverbSize, reverbDamp, reverbMix,
     namCalibrate, calLevel,          // NAM input calibration: interface level (dBu at 0 dBFS)
     plug1On, plug2On, plug3On, plug4On,
+    delayStereo,                     // delay: repeats spread left/right (1) or centred (0)
+    cabBlend,                        // cabinet: 0 = the first impulse response, 1 = the second
     numParams
 };
 

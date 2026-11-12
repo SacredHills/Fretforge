@@ -89,6 +89,8 @@ public:
     /** The NAM amp shows up as the first plugin of an audio track: open / on-off / remove. */
     void showAmpMenu (juce::ValueTree track, juce::Component* target);
     void toggleAmpBypass (juce::ValueTree track);
+    /** Drag of a NAM amp onto another audio track: copies the whole rig (model, cabinets, pedals, settings, plugins); move = also removes it from the source. */
+    void dropAmp (const juce::String& fromTrackId, juce::ValueTree to, bool move);
     bool ampBypassed (const juce::ValueTree& track) const;
     std::function<void (juce::ValueTree track)> onOpenRig;   // set by the app: shows the track's NAM window
 

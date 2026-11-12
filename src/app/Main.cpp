@@ -106,7 +106,9 @@ public:
         // manager with no window.
         juce::Logger::writeToLog ("Shutting down");
         armShutdownWatchdog (12);
-        if (window != nullptr) window->setVisible (false);   // the window goes at once, whatever the plugins do
+        // every window goes at once (plugin editors and tool windows too, so nothing is left flashing on its own)
+        for (int i = juce::Desktop::getInstance().getNumComponents(); --i >= 0;)
+            if (auto* c = juce::Desktop::getInstance().getComponent (i)) c->setVisible (false);
         window.reset();
         properties.closeFiles();
         juce::Logger::writeToLog ("Clean shutdown");

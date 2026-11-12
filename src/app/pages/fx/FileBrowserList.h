@@ -6,7 +6,7 @@ namespace ff
 {
 /** A searchable list of the files in a folder (recursively), e.g. NAM captures or cabinet IRs.
     The folder is remembered in the settings under `settingsKey`. Clicking a row calls onPick. */
-class FileBrowserList : public juce::Component, private juce::ListBoxModel
+class FileBrowserList : public juce::Component, private juce::ListBoxModel, private juce::Timer
 {
 public:
     FileBrowserList (juce::PropertiesFile& s, juce::String settingsKey, juce::String wildcard, juce::String noun)
@@ -20,6 +20,10 @@ public:
         addAndMakeVisible (folderButton);
         addAndMakeVisible (extraButton);
         extraButton.setVisible (false);
+        refreshButton.setButtonText ("Refresh");
+        refreshButton.setTooltip ("Look for new files in the folder (it also happens by itself every few seconds)");
+        refreshButton.onClick = [this] { rescan(); };
+        addAndMakeVisible (refreshButton);
         search.setTextToShowWhenEmpty ("Search " + what, palette::textDim);
         search.onTextChange = [this] { filter(); };
         addAndMakeVisible (search);
@@ -27,18 +31,22 @@ public:
         list.setColour (juce::ListBox::backgroundColourId, palette::well);
         addAndMakeVisible (list);
         rescan();
+        startTimer (6000);
     }
 
     std::function<void (const juce::File&)> onPick;
+    /** Right click on a row (the file); the owner shows the menu. */
+    std::function<void (const juce::File&)> onContext;
     juce::File current;                       // highlighted (the loaded file)
-    juce::TextButton extraButton;             // optional button next to "Folder..." (e.g. TONE3000)
+    juce::TextButton extraButton, refreshButton;   // extraButton: optional button next to "Folder..." (e.g. TONE3000)
 
     juce::File folder() const { return juce::File (settings.getValue (key)); }
     void setFolder (const juce::File& f) { settings.setValue (key, f.getFullPathName()); rescan(); }
     void setCurrent (const juce::File& f) { current = f; list.repaint(); }
 
-    void rescan()
+    void rescan (bool force = true)
     {
+        auto oldAll = all;
         all.clear();
         const auto dir = folder();
         if (dir.isDirectory())
@@ -52,6 +60,7 @@ public:
                 return a.getRelativePathFrom (dir).compareNatural (b.getRelativePathFrom (dir)) < 0;
             });
         }
+        if (! force && all == oldAll) return;   // nothing new: keep the list (and the scroll position)
         title.setText (dir.isDirectory() ? juce::String (what.substring (0, 1).toUpperCase() + what.substring (1)) + " in " + dir.getFileName()
                                                + "  (" + juce::String (all.size()) + ")"
                                          : "Choose a folder with your " + what,
@@ -64,6 +73,8 @@ public:
         auto r = getLocalBounds();
         auto top = r.removeFromTop (26);
         folderButton.setBounds (top.removeFromRight (90));
+        top.removeFromRight (4);
+        refreshButton.setBounds (top.removeFromRight (70));
         if (extraButton.isVisible()) { top.removeFromRight (6); extraButton.setBounds (top.removeFromRight (110)); }
         title.setBounds (top);
         r.removeFromTop (4);
@@ -122,9 +133,12 @@ private:
         g.setFont (uiFont (13.0f, isCurrent));
         g.drawText (label (f), 8, 0, w - 12, h, juce::Justification::centredLeft, true);
     }
-    void listBoxItemClicked (int row, const juce::MouseEvent&) override
+    void timerCallback() override { if (isShowing()) rescan (false); }
+    void listBoxItemClicked (int row, const juce::MouseEvent& e) override
     {
-        if (juce::isPositiveAndBelow (row, shown.size()) && onPick) onPick (shown[row]);
+        if (! juce::isPositiveAndBelow (row, shown.size())) return;
+        if (e.mods.isPopupMenu()) { if (onContext) onContext (shown[row]); return; }
+        if (onPick) onPick (shown[row]);
     }
 };
 } // namespace ff

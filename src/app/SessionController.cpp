@@ -396,6 +396,24 @@ void SessionController::dropInsert (const juce::String& fromTrackId, int fromSlo
     while (at > toSlot && at > 0) { rig::moveInsert (to, at, -1, &doc.undo()); --at; }
 }
 
+void SessionController::dropAmp (const juce::String& fromTrackId, juce::ValueTree to, bool move)
+{
+    auto from = trackOrMaster (fromTrackId);
+    auto src = rig::find (from);
+    if (! src.isValid() || ! to.isValid() || from == to) return;
+    if (! isAudioTrack (to))
+    {
+        if (onError) onError ("NAM amp", "A NAM amp can only go on an audio track.");
+        return;
+    }
+    doc.undo().beginNewTransaction (move ? "Move NAM amp" : "Copy NAM amp");
+    auto copy = src.createCopy();
+    copy.setProperty (rig::ids::enabled, true, nullptr);
+    if (auto old = rig::find (to); old.isValid()) to.removeChild (old, &doc.undo());
+    to.appendChild (copy, &doc.undo());
+    if (move) from.removeChild (src, &doc.undo());
+}
+
 void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::Component* target)
 {
     const auto node = rig::insertNode (track, slot);

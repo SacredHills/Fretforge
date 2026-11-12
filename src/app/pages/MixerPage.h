@@ -20,7 +20,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     // drag a plugin onto another track (copies it with its settings) or up / down in this list (moves it)
     bool isInterestedInDragSource (const SourceDetails&) override;
-    void itemDragMove (const SourceDetails& d) override { dropRow = juce::jlimit (0, rig::numInserts (track), (d.localPosition.y + rowHeight / 2) / rowHeight - ampRows()); repaint(); }
+    void itemDragMove (const SourceDetails& d) override { if (d.description.toString().startsWith ("ffamp|")) return; dropRow = juce::jlimit (0, rig::numInserts (track), (d.localPosition.y + rowHeight / 2) / rowHeight - ampRows()); repaint(); }
     void itemDragExit (const SourceDetails&) override { dropRow = -1; repaint(); }
     void itemDropped (const SourceDetails&) override;
     juce::ValueTree getTrack() const { return track; }

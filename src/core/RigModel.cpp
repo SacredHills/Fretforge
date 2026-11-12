@@ -50,6 +50,8 @@ namespace
         { "plug2On",       "Plugin 2",     0.0f,   1.0f,   1.0f,  "",   plug2,  true,  0.5f },
         { "plug3On",       "Plugin 3",     0.0f,   1.0f,   1.0f,  "",   plug3,  true,  0.5f },
         { "plug4On",       "Plugin 4",     0.0f,   1.0f,   1.0f,  "",   plug4,  true,  0.5f },
+        { "delayStereo",   "Stereo",       0.0f,   1.0f,   0.0f,  "",   delay,  false, 0.5f },
+        { "cabBlend",      "Cab blend",    0.0f,   1.0f,   0.5f,  "%",  cab,    false, 0.5f },
     };
 
     const char* blockIds[numBlocks]   = { "gate", "comp", "drive", "amp", "eq", "cab", "chorus", "delay", "reverb", "plug1", "plug2", "plug3", "plug4" };
@@ -62,7 +64,7 @@ namespace
 }
 
 const ParamInfo& info (int p) { return params[juce::jlimit (0, numParams - 1, p)]; }
-bool isToggle (int p) { return info (p).isSwitch || p == namNormalize || p == namCalibrate; }
+bool isToggle (int p) { return info (p).isSwitch || p == namNormalize || p == namCalibrate || p == delayStereo; }
 int switchFor (int block) { return switches[juce::jlimit (0, numBlocks - 1, block)]; }
 const char* blockId (int block) { return blockIds[juce::jlimit (0, numBlocks - 1, block)]; }
 const char* blockName (int block) { return blockNames[juce::jlimit (0, numBlocks - 1, block)]; }
@@ -304,6 +306,7 @@ juce::var toPreset (const juce::ValueTree& rig, const juce::String& presetName)
                                                                      : makeDefault()[ids::order].toString());
     o->setProperty ("namFile", rig[ids::namFile].toString());
     o->setProperty ("irFile", rig[ids::irFile].toString());
+    o->setProperty ("irFile2", rig[ids::irFile2].toString());
     auto* p = new juce::DynamicObject();
     for (int i = 0; i < numParams; ++i) p->setProperty (params[i].id, (double) get (rig, i));
     o->setProperty ("params", juce::var (p));
@@ -334,13 +337,13 @@ juce::StringArray applyPreset (juce::ValueTree rig, const juce::var& preset, juc
         set (rig, i, v.isVoid() ? params[i].def : (float) (double) v, um);
     }
     if (preset["order"].toString().isNotEmpty()) rig.setProperty (ids::order, preset["order"].toString(), um);
-    for (auto* key : { "namFile", "irFile" })
+    for (auto* key : { "namFile", "irFile", "irFile2" })
     {
         if (! preset.hasProperty (key)) continue;   // built-in presets leave the loaded model / IR alone
         const auto path = preset[key].toString();
         const bool exists = path.isNotEmpty() && juce::File::isAbsolutePath (path) && juce::File (path).existsAsFile();
         if (path.isNotEmpty() && ! exists) missing.add (juce::File (path).getFileName());
-        rig.setProperty (juce::String (key) == "namFile" ? ids::namFile : ids::irFile, exists ? path : juce::String(), um);
+        rig.setProperty (juce::String (key) == "namFile" ? ids::namFile : juce::String (key) == "irFile" ? ids::irFile : ids::irFile2, exists ? path : juce::String(), um);
     }
     if (preset.hasProperty ("plugins"))   // user presets carry their plugins (built-in ones leave them alone)
     {
@@ -385,7 +388,7 @@ std::vector<FactoryPreset> factoryPresets()
         auto r = makeDefault();
         for (auto [p, v] : d.values) set (r, p, v);
         auto json = toPreset (r, d.name);
-        if (auto* o = json.getDynamicObject()) { o->removeProperty ("namFile"); o->removeProperty ("irFile"); }
+        if (auto* o = json.getDynamicObject()) { o->removeProperty ("namFile"); o->removeProperty ("irFile"); o->removeProperty ("irFile2"); }
         out.push_back ({ d.name, json });
     }
     return out;

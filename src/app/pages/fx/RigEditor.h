@@ -41,6 +41,7 @@ public:
     std::function<void (int block)> onSelect, onToggle;
     std::function<void (int block, int newIndex)> onMove;   // newIndex: position in the full block order
     std::function<void()> onAddPlugin;
+    std::function<void (int block)> onContext;   // right click on a tile
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -96,6 +97,8 @@ private:
     juce::Label titleLabel;
     juce::TextButton onButton, monitorButton, addRigButton { "Add NAM amp to this track" };
     juce::TextButton savePresetButton { "Save preset..." }, deletePresetButton { "Delete" }, resetButton { "Reset" };
+    juce::TextButton copyButton { "Copy" }, pasteButton { "Paste" };
+    juce::TextButton delayStereoButton { "Stereo repeats" };
     juce::Label targetHint, statusLabel, inLabel, outLabel;
     RigMeter inMeter, outMeter;
     ParamKnob inKnob, outKnob;
@@ -119,6 +122,7 @@ private:
     void showAddPluginMenu (int slot);
     // cab: impulse response
     juce::TextButton loadIrButton { "Load IR..." }, clearIrButton { "Use built-in cabinet" };
+    juce::TextButton loadIr2Button { "Blend 2nd cab..." }, clearIr2Button { "Remove 2nd cab" };
     juce::Label irLabel;
 
     std::unique_ptr<juce::FileChooser> chooser;
@@ -136,14 +140,18 @@ private:
     void deletePreset();
     juce::File presetFolder() const;
     void setModelFile (const juce::File&);
-    void setIrFile (const juce::File&);
+    void setIrFile (const juce::File&, bool second = false);
+    void copyRig();
+    void pasteRig();
+    void fileMenu (const juce::File&, bool cab);
+    void blockMenu (int block);
     void setOnTarget (const juce::Identifier&, const juce::var&, const juce::String& undoName);
 
     std::function<void (bool cab)> onBrowseTone3000;   // set by the app: opens the TONE3000 browser
     PluginManager* plugins = nullptr;
 public:
     /** Loads a downloaded file into this rig (amp model or cabinet IR). */
-    void loadDownloaded (const juce::File& f, bool cab) { if (cab) setIrFile (f); else setModelFile (f); }
+    void loadDownloaded (const juce::File& f, bool cab) { models.rescan(); irs.rescan(); if (cab) setIrFile (f); else setModelFile (f); }
     void setTone3000Handler (std::function<void (bool cab)> fn) { onBrowseTone3000 = std::move (fn); refreshAll(); }
     void setPluginManager (PluginManager* pm) { plugins = pm; refreshAll(); }
 private:

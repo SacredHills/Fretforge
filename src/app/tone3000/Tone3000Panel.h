@@ -27,7 +27,7 @@ private:
     juce::TextEditor keyEditor, searchBox;
     juce::TextButton signButton, browseButton { "Browse TONE3000..." }, refreshButton { "Refresh" }, prevButton { "<" }, nextButton { ">" };
     juce::TextButton downloadButton { "Download && load" }, openPageButton { "Open on tone3000.com" }, keyHelpButton { "Get a key..." };
-    juce::ComboBox feedCombo;
+    juce::ComboBox feedCombo, kindCombo;   // kindCombo: show everything / amp models / cabinets
 
     struct ToneListModel : juce::ListBoxModel
     {
@@ -55,6 +55,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refreshAccount(); }
     void refreshAccount();
     void reload();
+    void applyFilter();
     void selectTone (int row);
     void showTone (const t3k::Tone&);
     void downloadRow (int row);

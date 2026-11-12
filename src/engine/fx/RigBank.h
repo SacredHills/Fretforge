@@ -49,11 +49,12 @@ public:
 
     struct Status
     {
-        juce::String modelPath, irPath;
+        juce::String modelPath, irPath, irPath2;
         NamInfo modelInfo;
         bool modelLoaded = false, modelLoading = false, irLoaded = false, irLoading = false;
         juce::String modelError, irError;
-        juce::String irName;
+        juce::String irName, irName2, irError2;
+        bool irLoaded2 = false, irLoading2 = false;
         double irSeconds = 0.0;
         struct Plugin { juce::String desc, name, error; bool loading = false, loaded = false; int latency = 0; };
         std::array<Plugin, rig::numPluginSlots> plugins;
@@ -138,7 +139,7 @@ private:
     void syncAll();
     void syncEntry (Entry&);
     void requestModel (Entry&, bool force);
-    void requestIr (Entry&, bool force);
+    void requestIr (Entry&, bool second);
     void requestPlugin (Entry&, int slot);
     void releasePlugin (std::shared_ptr<juce::AudioPluginInstance>);
     /** Takes every plugin out of every rig / chain / instrument and frees them after one audio callback. */

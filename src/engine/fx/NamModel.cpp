@@ -163,7 +163,7 @@ std::unique_ptr<NamModel> NamModel::load (const juce::File& f, juce::String& err
 float NamModel::normalisationGain() const noexcept
 {
     if (! meta.hasLoudness) return 1.0f;
-    return (float) std::pow (10.0, juce::jlimit (-40.0, 40.0, -18.0 - meta.loudness) / 20.0);
+    return (float) std::pow (10.0, juce::jlimit (-40.0, 40.0, -14.0 - meta.loudness) / 20.0);
 }
 
 float NamModel::calibrationGain (float interfaceDbu) const noexcept

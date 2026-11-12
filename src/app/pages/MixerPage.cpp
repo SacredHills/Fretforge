@@ -186,13 +186,14 @@ void InsertList::mouseDown (const juce::MouseEvent&) { dragging = false; }
 void InsertList::mouseDrag (const juce::MouseEvent& e)
 {
     const int row = e.getMouseDownY() / rowHeight - ampRows();
-    if (dragging || row < 0 || row >= rig::numInserts (track) || e.getDistanceFromDragStart() < 5) return;
+    const bool ampRow = row < 0 && ampRows() > 0 && e.getMouseDownY() >= 0;   // the NAM amp: drag it onto another track to copy it
+    if (dragging || (row < 0 && ! ampRow) || row >= rig::numInserts (track) || e.getDistanceFromDragStart() < 5) return;
     if (auto* c = juce::DragAndDropContainer::findParentDragContainerFor (this))
     {
         dragging = true;
         const auto rowArea = juce::Rectangle<int> (0, (row + ampRows()) * rowHeight, getWidth(), rowHeight - 2);
         const juce::Point<int> offset (-e.getMouseDownX(), -(e.getMouseDownY() - rowArea.getY()));
-        c->startDragging ("ffinsert|" + track[ids::id].toString() + "|" + juce::String (row), this,
+        c->startDragging ((ampRow ? "ffamp|" + track[ids::id].toString() : "ffinsert|" + track[ids::id].toString() + "|" + juce::String (row)), this,
                           juce::ScaledImage (createComponentSnapshot (rowArea, true, 2.0f), 2.0), false, &offset);
     }
 }
@@ -219,12 +220,19 @@ void InsertList::mouseUp (const juce::MouseEvent& e)
 
 bool InsertList::isInterestedInDragSource (const SourceDetails& d)
 {
-    return d.description.toString().startsWith ("ffinsert|");
+    return d.description.toString().startsWith ("ffinsert|") || d.description.toString().startsWith ("ffamp|");
 }
 
 void InsertList::itemDropped (const SourceDetails& d)
 {
     const auto parts = juce::StringArray::fromTokens (d.description.toString(), "|", "");
+    if (parts[0] == "ffamp")
+    {
+        dropRow = -1;
+        repaint();
+        session.dropAmp (parts[1], track, juce::ModifierKeys::currentModifiers.isShiftDown());   // Shift: move instead of copy
+        return;
+    }
     const int to = dropRow < 0 ? rig::numInserts (track) : dropRow;
     dropRow = -1;
     repaint();

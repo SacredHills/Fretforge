@@ -98,7 +98,8 @@ std::vector<int> ChainView::visible() const
     std::vector<int> v;
     if (! tree.isValid()) return v;
     for (int b : getOrder (tree))
-        if (! isPluginBlock (b) || pluginNode (tree, pluginSlotOf (b)).isValid()) v.push_back (b);
+        if (b == eq) continue;   // folded into the amp
+        else if (! isPluginBlock (b) || pluginNode (tree, pluginSlotOf (b)).isValid()) v.push_back (b);
     return v;
 }
 
@@ -195,6 +196,7 @@ void ChainView::mouseDown (const juce::MouseEvent& e)
     dropIndex = -1;
     if (i >= (int) vis.size()) { if (canAddPlugin && onAddPlugin) onAddPlugin(); return; }
     const int b = vis[(size_t) i];
+    if (e.mods.isPopupMenu()) { if (onContext) onContext (b); return; }
     if (lampRect (i).expanded (4.0f).contains (e.position)) { if (onToggle) onToggle (b); return; }
     if (onSelect) onSelect (b);
 }
@@ -285,8 +287,30 @@ RigEditor::RigEditor (ProjectDocument& d, EngineHost& h, SessionController& s, j
         setOrder (target, defaultOrder(), um());
         target.setProperty (ids::rigName, juce::String(), um());
     };
-    for (auto* b : { &onButton, &monitorButton, &addRigButton, &savePresetButton, &deletePresetButton, &resetButton })
+    copyButton.setTooltip ("Copy this whole amp rig (model, cabinet, pedals, settings, plugins) so you can paste it onto another track");
+    copyButton.onClick = [this] { copyRig(); };
+    pasteButton.setTooltip ("Paste a copied amp rig over this one");
+    pasteButton.onClick = [this] { pasteRig(); };
+    for (auto* b : { &onButton, &monitorButton, &addRigButton, &savePresetButton, &deletePresetButton, &resetButton, &copyButton, &pasteButton })
         addAndMakeVisible (b);
+    delayStereoButton.setTooltip ("Off: the repeats stay centred. On: the right repeats come a little later, which sounds wider");
+    delayStereoButton.onClick = [this] {
+        if (! target.isValid()) return;
+        if (auto* u = um()) u->beginNewTransaction ("Delay stereo");
+        set (target, delayStereo, get (target, delayStereo) >= 0.5f ? 0.0f : 1.0f, um());
+    };
+    addChildComponent (delayStereoButton);
+    chain.onContext = [this] (int b) { blockMenu (b); };
+    loadIr2Button.setTooltip ("Load a second cabinet and blend the two with the Cab blend knob");
+    loadIr2Button.onClick = [this] {
+        const auto start = juce::File (settings.getValue ("irFolder", juce::File::getSpecialLocation (juce::File::userHomeDirectory).getFullPathName()));
+        chooser = std::make_unique<juce::FileChooser> ("Load the second cabinet impulse response", start, "*.wav;*.aif;*.aiff;*.flac");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) setIrFile (fc.getResult(), true); });
+    };
+    clearIr2Button.onClick = [this] { setIrFile ({}, true); };
+    addChildComponent (loadIr2Button);
+    addChildComponent (clearIr2Button);
 
     for (auto* l : { &targetHint, &statusLabel, &inLabel, &outLabel, &blockTitle, &blockHelp, &modelLabel, &modelInfo, &irLabel })
         addAndMakeVisible (l);
@@ -345,7 +369,7 @@ RigEditor::RigEditor (ProjectDocument& d, EngineHost& h, SessionController& s, j
             int pos = 0;
             for (int i = 0; i < numBlocks; ++i) if (after[(size_t) i] == chain.selected) pos = i;
             const int neighbour = after[(size_t) juce::jlimit (0, numBlocks - 1, pos - dir)];
-            if (! isPluginBlock (neighbour) || pluginNode (target, pluginSlotOf (neighbour)).isValid()) break;
+            if (neighbour != eq && (! isPluginBlock (neighbour) || pluginNode (target, pluginSlotOf (neighbour)).isValid())) break;
         }
     };
     moveLeftButton.onClick = [stepBlock] { stepBlock (-1); };
@@ -402,6 +426,8 @@ RigEditor::RigEditor (ProjectDocument& d, EngineHost& h, SessionController& s, j
     };
     clearIrButton.onClick = [this] { setIrFile ({}); };
 
+    models.onContext = [this] (const juce::File& f) { fileMenu (f, false); };
+    irs.onContext = [this] (const juce::File& f) { fileMenu (f, true); };
     models.onPick = [this] (const juce::File& f) { setModelFile (f); };
     irs.onPick = [this] (const juce::File& f) { setIrFile (f); };
     for (auto* b : { &models, &irs })
@@ -499,7 +525,9 @@ void RigEditor::selectBlock (int b)
         for (int p = 0; p < numParams; ++p)
         {
             const auto& pi = info (p);
-            if (pi.block != b || pi.isSwitch || p == namNormalize) continue;
+            if ((pi.block != b && ! (b == amp && pi.block == eq)) || pi.isSwitch || p == namNormalize) continue;
+            if (p == delayStereo) continue;                                   // a button
+            if (p == cabBlend && target[ids::irFile2].toString().isEmpty()) continue;
             if (p == ampGain && ! target[ids::namFile].toString().isEmpty()) continue;   // built-in amp only
             if (p == calLevel && (target[ids::namFile].toString().isEmpty() || get (target, namCalibrate) < 0.5f)) continue;
             if (p == namCalibrate) continue;
@@ -525,7 +553,7 @@ void RigEditor::refreshAll()
     monitorButton.setVisible (! live && has);
     monitorButton.setToggleState (track.isValid() && (bool) track[tlids::monitor], juce::dontSendNotification);
     addRigButton.setVisible (! live && ! has);
-    for (auto* c : std::initializer_list<juce::Component*> { &presetCombo, &savePresetButton, &deletePresetButton, &resetButton, &chain,
+    for (auto* c : std::initializer_list<juce::Component*> { &presetCombo, &savePresetButton, &deletePresetButton, &resetButton, &copyButton, &pasteButton, &chain,
                                                              &inKnob, &outKnob, &inMeter, &outMeter, &inLabel, &outLabel, &blockTitle, &blockHelp })
         c->setVisible (has);
 
@@ -588,8 +616,10 @@ void RigEditor::refreshAll()
     for (auto* c : std::initializer_list<juce::Component*> { &loadModelButton, &clearModelButton, &normaliseButton, &calibrateButton, &modelLabel,
                                                              &modelInfo, &models })
         c->setVisible (isAmp);
-    for (auto* c : std::initializer_list<juce::Component*> { &loadIrButton, &clearIrButton, &irLabel, &irs })
+    for (auto* c : std::initializer_list<juce::Component*> { &loadIrButton, &clearIrButton, &loadIr2Button, &clearIr2Button, &irLabel, &irs })
         c->setVisible (isCab);
+    delayStereoButton.setVisible (has && b == delay);
+    delayStereoButton.setToggleState (has && get (target, delayStereo) >= 0.5f, juce::dontSendNotification);
     for (auto* b : { &models, &irs })
         if (b->extraButton.isVisible() != (onBrowseTone3000 != nullptr)) { b->extraButton.setVisible (onBrowseTone3000 != nullptr); b->resized(); }
     normaliseButton.setToggleState (has && get (target, namNormalize) >= 0.5f, juce::dontSendNotification);
@@ -648,6 +678,13 @@ void RigEditor::refreshAll()
         irLabel.setText (text, juce::dontSendNotification);
         irLabel.setColour (juce::Label::textColourId, status.irError.isNotEmpty() ? palette::bad : palette::text);
         clearIrButton.setEnabled (status.irPath.isNotEmpty());
+        clearIr2Button.setEnabled (status.irPath2.isNotEmpty());
+        loadIr2Button.setEnabled (status.irPath.isNotEmpty());
+        if (status.irPath2.isNotEmpty())
+        {
+            irLabel.setText (irLabel.getText() + "\n2nd cabinet: " + (status.irLoading2 ? juce::String ("loading...") : status.irError2.isNotEmpty() ? "could not load (" + status.irError2 + ")"
+                                                                                                              : status.irName2 + "  - blend them with the Cab blend knob"), juce::dontSendNotification);
+        }
     }
     for (auto* k : knobs) k->refresh();
     inKnob.refresh();
@@ -680,16 +717,106 @@ void RigEditor::setModelFile (const juce::File& f)
     selectBlock (amp);
 }
 
-void RigEditor::setIrFile (const juce::File& f)
+void RigEditor::setIrFile (const juce::File& f, bool second)
 {
     if (! target.isValid()) return;
-    setOnTarget (ids::irFile, f == juce::File() ? juce::String() : f.getFullPathName(), f == juce::File() ? "Use built-in cabinet" : "Load cabinet IR");
+    const auto& id = second ? ids::irFile2 : ids::irFile;
+    setOnTarget (id, f == juce::File() ? juce::String() : f.getFullPathName(),
+                 f == juce::File() ? (second ? "Remove second cabinet" : "Use built-in cabinet") : (second ? "Load second cabinet" : "Load cabinet IR"));
     if (f != juce::File())
     {
         settings.setValue ("irFolder", f.getParentDirectory().getFullPathName());
         set (target, cabOn, 1.0f, um());
+        if (second && target[ids::irFile].toString().isEmpty()) setOnTarget (ids::irFile, f.getFullPathName(), {});   // the blend needs a first cabinet
     }
     refreshAll();
+}
+
+void RigEditor::copyRig()
+{
+    if (! target.isValid()) return;
+    juce::SystemClipboard::copyTextToClipboard (juce::JSON::toString (toPreset (target, "Copied rig"), false));
+}
+
+void RigEditor::pasteRig()
+{
+    if (! target.isValid()) return;
+    const auto v = juce::JSON::parse (juce::SystemClipboard::getTextFromClipboard());
+    if (! v.isObject() || v["format"].toString() != "RAVENYR rig")
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Paste rig", "Copy an amp rig first (the Copy button), then paste it here.");
+        return;
+    }
+    if (auto* u = um()) u->beginNewTransaction ("Paste amp rig");
+    const auto missing = applyPreset (target, v, um());
+    set (target, ampOn, 1.0f, um());
+    if (! missing.isEmpty())
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Paste rig",
+                                                "These files were not found on this computer, so they were left out:\n" + missing.joinIntoString ("\n"));
+}
+
+/** Right click on a model / cabinet file in the lists. */
+void RigEditor::fileMenu (const juce::File& f, bool cab)
+{
+    juce::PopupMenu m;
+    m.addItem (1, cab ? "Use as the cabinet" : "Use as the amp model");
+    if (cab) m.addItem (2, "Blend in as the 2nd cabinet");
+    m.addSeparator();
+    m.addItem (3, "Show in folder");
+    m.addItem (4, "Delete this file...");
+    juce::Component::SafePointer<RigEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options(), [safe, f, cab] (int r) {
+        if (safe == nullptr || r == 0) return;
+        if (r == 1) { if (cab) safe->setIrFile (f); else safe->setModelFile (f); }
+        else if (r == 2) safe->setIrFile (f, true);
+        else if (r == 3) f.revealToUser();
+        else if (r == 4)
+        {
+            juce::AlertWindow::showAsync (juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::QuestionIcon)
+                                              .withTitle ("Delete file")
+                                              .withMessage ("Move " + f.getFileName() + " to the trash?")
+                                              .withButton ("Delete").withButton ("Cancel"),
+                                          [safe, f, cab] (int choice) {
+                                              if (choice != 1 || safe == nullptr) return;
+                                              const auto path = f.getFullPathName();
+                                              if (! f.moveToTrash()) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Delete file", "Could not delete " + f.getFileName() + "."); return; }
+                                              if (safe->target.isValid())
+                                              {
+                                                  if (! cab && safe->target[ids::namFile].toString() == path) safe->setModelFile ({});
+                                                  if (cab && safe->target[ids::irFile].toString() == path) safe->setIrFile ({});
+                                                  if (cab && safe->target[ids::irFile2].toString() == path) safe->setIrFile ({}, true);
+                                              }
+                                              safe->models.rescan();
+                                              safe->irs.rescan();
+                                          });
+        }
+    });
+}
+
+/** Right click on a chain tile: take the model / cabinet out, switch the block on or off. */
+void RigEditor::blockMenu (int b)
+{
+    if (! target.isValid()) return;
+    selectBlock (b);
+    juce::PopupMenu m;
+    const bool on = get (target, switchFor (b)) >= 0.5f;
+    m.addItem (1, on ? "Switch off" : "Switch on");
+    if (b == amp) m.addItem (2, "Remove the model (use the built-in amp)", target[ids::namFile].toString().isNotEmpty());
+    if (b == cab)
+    {
+        m.addItem (3, "Remove the cabinet (use the built-in speaker)", target[ids::irFile].toString().isNotEmpty());
+        m.addItem (4, "Remove the 2nd cabinet", target[ids::irFile2].toString().isNotEmpty());
+    }
+    if (isPluginBlock (b)) m.addItem (5, "Remove the plugin");
+    juce::Component::SafePointer<RigEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options(), [safe, b] (int r) {
+        if (safe == nullptr || r == 0) return;
+        if (r == 1 && safe->chain.onToggle) safe->chain.onToggle (b);
+        else if (r == 2) safe->setModelFile ({});
+        else if (r == 3) safe->setIrFile ({});
+        else if (r == 4) safe->setIrFile ({}, true);
+        else if (r == 5) safe->pluginRemoveButton.onClick();
+    });
 }
 
 // ---------------------------------------------------------------- presets
@@ -861,6 +988,8 @@ void RigEditor::resized()
     if (resetButton.isVisible())
     {
         takeRight (resetButton, 64);
+        takeRight (pasteButton, 54);
+        takeRight (copyButton, 54);
         takeRight (deletePresetButton, 64);
         takeRight (savePresetButton, 110);
         takeRight (presetCombo, 200);
@@ -930,8 +1059,12 @@ void RigEditor::layoutDetail (juce::Rectangle<int> r)
         loadIrButton.setBounds (buttons.removeFromLeft (120));
         buttons.removeFromLeft (6);
         clearIrButton.setBounds (buttons.removeFromLeft (170));
+        buttons.removeFromLeft (6);
+        loadIr2Button.setBounds (buttons.removeFromLeft (130));
+        buttons.removeFromLeft (6);
+        clearIr2Button.setBounds (buttons.removeFromLeft (130));
         r.removeFromTop (8);
-        irLabel.setBounds (r.removeFromTop (60));
+        irLabel.setBounds (r.removeFromTop (76));
         r.removeFromTop (6);
     }
     if (isPluginBlock (b))
@@ -947,6 +1080,11 @@ void RigEditor::layoutDetail (juce::Rectangle<int> r)
     }
     if (pluginManagerButton.isVisible())
         pluginManagerButton.setBounds (juce::Rectangle<int> (r.getRight() - 150, r.getBottom() - 30, 150, 30));
+    if (b == delay)
+    {
+        delayStereoButton.setBounds (r.removeFromTop (30).removeFromLeft (150));
+        r.removeFromTop (8);
+    }
     auto knobRow = r.removeFromTop (110);
     for (auto* k : knobs)
     {
@@ -984,7 +1122,7 @@ void RigEditor::valueTreePropertyChanged (juce::ValueTree& node, const juce::Ide
     {
         if (node == target)
         {
-            if (prop == ids::namFile) { selectBlock (chain.selected); return; }   // the built-in amp's gain knob comes / goes
+            if (prop == ids::namFile || prop == ids::irFile2) { selectBlock (chain.selected); return; }   // the built-in amp's gain knob comes / goes
             if (prop == ids::rigName) rebuildPresets();
             if (prop == juce::Identifier (info (calLevel).id)) settings.setValue ("namInterfaceDbu", (double) get (target, calLevel));
             if (prop == juce::Identifier (info (namCalibrate).id)) { selectBlock (chain.selected); return; }

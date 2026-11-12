@@ -83,6 +83,13 @@ Tone3000Panel::Tone3000Panel (t3k::Client& c) : client (c)
     feedCombo.setSelectedId (1, juce::dontSendNotification);
     feedCombo.onChange = [this] { page = 1; searchBox.setVisible (feedCombo.getSelectedId() == 6); resized(); reload(); };
     addAndMakeVisible (feedCombo);
+    kindCombo.addItem ("Amps and cabs", 1);
+    kindCombo.addItem ("Amp models only", 2);
+    kindCombo.addItem ("Cabs only", 3);
+    kindCombo.setSelectedId (2, juce::dontSendNotification);
+    kindCombo.setTooltip ("Filter the list: amp captures (.nam) or cabinet impulse responses");
+    kindCombo.onChange = [this] { if (feedCombo.getSelectedId() - 1 == (int) Client::Feed::trending) reload(); else applyFilter(); };
+    addAndMakeVisible (kindCombo);
     searchBox.setTextToShowWhenEmpty ("Search and press Enter", palette::textDim);
     searchBox.onReturnKey = [this] { page = 1; reload(); };
     addChildComponent (searchBox);
@@ -114,7 +121,7 @@ void Tone3000Panel::setMode (bool cab, const juce::String& targetName, std::func
     cabMode = cab;
     onLoad = std::move (load);
     targetLabel.setText ((cab ? "Cabinet IRs for " : "Amp captures for ") + targetName, juce::dontSendNotification);
-    if (changed) { page = 1; showTone ({}); }
+    if (changed) { page = 1; showTone ({}); kindCombo.setSelectedId (cab ? 3 : 2, juce::dontSendNotification); }
     reload();
 }
 
@@ -143,25 +150,36 @@ void Tone3000Panel::reload()
     const int req = ++requestId;
     setStatus ("Loading...");
     // trending has only 10 tones of every kind: ask for cabinets when browsing IRs
-    const juce::String gear = (feed == Client::Feed::trending && cabMode) ? "cab" : "";
+    const juce::String gear = (feed == Client::Feed::trending && kindCombo.getSelectedId() == 3) ? "cab" : "";
     client.listTones (feed, searchBox.getText().trim(), page, gear, [safe = juce::Component::SafePointer<Tone3000Panel> (this), req] (t3k::TonePage p, juce::String err) {
         if (safe == nullptr || req != safe->requestId) return;
         if (err.isNotEmpty()) { safe->setStatus (err, true); return; }
         safe->tones = p.tones;
         safe->page = p.page;
         safe->totalPages = p.totalPages;
-        safe->shownTones.clear();
-        for (auto& t : safe->tones)
-            if (loadable (t)) safe->shownTones.add (t);   // NAM and IR tones (each loads into its own block)
-        safe->toneList.updateContent();
-        safe->toneList.repaint();
-        const int hidden = safe->tones.size() - safe->shownTones.size();
-        safe->setStatus (juce::String (safe->shownTones.size()) + " tones"
-                         + (p.totalPages > 1 ? "  -  page " + juce::String (p.page) + " of " + juce::String (p.totalPages) : juce::String())
-                         + (hidden > 0 ? "  (" + juce::String (hidden) + " in formats RAVENYR can't load hidden)" : juce::String()));
         safe->prevButton.setEnabled (p.page > 1);
         safe->nextButton.setEnabled (p.page < p.totalPages);
+        safe->applyFilter();
     });
+}
+
+void Tone3000Panel::applyFilter()
+{
+    const int kind = kindCombo.getSelectedId();   // 1 all, 2 amps, 3 cabs
+    shownTones.clear();
+    int unloadable = 0;
+    for (auto& t : tones)
+    {
+        if (! loadable (t)) { ++unloadable; continue; }   // NAM and IR tones (each loads into its own block)
+        const bool isCab = t.format == "ir" || t.gear == "cab";
+        if ((kind == 2 && isCab) || (kind == 3 && ! isCab)) continue;
+        shownTones.add (t);
+    }
+    toneList.updateContent();
+    toneList.repaint();
+    setStatus (juce::String (shownTones.size()) + " tones"
+               + (totalPages > 1 ? "  -  page " + juce::String (page) + " of " + juce::String (totalPages) : juce::String())
+               + (unloadable > 0 ? "  (" + juce::String (unloadable) + " in formats RAVENYR can't load hidden)" : juce::String()));
 }
 
 void Tone3000Panel::selectTone (int row)
@@ -275,6 +293,8 @@ void Tone3000Panel::resized()
     browseButton.setBounds (row.removeFromLeft (160));
     row.removeFromLeft (12);
     feedCombo.setBounds (row.removeFromLeft (150));
+    row.removeFromLeft (6);
+    kindCombo.setBounds (row.removeFromLeft (140));
     row.removeFromLeft (6);
     if (searchBox.isVisible()) { searchBox.setBounds (row.removeFromLeft (220)); row.removeFromLeft (6); }
     refreshButton.setBounds (row.removeFromLeft (76));

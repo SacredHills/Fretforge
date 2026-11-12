@@ -143,15 +143,17 @@ juce::Rectangle<float> PianoRoll::noteRect (const midiclip::Note& n) const
 
 int PianoRoll::noteAt (juce::Point<float> p, bool& edge) const
 {
-    for (int i = (int) notes.size(); --i >= 0;)
-    {
-        const auto r = noteRect (notes[(size_t) i]);
-        if (r.expanded (0.0f, 1.0f).contains (p))
+    // the note really under the cursor first; the 1 px slack only when none is
+    for (const float slack : { 0.0f, 1.0f })
+        for (int i = (int) notes.size(); --i >= 0;)
         {
-            edge = p.x > r.getRight() - juce::jmin (7.0f, r.getWidth() * 0.35f);
-            return i;
+            const auto r = noteRect (notes[(size_t) i]);
+            if (r.expanded (slack, slack).contains (p))
+            {
+                edge = p.x > r.getRight() - juce::jmin (7.0f, r.getWidth() * 0.35f);
+                return i;
+            }
         }
-    }
     edge = false;
     return -1;
 }
@@ -598,11 +600,19 @@ void PianoRoll::mouseDown (const juce::MouseEvent& e)
     }
     if (velArea().contains (e.getPosition()))
     {
-        // the nearest velocity bar
+        // The bar under the cursor. Bars are 3 px wide with a dot on top; notes at the same time overlap, so ties go to a
+        // selected note (dragging then changes the whole selection), then to the bar whose dot is nearest the cursor.
         int best = -1;
-        float bestD = 8.0f;
+        float bestScore = 1.0e9f;
+        const float volH = (float) (velArea().getHeight() - 6);
         for (size_t i = 0; i < notes.size(); ++i)
-            if (const float d = std::abs (xFor (absStart (notes[i])) - e.position.x); d < bestD) { bestD = d; best = (int) i; }
+        {
+            const float dx = std::abs (xFor (absStart (notes[i])) + 1.5f - e.position.x);
+            if (dx > 6.0f) continue;
+            const float top = (float) velArea().getBottom() - volH * (float) notes[i].velocity / 127.0f;
+            const float score = dx * 4.0f + std::abs (top - e.position.y) * 0.1f + (selected[i] ? 0.0f : 6.0f);
+            if (score < bestScore) { bestScore = score; best = (int) i; }
+        }
         if (best < 0) return;
         anchor = best;
         if (! selected[(size_t) best]) { std::fill (selected.begin(), selected.end(), 0); selected[(size_t) best] = 1; }

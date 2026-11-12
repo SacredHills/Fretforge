@@ -30,6 +30,7 @@ AmpRig::AmpRig (juce::dsp::ConvolutionMessageQueue* queue)
     retiredModels.prepare (32);
     using C = juce::dsp::Convolution;
     convolution = queue != nullptr ? std::make_unique<C> (C::Latency { 0 }, *queue) : std::make_unique<C>();
+    convolution2 = queue != nullptr ? std::make_unique<C> (C::Latency { 0 }, *queue) : std::make_unique<C>();
 }
 
 AmpRig::~AmpRig()
@@ -65,10 +66,17 @@ void AmpRig::setImpulseResponse (juce::AudioBuffer<float>&& ir, double irRate)
     irActive = true;
 }
 
+void AmpRig::setImpulseResponse2 (juce::AudioBuffer<float>&& ir, double irRate)
+{
+    using C = juce::dsp::Convolution;
+    convolution2->loadImpulseResponse (std::move (ir), irRate, C::Stereo::no, C::Trim::yes, C::Normalise::yes);
+    irActive2 = true;
+}
+
 void AmpRig::finishLoadingOffline()
 {
     if (maxBlock > 0)
-        convolution->prepare ({ sr, (juce::uint32) maxBlock, 1 });   // installs the most recently loaded IR synchronously
+        { convolution->prepare ({ sr, (juce::uint32) maxBlock, 1 }); convolution2->prepare ({ sr, (juce::uint32) maxBlock, 1 }); }   // installs the most recently loaded IRs synchronously
 }
 
 void AmpRig::collectGarbage()
@@ -122,6 +130,7 @@ void AmpRig::prepare (double rate, int block)
     driveOs.initProcessing ((size_t) maxBlock);
     ampOs.initProcessing ((size_t) maxBlock);
     convolution->prepare (mono1);
+    convolution2->prepare (mono1);
     chorusFx.prepare (stereo);
     chorusFx.setCentreDelay (7.0f);
     chorusFx.setFeedback (0.0f);
@@ -173,10 +182,10 @@ void AmpRig::resetBlock (int b) noexcept
         case gate: gateEnv = 0.0f; gateGain = 0.0f; gateIsOpen = false; break;
         case comp: compressor.reset(); compG.setCurrentAndTargetValue (dbToGain (getParam (compLevel))); break;
         case drive: driveOs.reset(); driveHp.reset(); driveToneLp.reset(); driveG.setCurrentAndTargetValue (dbToGain (getParam (driveLevel))); break;
-        case amp: ampOs.reset(); ampHp.reset(); ampMid.reset(); ampLp.reset(); if (model != nullptr) model->reset();
+        case amp: eqBass.reset(); eqMid.reset(); eqTreble.reset(); eqPresence.reset(); ampOs.reset(); ampHp.reset(); ampMid.reset(); ampLp.reset(); if (model != nullptr) model->reset();
                   ampG.setCurrentAndTargetValue (dbToGain (getParam (ampLevel))); break;
         case eq: eqBass.reset(); eqMid.reset(); eqTreble.reset(); eqPresence.reset(); break;
-        case cab: convolution->reset(); for (auto* f : { &cabHp1, &cabHp2, &cabLp1, &cabLp2, &spkHp, &spkPeak, &spkLp1, &spkLp2 }) f->reset(); break;
+        case cab: convolution->reset(); convolution2->reset(); for (auto* f : { &cabHp1, &cabHp2, &cabLp1, &cabLp2, &spkHp, &spkPeak, &spkLp1, &spkLp2 }) f->reset(); break;
         case chorus: chorusFx.reset(); break;
         case delay: std::fill (dlL.begin(), dlL.end(), 0.0f); std::fill (dlR.begin(), dlR.end(), 0.0f); dlLpL = dlLpR = 0;
                     dlTime.setCurrentAndTargetValue (getParam (delayTime)); break;
@@ -237,8 +246,8 @@ void AmpRig::processChunk (float* L, float* R, int n) noexcept
                 break;
             }
             case drive: runDrive (m, n); break;
-            case amp: runAmp (m, n); break;
-            case eq: runEq (m, n); break;
+            case amp: runAmp (m, n); runEq (m, n); break;   // the amp's own tone controls
+            case eq: break;                                 // (the old separate EQ block: folded into the amp)
             case cab: runCab (m, n); break;
             case chorus:
             {
@@ -257,8 +266,8 @@ void AmpRig::processChunk (float* L, float* R, int n) noexcept
                 juce::dsp::Reverb::Parameters p;
                 p.roomSize = 0.3f + 0.69f * getParam (reverbSize);
                 p.damping = getParam (reverbDamp);
-                p.wetLevel = getParam (reverbMix) * 0.5f;
-                p.dryLevel = 1.0f - getParam (reverbMix) * 0.4f;
+                p.wetLevel = getParam (reverbMix) * 0.2f;   // juce::Reverb scales the wet level by 3 internally
+                p.dryLevel = 0.5f * (1.0f - getParam (reverbMix) * 0.4f);   // ... and the dry level by 2: 0.5 is unity, so switching the reverb on adds no volume
                 p.width = 1.0f;
                 reverbFx.setParameters (p);
                 float* ch[2] = { m, r };
@@ -420,7 +429,19 @@ void AmpRig::runCab (float* x, int n) noexcept
     {
         float* ch[1] = { x };
         juce::dsp::AudioBlock<float> blk (ch, 1, (size_t) n);
+        const bool blend = irActive2.load (std::memory_order_relaxed);
+        float* t2 = tmp.data();
+        if (blend) std::copy (x, x + n, t2);
         convolution->process (juce::dsp::ProcessContextReplacing<float> (blk));
+        if (blend)
+        {
+            float* ch2[1] = { t2 };
+            juce::dsp::AudioBlock<float> blk2 (ch2, 1, (size_t) n);
+            convolution2->process (juce::dsp::ProcessContextReplacing<float> (blk2));
+            const float b = juce::jlimit (0.0f, 1.0f, getParam (cabBlend));   // equal power
+            const float ga = std::cos (b * juce::MathConstants<float>::halfPi), gb = std::sin (b * juce::MathConstants<float>::halfPi);
+            for (int i = 0; i < n; ++i) x[i] = x[i] * ga + t2[i] * gb;
+        }
     }
     else
     {
@@ -455,7 +476,7 @@ void AmpRig::runDelay (float* L, float* R, int n) noexcept
     const float mix = getParam (delayMix);
     const float cutoff = 1200.0f * std::pow (12.0f, getParam (delayTone));
     const float lpA = std::exp (-2.0f * juce::MathConstants<float>::pi * cutoff / (float) sr);
-    const float spread = (float) (0.011 * sr);   // the right repeats come 11 ms later: width without ping-pong
+    const float spread = getParam (delayStereo) >= 0.5f ? (float) (0.011 * sr) : 0.0f;   // the right repeats come 11 ms later: width without ping-pong
 
     auto read = [&] (const std::vector<float>& buf, float delaySamples) noexcept {
         float pos = (float) dlWrite - delaySamples;
