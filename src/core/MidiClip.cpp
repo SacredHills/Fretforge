@@ -148,6 +148,20 @@ void clipContent (const juce::ValueTree& clip, std::vector<Note>& outNotes, std:
         if (p.time >= off - 1.0e-9 && p.time < off + len) { p.time -= off; outPedal.push_back (p); }
 }
 
+double ImportedFile::quarterAtFileSeconds (double sec) const
+{
+    // the file's tempo is constant between its tempo events (120 bpm before the first)
+    double q = 0.0, t = 0.0, bpm = tempoChanges.empty() || tempoChanges.front().first > 0.0 ? 120.0 : tempoChanges.front().second;
+    for (const auto& tc : tempoChanges)
+    {
+        if (tc.first <= q + 1.0e-12) { bpm = tc.second; continue; }
+        const double tNext = t + (tc.first - q) * 60.0 / bpm;
+        if (tNext >= sec) break;
+        t = tNext; q = tc.first; bpm = tc.second;
+    }
+    return q + (sec - t) * bpm / 60.0;
+}
+
 ImportedFile readMidiFile (const juce::File& f)
 {
     ImportedFile r;
@@ -166,6 +180,13 @@ ImportedFile readMidiFile (const juce::File& f)
     mf.findAllTimeSigEvents (sigs);
     for (auto* e : sigs)
         if (e->message.isTimeSignatureMetaEvent()) { e->message.getTimeSignatureInfo (r.tsNum, r.tsDen); break; }
+    {
+        const int tpq = mf.getTimeFormat();
+        for (auto* e : tempos)
+            if (e->message.isTempoMetaEvent() && tpq > 0)
+                r.tempoChanges.push_back ({ e->message.getTimeStamp() / (double) tpq, 60.0 / e->message.getTempoSecondsPerQuarterNote() });
+        std::stable_sort (r.tempoChanges.begin(), r.tempoChanges.end(), [] (const auto& a, const auto& b) { return a.first < b.first; });
+    }
     mf.convertTimestampTicksToSeconds();
 
     for (int ti = 0; ti < mf.getNumTracks(); ++ti)

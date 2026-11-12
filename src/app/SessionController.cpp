@@ -888,7 +888,9 @@ juce::Result SessionController::importMidi (const juce::File& file, double atSec
     bool anyClips = false;
     for (auto t : tracks) for (auto c : t) anyClips = anyClips || c.hasType (ids::CLIP);
     doc.undo().beginNewTransaction ("Import MIDI " + file.getFileName());
-    if (! anyClips && mf.firstTempo > 20.0)   // an empty project follows the song's tempo, so the grid lines up
+    const auto projectMap = doc.tempoMap();
+    const bool followTrack = ! projectMap.isConstant();   // a tempo track already exists: the notes go onto it
+    if (! anyClips && mf.firstTempo > 20.0 && ! followTrack)   // an empty project follows the song's tempo, so the grid lines up
     {
         auto tr = doc.tree().getChildWithName (project::ids::TRANSPORT);
         tr.setProperty (project::ids::bpm, std::round (mf.firstTempo * 100.0) / 100.0, &doc.undo());
@@ -908,7 +910,22 @@ juce::Result SessionController::importMidi (const juce::File& file, double atSec
         in.setProperty (rig::ids::desc, fx::builtin::descriptionXml (drums ? "fretforge:drumkit" : "fretforge:synth"), nullptr);
         in.setProperty (rig::ids::name, drums ? "Drum Kit" : "Basic Synth", nullptr);
         t.appendChild (in, nullptr);
-        auto clip = midiclip::createMidiClip (it.name, atSec, it.notes, it.pedal);
+        auto notes = it.notes;
+        auto pedal = it.pedal;
+        if (followTrack)
+        {
+            // keep the music's beats: file seconds -> beats of the file -> seconds on the project's tempo track
+            const double qa = projectMap.quarterAtSeconds (atSec);
+            const auto warp = [&] (double fileSec) { return projectMap.secondsAtQuarter (qa + mf.quarterAtFileSeconds (fileSec)) - atSec; };
+            for (auto& n : notes)
+            {
+                const double a = warp (n.start);
+                n.length = juce::jmax (0.005, warp (n.start + n.length) - a);
+                n.start = a;
+            }
+            for (auto& p : pedal) p.time = warp (p.time);
+        }
+        auto clip = midiclip::createMidiClip (it.name, atSec, notes, pedal);
         clip.setProperty (midiclip::channel, it.channel, nullptr);
         t.appendChild (clip, nullptr);
         tracks.appendChild (t, &doc.undo());

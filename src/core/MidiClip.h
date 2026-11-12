@@ -41,6 +41,10 @@ struct ImportedFile
     std::vector<ImportedTrack> tracks;
     double firstTempo = 0.0;   // quarter-note BPM of the first tempo event (0 if none)
     int tsNum = 0, tsDen = 0;
+    /** The file's own tempo changes as (quarter-note position, bpm), sorted: lets seconds in the file be turned back into
+        musical positions, so the notes can be laid onto another tempo map. */
+    std::vector<std::pair<double, double>> tempoChanges;
+    double quarterAtFileSeconds (double sec) const;
     juce::String error;
 };
 /** Reads a Standard MIDI File (type 0 or 1). Type 0 files are split by channel. */

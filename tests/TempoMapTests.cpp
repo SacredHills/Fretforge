@@ -1,5 +1,6 @@
 #include <juce_core/juce_core.h>
 #include "core/TempoMap.h"
+#include "core/MidiClip.h"
 
 namespace
 {
@@ -42,6 +43,15 @@ public:
             m.set (100.0, { { 0.0, 200.0 }, { 4.0, 80.0 } });    // a point at the start is ignored
             expectEquals (m.numPoints(), 2);
             expectWithinAbsoluteError (m.baseBpm(), 100.0, 1e-9);
+        }
+        beginTest ("a MIDI file's seconds map back to its beats");
+        {
+            ff::midiclip::ImportedFile f;
+            expectWithinAbsoluteError (f.quarterAtFileSeconds (2.0), 4.0, 1e-9);        // no tempo events: 120 bpm
+            f.tempoChanges = { { 0.0, 60.0 }, { 4.0, 120.0 } };                          // 60 bpm for 4 beats (4 s), then 120
+            expectWithinAbsoluteError (f.quarterAtFileSeconds (2.0), 2.0, 1e-9);
+            expectWithinAbsoluteError (f.quarterAtFileSeconds (4.0), 4.0, 1e-9);
+            expectWithinAbsoluteError (f.quarterAtFileSeconds (6.0), 8.0, 1e-9);
         }
     }
 };
