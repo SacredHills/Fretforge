@@ -1047,6 +1047,7 @@ struct PluginSlotTests : juce::UnitTest
                         expect (before.isNotEmpty());
                         expect (! fx::pluginStateNeedsCapture (*p0), "nothing changed since the capture");
                         p0->getParameters()[0]->setValueNotifyingHost (0.75f);   // gain 1.5
+                        run (*live, 0.4f);   // (the running engine processes a block; a plugin takes the new value into its state there)
                         expect (fx::pluginStateNeedsCapture (*p0));
                         fx::markPluginStateChanged (*p0);
                         bank.captureAllPluginStates (true);
