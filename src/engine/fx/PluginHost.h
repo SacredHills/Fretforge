@@ -79,7 +79,8 @@ juce::String capturePluginState (juce::AudioPluginInstance&);
 void runPluginStereo (juce::AudioPluginInstance&, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& midi,
                       float* left, float* right, int n, const float* scLeft = nullptr, const float* scRight = nullptr) noexcept;
 /** Asks for a stereo (or else mono) main bus, switches off side-chain buses if it can, and prepares the plugin. */
-void preparePlugin (juce::AudioPluginInstance&, double sampleRate, int blockSize);
+/** allowSidechain: switch the second input bus on (insert plugins only; instruments and guitar rigs keep it off). */
+void preparePlugin (juce::AudioPluginInstance&, double sampleRate, int blockSize, bool allowSidechain = false);
 
 // ---- crash protection ----
 /** Remembers a plugin instance's name and file, so a crash report can name the plugin it happened in, and starts

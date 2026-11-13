@@ -2383,7 +2383,22 @@ void ArrangeView::timerCallback()
         }
     }
     repaint (0, toolbarHeight, headerWidth, Ruler::baseHeight + tempoTrackHeight + 4);   // the bpm at the playhead (and a closed lane's label gone)
-    repaintAll();
+
+    // Repainting every clip and waveform 30 times a second is heavy (macOS with a Retina screen above all), so only
+    // repaint what moves: everything while recording (the take grows), the playhead's old and new position while
+    // playing, and nothing while the playhead stands still.
+    const int x = (int) geo.xFor (playhead());
+    if (host.engine.isRecordingActive() || host.engine.isCountingIn())
+        repaintAll();
+    else if (x != lastPlayheadX || host.engine.isPlaying())
+    {
+        const int h = canvas.getHeight();
+        if (lastPlayheadX != x && lastPlayheadX > -1000000) canvas.repaint (lastPlayheadX - 2, 0, 5, h);
+        canvas.repaint (x - 2, 0, 5, h);
+        ruler.repaint();
+        if (masterShown) { masterLane.repaint(); masterHeader.repaint(); }
+    }
+    lastPlayheadX = x;
 }
 
 void ArrangeView::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child)

@@ -9,7 +9,7 @@ void InsertChain::prepare (double rate, int block)
     scratch.setSize (8, maxBlock);
     midi.ensureSize (256);
     for (auto& s : slots)
-        if (s.owner != nullptr) preparePlugin (*s.owner, rate, maxBlock);
+        if (s.owner != nullptr) preparePlugin (*s.owner, rate, maxBlock, true);
     preparedRate = rate;
 }
 

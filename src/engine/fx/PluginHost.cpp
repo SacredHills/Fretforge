@@ -335,7 +335,7 @@ void runPluginStereo (juce::AudioPluginInstance& p, juce::AudioBuffer<float>& sc
     else if (outs == 1) { std::copy (chans[0], chans[0] + n, L); std::copy (chans[0], chans[0] + n, R); }
 }
 
-void preparePlugin (juce::AudioPluginInstance& p, double sampleRate, int blockSize)
+void preparePlugin (juce::AudioPluginInstance& p, double sampleRate, int blockSize, bool allowSidechain)
 {
     p.setPlayHead (&transportPlayHead());   // plugins read the host's transport (playing, tempo, position) from here
     // Already running at this rate and block size (the audio device restarted with the same format): leave it alone.
@@ -370,7 +370,7 @@ void preparePlugin (juce::AudioPluginInstance& p, double sampleRate, int blockSi
         const auto st = juce::AudioChannelSet::stereo(), mo = juce::AudioChannelSet::mono();
         // first choice: stereo main in/out, the side-chain (second input bus) on as a stereo pair, other extra outputs off
         auto sc = layout;
-        bool hasSc = sc.inputBuses.size() > 1;
+        bool hasSc = allowSidechain && sc.inputBuses.size() > 1;
         for (int i = 0; i < sc.inputBuses.size(); ++i) sc.inputBuses.getReference (i) = i == 0 ? st : (i == 1 ? st : juce::AudioChannelSet::disabled());
         for (int i = 0; i < sc.outputBuses.size(); ++i) sc.outputBuses.getReference (i) = i == 0 ? st : juce::AudioChannelSet::disabled();
         if (hasSc && p.setBusesLayout (sc)) {}

@@ -138,7 +138,7 @@ std::shared_ptr<InsertChain> makeOfflineInserts (const juce::ValueTree& track, d
         auto inst = host->createBlocking (c[rig::ids::desc].toString(), sr, block, err);
         if (inst == nullptr) { warnings.add ("Insert \"" + name + "\" could not be loaded" + (err.isNotEmpty() ? ": " + err : juce::String()) + "; it was skipped."); continue; }
         restorePluginState (*inst, c[rig::ids::state].toString());
-        preparePlugin (*inst, sr, block);
+        preparePlugin (*inst, sr, block, true);
         chain->setPlugin (slot, std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
         chain->bypass[(size_t) slot] = (bool) c[rig::ids::bypass];
         chain->sidechainId[(size_t) slot] = c[rig::ids::sidechain].toString();
@@ -686,7 +686,7 @@ void RigBank::loadInsert (InsertEntry& e, int phys)
         std::shared_ptr<juce::AudioPluginInstance> old;
         {
             const juce::ScopedLock lk (lock);
-            preparePlugin (*inst, en.chain->getPreparedRate() > 0 ? en.chain->getPreparedRate() : r, juce::jmax (b, 512));
+            preparePlugin (*inst, en.chain->getPreparedRate() > 0 ? en.chain->getPreparedRate() : r, juce::jmax (b, 512), true);
             s2.latency = inst->getLatencySamples();
             old = en.chain->setPlugin (phys, std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
         }

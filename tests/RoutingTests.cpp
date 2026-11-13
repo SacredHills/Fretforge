@@ -135,7 +135,7 @@ public:
             auto chain = std::make_shared<fx::InsertChain>();
             chain->prepare (48000.0, 256);
             auto plug = std::make_shared<DuckPlugin>();
-            fx::preparePlugin (*plug, 48000.0, 256);
+            fx::preparePlugin (*plug, 48000.0, 256, true);
             chain->setPlugin (0, plug);
             std::array<int, fx::InsertChain::maxSlots> order {};
             chain->setOrder (order, 1);

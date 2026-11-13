@@ -419,6 +419,7 @@ private:
     std::vector<ClipboardItem> clipboard;
     bool rebuildPending = false;
     int dropIndex = -1;
+    int lastPlayheadX = -2000000;
 
     void rebuildHeaders();
     void layoutHeaders();
