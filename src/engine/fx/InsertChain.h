@@ -33,7 +33,10 @@ public:
     std::array<std::atomic<bool>, maxSlots> bypass {};
 
     /** scLeft / scRight (optional): per physical slot, the audio for that plugin's side-chain input (nullptr: none). */
-    void process (float* left, float* right, int numSamples, const float* const* scLeft = nullptr, const float* const* scRight = nullptr) noexcept;
+    /** inputOffset: song position of the chain's input relative to the engine position (see PlayHeadOffset); each
+        plugin is told the position of the audio it receives (minus the latency of the plugins before it). */
+    void process (float* left, float* right, int numSamples, const float* const* scLeft = nullptr, const float* const* scRight = nullptr,
+                  juce::int64 inputOffset = 0) noexcept;
     /** Which track feeds a plugin's side-chain, by physical slot ("" = none). Message thread only (read when a graph is built). */
     std::array<juce::String, maxSlots> sidechainId;
     /** Sum of the latencies of the plugins in the order that are not bypassed. Audio thread. */

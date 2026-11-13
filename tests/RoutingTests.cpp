@@ -11,6 +11,7 @@
 #include "engine/fx/BuiltinPlugins.h"
 #include "engine/fx/PluginHost.h"
 #include "engine/Exporter.h"
+#include "engine/ext/HostApi.h"
 #include <cmath>
 
 using namespace ff;
@@ -75,6 +76,42 @@ public:
         const bool scOn = getBusCount (true) > 1 && getBus (true, 1)->isEnabled() && b.getNumChannels() >= 4;
         const bool duck = scOn && b.getMagnitude (2, 0, b.getNumSamples()) > 0.05f;
         if (duck) { b.clear (0, 0, b.getNumSamples()); b.clear (1, 0, b.getNumSamples()); }
+    }
+};
+
+/** Records the transport position it is given while processing (and has a settable latency). */
+class ProbePlugin final : public juce::AudioPluginInstance
+{
+public:
+    explicit ProbePlugin (int latency) : juce::AudioPluginInstance (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo())
+                                                                       .withOutput ("Output", juce::AudioChannelSet::stereo()))
+    { setLatencySamples (latency); }
+    juce::int64 seenSamples = -1, seenTrack = -1;
+    double seenPpq = -1.0;
+    void fillInPluginDescription (juce::PluginDescription& d) const override { d.name = "Probe"; }
+    const juce::String getName() const override { return "Probe"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    double getTailLengthSeconds() const override { return 0.0; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    bool hasEditor() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override
+    {
+        if (auto pos = getPlayHead()->getPosition(); pos.hasValue())
+        {
+            seenSamples = *pos->getTimeInSamples();
+            seenPpq = *pos->getPpqPosition();
+        }
+        if (const auto* api = ff::hostapi::table()) seenTrack = api->currentTrack();
     }
 };
 
@@ -151,6 +188,33 @@ public:
             i.playing = false;
             fx::transportPlayHead().update (i);
             expect (! fx::transportPlayHead().getPosition()->getIsPlaying());
+        }
+
+        beginTest ("plugins see the song position of the audio they receive (delay compensation)");
+        {
+            // a track read 600 samples ahead: plugin A (latency 100) receives song time pos+600, B gets A's output (pos+500)
+            fx::InsertChain chain;
+            auto a = std::make_shared<ProbePlugin> (100), b = std::make_shared<ProbePlugin> (0);
+            chain.setPlugin (0, a);
+            chain.setPlugin (1, b);
+            chain.setOrder ({ 0, 1 }, 2);
+            chain.prepare (48000.0, 256);   // gives the plugins the transport
+            fx::TransportPlayHead::Info i;
+            i.playing = true; i.samples = 48000; i.sampleRate = 48000.0; i.bpm = 120.0; i.ppq = 2.0;
+            fx::transportPlayHead().update (i);
+            std::vector<float> L (256), R (256);
+            {
+                const fx::CurrentTrackScope scope (4242);
+                chain.process (L.data(), R.data(), 256, nullptr, nullptr, 600);
+            }
+            expectEquals ((int) a->seenSamples, 48600);
+            expectEquals ((int) b->seenSamples, 48500);
+            expectWithinAbsoluteError (a->seenPpq, 2.0 + 600.0 / 48000.0 * 2.0, 1.0e-9);
+            expectEquals ((int) a->seenTrack, 4242, "the host API reports the track being processed");
+            expectEquals ((int) fx::CurrentTrackScope::current(), 0);
+            expectEquals ((int) *fx::transportPlayHead().getPosition()->getTimeInSamples(), 48000, "outside processing: the engine position");
+            i.playing = false;
+            fx::transportPlayHead().update (i);
         }
 
         beginTest ("graph: outputs, sends and processing order");

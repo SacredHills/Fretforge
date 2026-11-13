@@ -297,3 +297,16 @@ Every unimplemented section in the app shows a clearly labelled "Not yet impleme
 - **Delay compensation:** `trackLatency()` = rig latency (NAM resampling + active rig plugins) + active insert latencies,
   read on the audio thread each block. Playback renders a track's clips that many samples ahead (wrapping at the loop end),
   so the processed sound lines up with the timeline; exports do the same. Live input cannot be read ahead.
+- **Transport position per plugin:** because clips are read ahead, a plugin's input is not at the engine position.
+  `fx::PlayHeadOffset` (thread-local, set by `GraphMixer::processTrack` / `InsertChain::process`) makes every plugin read
+  the song position of the audio it is given: engine position + `readAhead(track)` minus the latency of the rig /
+  instrument / inserts before it (+ the chunk offset inside `InsertChain`). The master chain gets its own latency.
+  Tempo-synced effects and drum trackers (exported MIDI) therefore line up with the timeline.
+- **Host extension API** (`src/engine/ext/ravenyr_host_api.h`, plain C, versioned): the app exports
+  `ravenyr_host_api_v1()` (Windows `dllexport`; Linux via `host_api.dynlist`, only that symbol; macOS default
+  visibility). Plugins look it up at run time (`GetProcAddress` / `dlsym`) and get: the current track (a thread-local
+  `CurrentTrackScope` set while the track's plugins run), locate / play / stop, the track's clip audio for the whole song
+  (`renderTrackClips` on the newest graph snapshot, message thread only) and `wakeTrack` (keeps an idle track's plugins
+  running while a plugin plays audio of its own). Thruma uses it for Analyze and click-to-locate. Plugins that do not
+  know it are unaffected.
+- **Instruments with an audio input** (e.g. Thruma) are offered in the insert menu of audio tracks as well.

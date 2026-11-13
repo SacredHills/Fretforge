@@ -246,6 +246,19 @@ juce::String capturePluginState (juce::AudioPluginInstance& p)
     return mb.getSize() > 0 ? mb.toBase64Encoding() : juce::String();
 }
 
+namespace
+{
+thread_local juce::int64 playHeadOffset = 0;
+thread_local juce::int64 currentTrackKey = 0;
+}
+
+PlayHeadOffset::PlayHeadOffset (juce::int64 samples) noexcept : previous (playHeadOffset) { playHeadOffset = samples; }
+PlayHeadOffset::~PlayHeadOffset() noexcept { playHeadOffset = previous; }
+
+CurrentTrackScope::CurrentTrackScope (juce::int64 key) noexcept : previous (currentTrackKey) { currentTrackKey = key; }
+CurrentTrackScope::~CurrentTrackScope() noexcept { currentTrackKey = previous; }
+juce::int64 CurrentTrackScope::current() noexcept { return currentTrackKey; }
+
 void TransportPlayHead::update (const Info& i) noexcept
 {
     seq.fetch_add (1, std::memory_order_acq_rel);   // odd: being written
@@ -263,6 +276,12 @@ juce::Optional<juce::AudioPlayHead::PositionInfo> TransportPlayHead::getPosition
         c = info;
         std::atomic_thread_fence (std::memory_order_acquire);
         if (seq.load (std::memory_order_relaxed) == s0) break;
+    }
+    if (const auto off = playHeadOffset; off != 0 && c.sampleRate > 0.0)
+    {
+        // a few ms to a few hundred ms: the tempo is constant enough over that span
+        c.ppq += (double) off / c.sampleRate * c.bpm / 60.0;
+        c.samples += off;
     }
     PositionInfo p;
     p.setBpm (c.bpm);

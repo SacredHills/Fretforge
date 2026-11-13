@@ -95,6 +95,13 @@ public:
     // ---- arrangement ----
     /** Message thread: hands a new snapshot to the audio thread. */
     void submitGraph (std::unique_ptr<PlaybackGraph> graph);
+    /** Message thread: the newest arrangement snapshot (submitted or playing), nullptr if none. Snapshots are only
+        freed on the message thread, so it stays valid until the caller returns to the message loop. */
+    const PlaybackGraph* latestGraph() const noexcept
+    {
+        if (auto* p = pendingGraph.load (std::memory_order_acquire)) return p;
+        return liveGraph.load (std::memory_order_acquire);
+    }
     /** Message thread: frees snapshots the audio thread has finished with. */
     void collectGarbage();
     /** Frees the playback snapshot (and the plugins its rigs hold) while no device is running (shutdown). */
@@ -166,6 +173,7 @@ private:
     PlaybackGraph* graph = nullptr;
 
     std::atomic<PlaybackGraph*> pendingGraph { nullptr };
+    std::atomic<PlaybackGraph*> liveGraph { nullptr };   // = graph, for latestGraph()
     std::atomic<TabSequence*> pendingTab { nullptr };
     TabSequence* tabSeq = nullptr;
     SpscFifo<TabSequence*> retiredTabs;
