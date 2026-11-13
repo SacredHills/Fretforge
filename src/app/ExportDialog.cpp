@@ -115,6 +115,9 @@ ExportSettings ExportDialog::currentSettings() const
     s.sampleRate = rate.getSelectedId() == 1 ? (host.engine.getSampleRate() > 0 ? host.engine.getSampleRate() : 48000.0)
                                              : (double) rate.getSelectedId();
     s.normalize = normalize.getToggleState();
+    s.tempoMap = doc.tempoMap();
+    s.tsNum = doc.tsNum();
+    s.tsDen = doc.tsDen();
     auto t = doc.transport();
     if (range.getSelectedId() == 3)
     {

@@ -213,6 +213,8 @@ private:
     void meterMix (float* const* bus, int numBus, int offset, int len) noexcept;
     void renderSegment (const float* const* inputs, int numInputs, float* const* bus, int numBus,
                         int offset, int len, bool rolling, bool recordingNow) noexcept;
+    /** Tells the plugins where the transport is (see fx::TransportPlayHead). */
+    void publishTransport (bool rolling, bool recordingNow) noexcept;
     // interface outputs: device output channel -> index in the callback's (active-only) output array, set when the
     // device starts (-1 = channel off); without a device (tests) channel n is output n. hwOut: this callback's buffers.
     std::array<int, timeline::maxHardwareChannels> outputSlot {};

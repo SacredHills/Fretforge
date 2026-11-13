@@ -246,6 +246,46 @@ juce::String capturePluginState (juce::AudioPluginInstance& p)
     return mb.getSize() > 0 ? mb.toBase64Encoding() : juce::String();
 }
 
+void TransportPlayHead::update (const Info& i) noexcept
+{
+    seq.fetch_add (1, std::memory_order_acq_rel);   // odd: being written
+    info = i;
+    seq.fetch_add (1, std::memory_order_release);
+}
+
+juce::Optional<juce::AudioPlayHead::PositionInfo> TransportPlayHead::getPosition() const
+{
+    Info c;
+    for (int tries = 0; tries < 1000; ++tries)
+    {
+        const auto s0 = seq.load (std::memory_order_acquire);
+        if ((s0 & 1u) != 0) continue;
+        c = info;
+        std::atomic_thread_fence (std::memory_order_acquire);
+        if (seq.load (std::memory_order_relaxed) == s0) break;
+    }
+    PositionInfo p;
+    p.setBpm (c.bpm);
+    p.setTimeSignature (TimeSignature { juce::jmax (1, c.tsNum), juce::jmax (1, c.tsDen) });
+    p.setIsPlaying (c.playing);
+    p.setIsRecording (c.recording);
+    p.setIsLooping (c.looping);
+    p.setTimeInSamples (c.samples);
+    p.setTimeInSeconds (c.sampleRate > 0 ? (double) c.samples / c.sampleRate : 0.0);
+    p.setPpqPosition (c.ppq);
+    const double barQ = (double) juce::jmax (1, c.tsNum) * 4.0 / (double) juce::jmax (1, c.tsDen);
+    p.setPpqPositionOfLastBarStart (std::floor (c.ppq / barQ + 1.0e-9) * barQ);
+    p.setLoopPoints (LoopPoints { c.loopStartPpq, c.loopEndPpq });
+    p.setFrameRate (FrameRate());
+    return p;
+}
+
+TransportPlayHead& transportPlayHead()
+{
+    static TransportPlayHead ph;
+    return ph;
+}
+
 void runPluginStereo (juce::AudioPluginInstance& p, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& midi,
                       float* L, float* R, int n, const float* scL, const float* scR) noexcept
 {
@@ -278,6 +318,7 @@ void runPluginStereo (juce::AudioPluginInstance& p, juce::AudioBuffer<float>& sc
 
 void preparePlugin (juce::AudioPluginInstance& p, double sampleRate, int blockSize)
 {
+    p.setPlayHead (&transportPlayHead());   // plugins read the host's transport (playing, tempo, position) from here
     // Already running at this rate and block size (the audio device restarted with the same format): leave it alone.
     // Changing buses on a running plugin is not allowed (plugins may stop processing or hang), and re-activating
     // is slow for big plugins.

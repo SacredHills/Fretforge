@@ -17,6 +17,31 @@ public:
                                                                        juce::String& error) = 0;
 };
 
+/** What plugins read as the host's transport (juce::AudioPlayHead): playing / recording / looping, position, tempo, time
+    signature, bar start and loop range. Every plugin the app creates is given this one. The audio thread updates it
+    before each block (the offline export too); plugins read it while processing. */
+class TransportPlayHead final : public juce::AudioPlayHead
+{
+public:
+    struct Info
+    {
+        bool playing = false, recording = false, looping = false;
+        juce::int64 samples = 0;
+        double sampleRate = 48000.0;
+        double bpm = 120.0, ppq = 0.0;                 // quarter-note tempo, position in quarters
+        int tsNum = 4, tsDen = 4;
+        double loopStartPpq = 0.0, loopEndPpq = 0.0;
+    };
+    void update (const Info&) noexcept;
+    juce::Optional<PositionInfo> getPosition() const override;
+    bool canControlTransport() override { return false; }
+private:
+    // a sequence lock: the audio thread writes, plugin code (any thread: audio, or a GUI timer) reads a whole Info
+    std::atomic<juce::uint32> seq { 0 };
+    Info info;
+};
+TransportPlayHead& transportPlayHead();
+
 void setPluginHost (PluginHost*);
 PluginHost* pluginHost();
 

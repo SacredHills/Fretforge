@@ -403,6 +403,59 @@ struct AudioEngine::Segment final : GraphMixer::Source
     }
 };
 
+void AudioEngine::publishTransport (bool rolling, bool recordingNow) noexcept
+{
+    const double sr = sampleRate.load (std::memory_order_relaxed);
+    if (sr <= 0.0) return;
+    const int den = juce::jlimit (1, 32, metronome.beatUnit.load());
+    const double unitQ = 4.0 / (double) den;   // quarters per metronome beat
+    double constBpm = metronome.rampEnabled.load() ? metronome.effectiveBpm.load() : metronome.bpm.load();
+    // quarter position and tempo at a timeline sample: from the project's beat times when it has tempo changes
+    auto at = [&] (juce::int64 samples, double& bpm) -> double {
+        const double t = (double) samples / sr;
+        bpm = constBpm;
+        if (clickMap != nullptr && clickMap->size() >= 2 && t >= (*clickMap)[0].sec)
+        {
+            const auto& cm = *clickMap;
+            auto it = std::upper_bound (cm.begin(), cm.end(), t, [] (double v, const TabSequence::Click& k) { return v < k.sec; });
+            if (it != cm.end())
+            {
+                const size_t k = (size_t) (it - cm.begin()) - 1;
+                const double span = cm[k + 1].sec - cm[k].sec;
+                if (span > 1.0e-9)
+                {
+                    bpm = 60.0 * unitQ / span;
+                    return ((double) k + (t - cm[k].sec) / span) * unitQ;
+                }
+            }
+            else   // after the last beat: keep going at the last interval's tempo
+            {
+                const size_t k = cm.size() - 1;
+                const double span = cm[k].sec - cm[k - 1].sec;
+                if (span > 1.0e-9)
+                {
+                    bpm = 60.0 * unitQ / span;
+                    return ((double) k + (t - cm[k].sec) / span) * unitQ;
+                }
+            }
+        }
+        return t * constBpm / 60.0;
+    };
+    fx::TransportPlayHead::Info i;
+    double ignored = 0.0;
+    i.playing = rolling;
+    i.recording = recordingNow;
+    i.looping = segLooping;
+    i.samples = pos;
+    i.sampleRate = sr;
+    i.ppq = at (i.samples, i.bpm);
+    i.tsNum = metronome.beatsPerBar.load();
+    i.tsDen = den;
+    i.loopStartPpq = at (segLoopStart, ignored);
+    i.loopEndPpq = at (segLoopEnd, ignored);
+    fx::transportPlayHead().update (i);
+}
+
 void AudioEngine::renderSegment (const float* const* inputs, int numInputs, float* const* bus, int numBus,
                                  int offset, int len, bool rolling, bool recordingNow) noexcept
 {
@@ -412,6 +465,7 @@ void AudioEngine::renderSegment (const float* const* inputs, int numInputs, floa
     float* sR = scratchR.data();
     juce::FloatVectorOperations::clear (sL, len);
     juce::FloatVectorOperations::clear (sR, len);
+    publishTransport (rolling, recordingNow);
     Segment seg (*this, inputs, numInputs, offset, rolling, recordingNow);
     for (int ch = 0; ch < numHwOut; ++ch)
         hwSeg[(size_t) ch] = hwOut[(size_t) ch] != nullptr ? hwOut[(size_t) ch] + offset : nullptr;

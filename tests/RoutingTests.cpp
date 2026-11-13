@@ -129,6 +129,30 @@ public:
             expectWithinAbsoluteError (mixOnce (*g, m, src), 0.4f, 1.0e-4f);   // a muted source does not trigger it
         }
 
+        beginTest ("plugins see the host transport");
+        {
+            auto plug = std::make_shared<DuckPlugin>();
+            fx::preparePlugin (*plug, 48000.0, 256);
+            expect (plug->getPlayHead() != nullptr, "every plugin gets the transport");
+            fx::TransportPlayHead::Info i;
+            i.playing = true; i.samples = 96000; i.sampleRate = 48000.0; i.bpm = 90.0; i.ppq = 3.0; i.tsNum = 3; i.tsDen = 4;
+            fx::transportPlayHead().update (i);
+            auto pos = plug->getPlayHead()->getPosition();
+            expect (pos.hasValue());
+            if (pos.hasValue())
+            {
+                expect (pos->getIsPlaying());
+                expectWithinAbsoluteError (*pos->getBpm(), 90.0, 1.0e-9);
+                expectWithinAbsoluteError (*pos->getPpqPosition(), 3.0, 1.0e-9);
+                expectWithinAbsoluteError (*pos->getTimeInSeconds(), 2.0, 1.0e-9);
+                expectWithinAbsoluteError (*pos->getPpqPositionOfLastBarStart(), 3.0, 1.0e-9);   // 3/4 bars are 3 quarters long
+                expectEquals (pos->getTimeSignature()->numerator, 3);
+            }
+            i.playing = false;
+            fx::transportPlayHead().update (i);
+            expect (! fx::transportPlayHead().getPosition()->getIsPlaying());
+        }
+
         beginTest ("graph: outputs, sends and processing order");
         {
             juce::ValueTree tracks ("TRACKS");

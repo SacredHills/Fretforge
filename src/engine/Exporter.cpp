@@ -178,6 +178,18 @@ ExportResult exportAudio (const juce::ValueTree& tracks, const juce::File& media
             std::fill (l.begin(), l.begin() + n, 0.0f);
             std::fill (r.begin(), r.begin() + n, 0.0f);
             source.at = start + done;
+            {
+                fx::TransportPlayHead::Info ti;
+                const double sec = (double) (start + done) / s.sampleRate;
+                ti.playing = true;
+                ti.samples = start + done;
+                ti.sampleRate = s.sampleRate;
+                ti.ppq = s.tempoMap.quarterAtSeconds (sec);
+                ti.bpm = s.tempoMap.bpmAtSeconds (sec);
+                ti.tsNum = s.tsNum;
+                ti.tsDen = s.tsDen;
+                fx::transportPlayHead().update (ti);
+            }
             mixer.mix (*graph, source, l.data(), r.data(), n);
             out.addFrom (0, (int) done, l.data(), n);
             out.addFrom (1, (int) done, r.data(), n);

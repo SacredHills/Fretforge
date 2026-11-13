@@ -1,5 +1,6 @@
 #pragma once
 #include "PlaybackGraph.h"
+#include "core/TempoMap.h"
 
 namespace ff
 {
@@ -17,6 +18,9 @@ struct ExportSettings
     juce::String baseName = "Mix";
     /** The master bus (its plugins process every render). If invalid, the MASTER node next to `tracks` is used. */
     juce::ValueTree master;
+    /** The project's tempo and time signature: what plugins see as the host's tempo while rendering. */
+    TempoMap tempoMap;
+    int tsNum = 4, tsDen = 4;
 
     juce::String extension() const { return format == Format::flac ? ".flac" : ".wav"; }
 };
