@@ -141,6 +141,7 @@ std::shared_ptr<InsertChain> makeOfflineInserts (const juce::ValueTree& track, d
         preparePlugin (*inst, sr, block);
         chain->setPlugin (slot, std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
         chain->bypass[(size_t) slot] = (bool) c[rig::ids::bypass];
+        chain->sidechainId[(size_t) slot] = c[rig::ids::sidechain].toString();
         order[(size_t) count++] = slot;
     }
     chain->setOrder (order, count);
@@ -643,6 +644,7 @@ void RigBank::syncInserts (InsertEntry& e)
         if (phys < 0 || count >= InsertChain::maxSlots) continue;
         order[(size_t) count++] = phys;
         e.chain->bypass[(size_t) phys] = (bool) node[rig::ids::bypass];
+        e.chain->sidechainId[(size_t) phys] = node[rig::ids::sidechain].toString();
         e.status[(size_t) phys].name = node[rig::ids::name].toString();
     }
     e.chain->setOrder (order, count);
@@ -908,7 +910,7 @@ void RigBank::valueTreePropertyChanged (juce::ValueTree& node, const juce::Ident
     if (node.hasType (rig::ids::PLUGIN))
     {
         if (node.getParent() == live && onLiveChanged) onLiveChanged();   // keep the live rig's plugin state saved
-        if (node.getParent().hasType (rig::ids::INSERTS) && (prop == rig::ids::slot || prop == rig::ids::bypass || prop == rig::ids::name))
+        if (node.getParent().hasType (rig::ids::INSERTS) && (prop == rig::ids::slot || prop == rig::ids::bypass || prop == rig::ids::name || prop == rig::ids::sidechain))
             if (auto it = inserts.find (node.getParent().getParent()[timeline::ids::id].toString()); it != inserts.end())
                 syncInserts (it->second);
         return;

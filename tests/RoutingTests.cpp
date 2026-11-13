@@ -46,6 +46,38 @@ float mixOnce (PlaybackGraph& g, GraphMixer& m, ConstSource& src, int n = 64)
     return L[(size_t) n - 1];
 }
 
+
+/** A test plugin with a side-chain input: silences its main signal while the side-chain carries sound. */
+class DuckPlugin final : public juce::AudioPluginInstance
+{
+public:
+    DuckPlugin() : juce::AudioPluginInstance (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo())
+                                                  .withInput ("Sidechain", juce::AudioChannelSet::stereo(), false)
+                                                  .withOutput ("Output", juce::AudioChannelSet::stereo())) {}
+    void fillInPluginDescription (juce::PluginDescription& d) const override { d.name = "Duck"; }
+    const juce::String getName() const override { return "Duck"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    double getTailLengthSeconds() const override { return 0.0; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    bool hasEditor() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+    void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer&) override
+    {
+        const bool scOn = getBusCount (true) > 1 && getBus (true, 1)->isEnabled() && b.getNumChannels() >= 4;
+        const bool duck = scOn && b.getMagnitude (2, 0, b.getNumSamples()) > 0.05f;
+        if (duck) { b.clear (0, 0, b.getNumSamples()); b.clear (1, 0, b.getNumSamples()); }
+    }
+};
+
 juce::File namData (const juce::String& name) { return juce::File (FF_TEST_DATA_DIR).getChildFile ("nam").getChildFile (name); }
 }
 
@@ -58,6 +90,44 @@ public:
     {
         AudioCache cache;
         const juce::File noBundle;
+
+        beginTest ("side-chain: a plugin listens to another track");
+        {
+            juce::ValueTree tracks ("TRACKS");
+            auto kick = track (tracks, "Kick"), bass = track (tracks, "Bass");
+            auto chain = std::make_shared<fx::InsertChain>();
+            chain->prepare (48000.0, 256);
+            auto plug = std::make_shared<DuckPlugin>();
+            fx::preparePlugin (*plug, 48000.0, 256);
+            chain->setPlugin (0, plug);
+            std::array<int, fx::InsertChain::maxSlots> order {};
+            chain->setOrder (order, 1);
+            GraphBuildOptions opt;
+            opt.insertsFor = [&] (const juce::ValueTree& t) { return t == bass ? chain : nullptr; };
+            ConstSource src;
+            src.levels = { 0.5f, 0.4f };   // kick, bass (by meter slot)
+            GraphMixer m;
+            m.prepare (256, 48000.0);
+
+            auto g = buildPlaybackGraph (tracks, noBundle, cache, opt);
+            expect ((int) g->tracks[1].sidechains.size() == 0);
+            expectWithinAbsoluteError (mixOnce (*g, m, src), 0.9f, 1.0e-4f);   // no side-chain source: nothing ducks
+
+            chain->sidechainId[0] = kick[tl::ids::id].toString();
+            g = buildPlaybackGraph (tracks, noBundle, cache, opt);
+            expectEquals ((int) g->tracks[1].sidechains.size(), 1);
+            expect (g->tracks[1].level > g->tracks[0].level, "the side-chain source is processed first");
+            expectWithinAbsoluteError (mixOnce (*g, m, src), 0.5f, 1.0e-4f);   // the kick silences the bass
+
+            chain->sidechainId[0] = bass[tl::ids::id].toString();   // itself: ignored
+            g = buildPlaybackGraph (tracks, noBundle, cache, opt);
+            expectEquals ((int) g->tracks[1].sidechains.size(), 0);
+
+            chain->sidechainId[0] = kick[tl::ids::id].toString();
+            kick.setProperty (tl::ids::mute, true, nullptr);
+            g = buildPlaybackGraph (tracks, noBundle, cache, opt);
+            expectWithinAbsoluteError (mixOnce (*g, m, src), 0.4f, 1.0e-4f);   // a muted source does not trigger it
+        }
 
         beginTest ("graph: outputs, sends and processing order");
         {

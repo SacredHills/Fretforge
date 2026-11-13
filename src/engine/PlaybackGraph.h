@@ -8,6 +8,7 @@
 #include "fx/InstrumentSlot.h"
 #include "core/Automation.h"
 #include <map>
+#include <array>
 
 namespace ff
 {
@@ -34,6 +35,8 @@ struct PlayTrack
     std::shared_ptr<MidiRecorder> midiRecorder;   // instrument tracks, only while recording
     std::shared_ptr<fx::AmpRig> rig;         // amp rig insert (Effects & Amps), applied before fader / pan
     std::shared_ptr<fx::InsertChain> inserts; // plugin inserts, after the rig
+    std::vector<std::pair<int, int>> sidechains;   // (insert physical slot, index of the track feeding its side-chain)
+    std::array<const float*, fx::InsertChain::maxSlots> scL {}, scR {};   // audio thread: this block's side-chain audio per slot
 
     // routing
     timeline::TrackKind kind = timeline::TrackKind::audio;
@@ -84,6 +87,8 @@ struct PlaybackGraph
     std::vector<PlayTrack> tracks;
     std::vector<int> order;
     std::shared_ptr<fx::InsertChain> masterInserts;   // plugins on the master bus (after every track)                  // track indices sorted by level (sources before the buses they feed)
+    std::vector<std::pair<int, int>> masterSidechains;   // like PlayTrack::sidechains, for the master plugins
+    std::array<const float*, fx::InsertChain::maxSlots> masterScL {}, masterScR {};
     std::vector<PlayTrack::Lane> masterLanes;         // automation of the master bus: its volume and its plugins' parameters
     float masterPrevGain = -1.0f;                     // audio thread: the master volume automation of the last block (-1: none yet)
     double sampleRate = 48000.0;

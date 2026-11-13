@@ -32,7 +32,10 @@ public:
     void setOrder (const std::array<int, maxSlots>& order, int count) noexcept;
     std::array<std::atomic<bool>, maxSlots> bypass {};
 
-    void process (float* left, float* right, int numSamples) noexcept;
+    /** scLeft / scRight (optional): per physical slot, the audio for that plugin's side-chain input (nullptr: none). */
+    void process (float* left, float* right, int numSamples, const float* const* scLeft = nullptr, const float* const* scRight = nullptr) noexcept;
+    /** Which track feeds a plugin's side-chain, by physical slot ("" = none). Message thread only (read when a graph is built). */
+    std::array<juce::String, maxSlots> sidechainId;
     /** Sum of the latencies of the plugins in the order that are not bypassed. Audio thread. */
     int latency() const noexcept;
 

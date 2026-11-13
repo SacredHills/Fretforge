@@ -44,6 +44,8 @@ private:
     std::vector<std::vector<float>> bufL, bufR;
     std::vector<float> tmpL, tmpR;
     std::vector<char> active;
+    std::vector<char> scFlag;                          // tracks whose signal feeds some plugin's side-chain
+    std::vector<std::vector<float>> scBufL, scBufR;    // those tracks' signal before the fader, for the plugins that read it
     std::vector<int> stage;   // tracks of the level being processed
 
     struct JobContext { GraphMixer* self; PlaybackGraph* graph; int n; };

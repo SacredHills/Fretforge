@@ -63,7 +63,7 @@ int InsertChain::latency() const noexcept
     return l;
 }
 
-void InsertChain::process (float* L, float* R, int n) noexcept
+void InsertChain::process (float* L, float* R, int n, const float* const* scL, const float* const* scR) noexcept
 {
     if (! isPreparedFor (sr) || maxBlock == 0) return;
     std::array<int, maxSlots> o;
@@ -76,7 +76,9 @@ void InsertChain::process (float* L, float* R, int n) noexcept
             const int slot = o[(size_t) i];
             if (slot < 0 || slot >= maxSlots || bypass[(size_t) slot].load (std::memory_order_relaxed)) continue;
             if (auto* p = slots[(size_t) slot].active.load (std::memory_order_acquire))
-                runPluginStereo (*p, scratch, midi, L + done, R + done, len);
+                runPluginStereo (*p, scratch, midi, L + done, R + done, len,
+                                 scL != nullptr && scL[slot] != nullptr ? scL[slot] + done : nullptr,
+                                 scR != nullptr && scR[slot] != nullptr ? scR[slot] + done : nullptr);
         }
         done += len;
     }

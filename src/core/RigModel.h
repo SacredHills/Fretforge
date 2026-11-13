@@ -20,7 +20,7 @@ namespace ids
     #define FF_RIG_ID(n) inline const juce::Identifier n { #n };
     FF_RIG_ID (RIG) FF_RIG_ID (enabled) FF_RIG_ID (order) FF_RIG_ID (namFile) FF_RIG_ID (irFile) FF_RIG_ID (irFile2) FF_RIG_ID (rigName)
     FF_RIG_ID (input) FF_RIG_ID (PLUGIN) FF_RIG_ID (slot) FF_RIG_ID (desc) FF_RIG_ID (state) FF_RIG_ID (name)
-    FF_RIG_ID (INSERTS) FF_RIG_ID (bypass)
+    FF_RIG_ID (INSERTS) FF_RIG_ID (bypass) FF_RIG_ID (sidechain)
     #undef FF_RIG_ID
 }
 

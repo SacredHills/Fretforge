@@ -331,6 +331,20 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
                 pt.sends.push_back ({ target, juce::Decibels::decibelsToGain ((float) (double) c[ids::level], -96.0f), (bool) c[ids::pre] });
             }
     }
+    // side-chains: a plugin's side-chain source is another track's signal (after its plugins, before its fader)
+    auto sidechainsOf = [&] (const std::shared_ptr<fx::InsertChain>& chain, int self) {
+        std::vector<std::pair<int, int>> out;
+        if (chain == nullptr) return out;
+        for (int s = 0; s < fx::InsertChain::maxSlots; ++s)
+        {
+            if (chain->sidechainId[(size_t) s].isEmpty()) continue;
+            const int src = indexOf (chain->sidechainId[(size_t) s]);
+            if (src >= 0 && src != self) out.push_back ({ s, src });
+        }
+        return out;
+    };
+    for (int i = 0; i < (int) trees.size(); ++i) g->tracks[(size_t) i].sidechains = sidechainsOf (g->tracks[(size_t) i].inserts, i);
+    g->masterSidechains = sidechainsOf (g->masterInserts, -1);
     // level = longest chain of sources; an edge that would close a loop is dropped
     const int n = (int) g->tracks.size();
     std::vector<int> state ((size_t) n, 0);   // 0 new, 1 visiting, 2 done
@@ -340,6 +354,7 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
         auto& pt = g->tracks[(size_t) i];
         if (pt.output >= 0) sources[(size_t) pt.output].push_back (i);
         for (auto& sd : pt.sends) sources[(size_t) sd.target].push_back (i);
+        for (auto& sc : pt.sidechains) sources[(size_t) i].push_back (sc.second);
     }
     std::function<int (int)> levelOf = [&] (int i) -> int {
         if (state[(size_t) i] == 2) return g->tracks[(size_t) i].level;
@@ -352,6 +367,8 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
                 auto& s = g->tracks[(size_t) src];
                 if (s.output == i) s.output = -1;
                 s.sends.erase (std::remove_if (s.sends.begin(), s.sends.end(), [i] (const PlayTrack::Send& x) { return x.target == i; }), s.sends.end());
+                auto& self = g->tracks[(size_t) i];   // a side-chain loop: the plugin goes without its side-chain
+                self.sidechains.erase (std::remove_if (self.sidechains.begin(), self.sidechains.end(), [src] (const std::pair<int, int>& x) { return x.second == src; }), self.sidechains.end());
                 continue;
             }
             lv = juce::jmax (lv, levelOf (src) + 1);
@@ -370,6 +387,9 @@ std::unique_ptr<PlaybackGraph> buildPlaybackGraph (const juce::ValueTree& tracks
             std::vector<int> e;
             if (g->tracks[(size_t) i].output >= 0) e.push_back (g->tracks[(size_t) i].output);
             for (auto& sd : g->tracks[(size_t) i].sends) e.push_back (sd.target);
+            for (int k = 0; k < n; ++k)   // a track feeding another's side-chain runs with it (heard only through it)
+                for (auto& sc : g->tracks[(size_t) k].sidechains)
+                    if (sc.second == i) e.push_back (k);
             return e;
         };
         std::vector<char> soloed ((size_t) n, 0), down ((size_t) n, 0), up ((size_t) n, 0);

@@ -247,7 +247,7 @@ juce::String capturePluginState (juce::AudioPluginInstance& p)
 }
 
 void runPluginStereo (juce::AudioPluginInstance& p, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& midi,
-                      float* L, float* R, int n) noexcept
+                      float* L, float* R, int n, const float* scL, const float* scR) noexcept
 {
     if (n > scratch.getNumSamples()) return;
     const int ins = p.getTotalNumInputChannels(), outs = p.getTotalNumOutputChannels();
@@ -258,6 +258,11 @@ void runPluginStereo (juce::AudioPluginInstance& p, juce::AudioBuffer<float>& sc
     else for (int i = 0; i < n; ++i) chans[0][i] = 0.5f * (L[i] + R[i]);
     for (int c = ins >= 2 ? 2 : 1; c < ch; ++c)
         juce::FloatVectorOperations::clear (chans[c], n);
+    if (scL != nullptr && ins > 2)   // the side-chain input (the plugin's second input bus) follows the main pair
+    {
+        if (ins >= 4) { std::copy (scL, scL + n, chans[2]); std::copy (scR != nullptr ? scR : scL, (scR != nullptr ? scR : scL) + n, chans[3]); }
+        else for (int i = 0; i < n; ++i) chans[2][i] = 0.5f * (scL[i] + (scR != nullptr ? scR[i] : scL[i]));
+    }
     juce::AudioBuffer<float> view (chans, ch, n);
     midi.clear();
     {
@@ -303,7 +308,13 @@ void preparePlugin (juce::AudioPluginInstance& p, double sampleRate, int blockSi
             return l;
         };
         const auto st = juce::AudioChannelSet::stereo(), mo = juce::AudioChannelSet::mono();
-        if (! p.setBusesLayout (make (st, true)) && ! p.setBusesLayout (make (st, false))
+        // first choice: stereo main in/out, the side-chain (second input bus) on as a stereo pair, other extra outputs off
+        auto sc = layout;
+        bool hasSc = sc.inputBuses.size() > 1;
+        for (int i = 0; i < sc.inputBuses.size(); ++i) sc.inputBuses.getReference (i) = i == 0 ? st : (i == 1 ? st : juce::AudioChannelSet::disabled());
+        for (int i = 0; i < sc.outputBuses.size(); ++i) sc.outputBuses.getReference (i) = i == 0 ? st : juce::AudioChannelSet::disabled();
+        if (hasSc && p.setBusesLayout (sc)) {}
+        else if (! p.setBusesLayout (make (st, true)) && ! p.setBusesLayout (make (st, false))
             && ! p.setBusesLayout (make (mo, true)))
             p.setBusesLayout (make (mo, false));
     }

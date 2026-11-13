@@ -234,7 +234,8 @@ void SessionController::valueTreePropertyChanged (juce::ValueTree& node, const j
 {
     if (prop.toString() == "laneHeight" || prop == automation::showLane) return;   // view only
     if (node.hasType (ids::TRACK) || node.hasType (ids::CLIP) || node.hasType (ids::SEND) || node.hasType (rig::ids::RIG)
-        || node.hasType (automation::LANE) || node.hasType (midiclip::MIDI))
+        || node.hasType (automation::LANE) || node.hasType (midiclip::MIDI)
+        || (node.hasType (rig::ids::PLUGIN) && prop == rig::ids::sidechain))
         triggerAsyncUpdate();
 }
 
@@ -420,8 +421,8 @@ void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::C
     if (! node.isValid()) return;
     const auto st = rigBank->insertStatus (track, slot);
     // the plugin list is a submenu (its own item ids); the actions use ids well above it
-    enum { openId = 200001, bypassId, upId, downId, removeId };
-    juce::PopupMenu m, replace;
+    enum { openId = 200001, bypassId, upId, downId, removeId, sidechainNone, sidechainBase = 300000 };
+    juce::PopupMenu m, replace, side;
     m.addSectionHeader (node[rig::ids::name].toString() + (st.error.isNotEmpty() ? "  (not loaded)" : juce::String()));
     m.addItem (openId, "Open plugin window", st.loaded);
     m.addItem (bypassId, "Bypass", true, (bool) node[rig::ids::bypass]);
@@ -429,6 +430,23 @@ void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::C
     {
         plugins->addToMenu (replace, 1);
         m.addSubMenu ("Replace with", replace);
+    }
+    {   // side-chain: the plugin's side-chain input listens to another track (its sound after its plugins, before its fader)
+        const auto current = node[rig::ids::sidechain].toString();
+        side.addItem (sidechainNone, "None", true, current.isEmpty());
+        side.addSeparator();
+        int k = 0;
+        for (auto t : doc.tracks())
+        {
+            if (t.hasType (ids::TRACK) && t[ids::id] != track[ids::id])
+                side.addItem (sidechainBase + k, t[ids::name].toString(), true, current == t[ids::id].toString());
+            ++k;
+        }
+        juce::String sideName = "Side-chain from";
+        if (current.isNotEmpty())
+            for (auto t : doc.tracks())
+                if (t[ids::id].toString() == current) sideName += ": " + t[ids::name].toString();
+        m.addSubMenu (sideName, side);
     }
     m.addItem (removeId, "Remove");
     m.addSeparator();
@@ -441,6 +459,14 @@ void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::C
         if (r == openId) openInsert (track, slot);
         else if (r == bypassId) { doc.undo().beginNewTransaction ("Bypass plugin"); n.setProperty (rig::ids::bypass, ! (bool) n[rig::ids::bypass], &doc.undo()); }
         else if (r == upId || r == downId) { doc.undo().beginNewTransaction ("Move plugin"); rig::moveInsert (track, slot, r == upId ? -1 : 1, &doc.undo()); }
+        else if (r == sidechainNone) { doc.undo().beginNewTransaction ("Side-chain off"); n.removeProperty (rig::ids::sidechain, &doc.undo()); }
+        else if (r >= sidechainBase)
+        {
+            auto src = doc.tracks().getChild (r - sidechainBase);
+            if (! src.isValid()) return;
+            doc.undo().beginNewTransaction ("Side-chain source");
+            n.setProperty (rig::ids::sidechain, src[ids::id].toString(), &doc.undo());
+        }
         else if (r == removeId) { doc.undo().beginNewTransaction ("Remove plugin"); rig::removeInsert (track, slot, &doc.undo()); }
         else if (plugins != nullptr)
         {

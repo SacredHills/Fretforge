@@ -30,6 +30,9 @@ void GraphMixer::prepare (int maxBlock_, double sampleRate)
     tmpL.assign ((size_t) blockSize, 0.0f);
     tmpR.assign ((size_t) blockSize, 0.0f);
     active.assign ((size_t) timeline::maxTracks, 0);
+    scFlag.assign ((size_t) timeline::maxTracks, 0);
+    scBufL.assign ((size_t) timeline::maxTracks, std::vector<float> ((size_t) blockSize, 0.0f));
+    scBufR.assign ((size_t) timeline::maxTracks, std::vector<float> ((size_t) blockSize, 0.0f));
     stage.reserve ((size_t) timeline::maxTracks);
 }
 
@@ -54,7 +57,7 @@ void GraphMixer::processTrack (PlayTrack& t, float* L, float* R, int n) noexcept
     if (t.instrument != nullptr)   // instrument tracks: the synth plays its MIDI, then the plugins (never idle)
     {
         t.instrument->render (L, R, n, t.midiBuffer);
-        if (t.inserts != nullptr) t.inserts->process (L, R, n);
+        if (t.inserts != nullptr) t.inserts->process (L, R, n, t.scL.data(), t.scR.data());
         return;
     }
     if (t.rig == nullptr && t.inserts == nullptr) return;
@@ -68,7 +71,7 @@ void GraphMixer::processTrack (PlayTrack& t, float* L, float* R, int n) noexcept
         return;
     }
     if (t.rig != nullptr) t.rig->process (L, R, n);
-    if (t.inserts != nullptr) t.inserts->process (L, R, n);
+    if (t.inserts != nullptr) t.inserts->process (L, R, n, t.scL.data(), t.scR.data());
     if (peakOf (L, R, n) > silenceThreshold) idle.quietOut = 0;
     else idle.quietOut += n;
     // nothing coming in and the tails (delay, reverb...) have died away: stop running the effects until sound arrives
@@ -105,6 +108,13 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
             juce::FloatVectorOperations::clear (bufR[(size_t) i].data(), n);
         }
 
+    // side-chains: which tracks are read by some plugin
+    std::fill (scFlag.begin(), scFlag.end(), (char) 0);
+    for (auto& t : g.tracks)
+        for (auto& sc : t.sidechains)
+            if (juce::isPositiveAndBelow (sc.second, numTracks)) scFlag[(size_t) sc.second] = 1;
+    for (auto& sc : g.masterSidechains)
+        if (juce::isPositiveAndBelow (sc.second, numTracks)) scFlag[(size_t) sc.second] = 1;
     // a graph built by hand (tests) may have no order: then it is the track order
     const bool hasOrder = g.order.size() == g.tracks.size();
     auto orderAt = [&] (int k) { return hasOrder ? g.order[(size_t) k] : k; };
@@ -133,10 +143,39 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
             if (active[(size_t) ti] && (t.rig != nullptr || t.inserts != nullptr || t.instrument != nullptr)) stage.push_back (ti);
         }
 
-        // 2. effects (parallel)
+        // 2. effects (parallel); first point each plugin's side-chain at the signal of the track that feeds it
+        for (int k = p; k < end; ++k)
+        {
+            auto& t = g.tracks[(size_t) orderAt (k)];
+            t.scL.fill (nullptr);
+            t.scR.fill (nullptr);
+            for (auto& sc : t.sidechains)
+                if (juce::isPositiveAndBelow (sc.second, numTracks))
+                {
+                    t.scL[(size_t) sc.first] = scBufL[(size_t) sc.second].data();
+                    t.scR[(size_t) sc.first] = scBufR[(size_t) sc.second].data();
+                }
+        }
         JobContext ctx { this, &g, n };
         if (workers != nullptr) workers->run ((int) stage.size(), &GraphMixer::processJob, &ctx);
         else for (int i = 0; i < (int) stage.size(); ++i) processJob (&ctx, i);
+
+        // keep the signal of the tracks that feed a side-chain (after their plugins, before fader / pan)
+        for (int k = p; k < end; ++k)
+        {
+            const int ti = orderAt (k);
+            if (ti >= numTracks || ! scFlag[(size_t) ti]) continue;
+            if (active[(size_t) ti])
+            {
+                std::copy (bufL[(size_t) ti].data(), bufL[(size_t) ti].data() + n, scBufL[(size_t) ti].data());
+                std::copy (bufR[(size_t) ti].data(), bufR[(size_t) ti].data() + n, scBufR[(size_t) ti].data());
+            }
+            else
+            {
+                juce::FloatVectorOperations::clear (scBufL[(size_t) ti].data(), n);
+                juce::FloatVectorOperations::clear (scBufR[(size_t) ti].data(), n);
+            }
+        }
 
         // 3. sends, fader / pan, output (serial)
         for (int k = p; k < end; ++k)
@@ -187,7 +226,17 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
         if (mt >= 0.0) autoGain = applyMasterLanes (g, mt);
     }
     if (g.masterInserts != nullptr)   // outL / outR started out silent, so this is the whole mix
-        g.masterInserts->process (outL, outR, n);
+    {
+        g.masterScL.fill (nullptr);
+        g.masterScR.fill (nullptr);
+        for (auto& sc : g.masterSidechains)
+            if (juce::isPositiveAndBelow (sc.second, numTracks))
+            {
+                g.masterScL[(size_t) sc.first] = scBufL[(size_t) sc.second].data();
+                g.masterScR[(size_t) sc.first] = scBufR[(size_t) sc.second].data();
+            }
+        g.masterInserts->process (outL, outR, n, g.masterScL.data(), g.masterScR.data());
+    }
     if (! g.masterLanes.empty())
     {
         const float from = g.masterPrevGain < 0.0f ? autoGain : g.masterPrevGain;   // ramped, so moving automation does not click
