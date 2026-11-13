@@ -57,6 +57,9 @@ public:
     // ---- track selection (shared by arrange view and mixer) ----
     juce::Array<juce::ValueTree> selectedTracks;
     juce::ChangeBroadcaster selectionChanged;
+    /** The clips the last recording made: the arrange view keeps them selected (highlighted) afterwards. */
+    juce::Array<juce::ValueTree> justRecorded;
+    juce::ChangeBroadcaster recordingFinished;
     /** Plain click selects only `t`; Shift extends from the anchor; Ctrl/Cmd toggles. */
     void clickTrack (const juce::ValueTree& t, juce::ModifierKeys mods);
     void selectTrackRange (const juce::ValueTree& from, const juce::ValueTree& to);

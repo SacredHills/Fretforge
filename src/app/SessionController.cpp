@@ -1152,6 +1152,7 @@ void SessionController::finishRecording()
 
     juce::StringArray problems;
     int clipsMade = 0;
+    justRecorded.clear();
     doc.undo().beginNewTransaction ("Record");
     for (auto& [trackId, rec] : finished)
     {
@@ -1183,6 +1184,7 @@ void SessionController::finishRecording()
                                     (double) fileOffset / recordRate);
             clip.setProperty (ids::takeGroup, group, nullptr);
             track.appendChild (clip, &doc.undo());
+            justRecorded.add (clip);
             ++clipsMade;
         }
         cache.invalidate (rec->file);
@@ -1216,11 +1218,13 @@ void SessionController::finishRecording()
         auto clip = midiclip::createMidiClip (track[ids::name].toString() + " take " + juce::String (take), clipStart, notes, pedal);
         clip.setProperty (ids::length, clipEndT - clipStart, nullptr);
         track.appendChild (clip, &doc.undo());
+        justRecorded.add (clip);
         ++clipsMade;
     }
     juce::Logger::writeToLog ("Recording finished: " + juce::String (clipsMade) + " clip(s)");
     if (! problems.isEmpty() && onError)
         onError ("Recording problem", problems.joinIntoString ("\n"));
     if (onArrangementChanged) onArrangementChanged();
+    if (! justRecorded.isEmpty()) recordingFinished.sendChangeMessage();
 }
 } // namespace ff

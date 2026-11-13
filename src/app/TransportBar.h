@@ -69,6 +69,7 @@ private:
     IconButton rtzButton { "Return to start", IconButton::Icon::toStart };
     IconButton playButton { "Play / Stop", IconButton::Icon::play };
     IconButton clickButton { "Metronome click", IconButton::Icon::metronome };
+    juce::TextButton clickSettingsButton { "..." };
     IconButton recordButton { "Record", IconButton::Icon::record };
     IconButton loopButton { "Loop", IconButton::Icon::loop };
     juce::TextButton punchButton { "PUNCH" }, countInButton { "COUNT-IN" };

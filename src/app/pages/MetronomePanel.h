@@ -45,6 +45,7 @@ private:
     juce::TextButton minusButton { "-" }, plusButton { "+" }, tapButton { "TAP" }, startButton { "START" };
     juce::ComboBox sigNum, sigDen, subdivision, sound;
     juce::ToggleButton rampToggle { "Increase tempo automatically" };
+    juce::ToggleButton accentToggle { "Accent the first beat (higher-pitched click)" };
     juce::TextButton timerStart { "Start" }, timerReset { "Reset" };
     juce::OwnedArray<juce::Label> labels;
     BeatStrip beats;

@@ -35,6 +35,7 @@ public:
     std::atomic<float> swing { 0.0f };      // 0..0.5, applied to even subdivisions
     std::atomic<float> volume { 0.8f };
     std::atomic<int> sound { electronic };
+    std::atomic<bool> accentsEnabled { true };   // off: every click is the plain beat sound (no higher-pitched downbeat)
     std::array<std::atomic<int>, maxBeats> beatLevels;
 
     std::atomic<bool> rampEnabled { false };

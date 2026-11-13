@@ -131,7 +131,7 @@ TransportBar::TransportBar (EngineHost& h, ProjectDocument& d, juce::PropertiesF
     punchButton.setClickingTogglesState (false);
     punchButton.setColour (juce::TextButton::buttonOnColourId, palette::bad);
     countInButton.setColour (juce::TextButton::buttonOnColourId, palette::accent);
-    for (juce::Component* b : std::initializer_list<juce::Component*> { &rtzButton, &playButton, &recordButton, &loopButton, &clickButton,
+    for (juce::Component* b : std::initializer_list<juce::Component*> { &rtzButton, &playButton, &recordButton, &loopButton, &clickButton, &clickSettingsButton,
                                                                        &punchButton, &countInButton })
     {
         b->setWantsKeyboardFocus (false);
@@ -201,6 +201,8 @@ TransportBar::TransportBar (EngineHost& h, ProjectDocument& d, juce::PropertiesF
     tunerDisplay.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     addAndMakeVisible (tunerDisplay);
     host.tuner.active = true;   // the readout is always visible
+    clickSettingsButton.onClick = [this] { if (onOpenMetronome) onOpenMetronome(); };
+    clickSettingsButton.setTooltip ("Metronome settings: click sound, accent on/off, subdivision, tempo trainer, practice metronome.");
     clickButton.onRightClick = [this] { if (onOpenMetronome) onOpenMetronome(); };
     clickButton.setTooltip ("Metronome click while playing (C). Right-click: metronome window (practice metronome, trainer).");
 
@@ -355,7 +357,7 @@ void TransportBar::resized()
     const int h = full.getHeight();
     // one group centred in the bar (the MIDI LED stays at the far right); the gaps shrink when the bar is narrow
     const int meterW = 140, cpuW = 84, tunerW = 140, posW = 160;
-    const int fixed = 5 * h + 8 + 4 * 4 + 6 + 96 + posW + 120 + 6 + 46 + 124 + tunerW + meterW + cpuW;
+    const int fixed = 5 * h + 8 + 4 * 4 + 6 + 30 + 96 + posW + 120 + 6 + 46 + 124 + tunerW + meterW + cpuW;
     const int avail = getWidth() - 2 * 40;
     const int gap = juce::jlimit (4, 16, (avail - fixed) / 6);
     const int total = fixed + 6 * gap;
@@ -371,6 +373,8 @@ void TransportBar::resized()
     loopButton.setBounds (r.removeFromLeft (h));
     r.removeFromLeft (4);
     clickButton.setBounds (r.removeFromLeft (h));
+    r.removeFromLeft (2);
+    clickSettingsButton.setBounds (r.removeFromLeft (28).withSizeKeepingCentre (28, h * 2 / 3));
     r.removeFromLeft (6);
     auto small = r.removeFromLeft (96);
     punchButton.setBounds (small.removeFromTop (h / 2 - 1));

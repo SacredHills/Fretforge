@@ -586,7 +586,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdPracticeMetronome: info.setInfo ("Practice Metronome", "Start/stop the free-running metronome", "Transport", 0); info.setTicked (host.engine.practiceMetronome.load()); info.addDefaultKeypress ('m', 0); break;
         case cmdShortcuts: info.setInfo ("Keyboard Shortcuts...", "View and customise shortcuts", "Help", 0); info.addDefaultKeypress ('/', cmd); break;
         case cmdAbout: info.setInfo ("About " FF_DISPLAY_NAME, "Version information", "Help", 0); break;
-        case cmdRecord: info.setInfo ("Record", "Record on armed tracks / punch out", "Transport", 0); info.setTicked (host.engine.isRecordRequested()); info.addDefaultKeypress ('r', 0); info.addDefaultKeypress (KP::numberPadMultiply, 0); break;
+        case cmdRecord: info.setInfo ("Record", "Record on armed tracks / punch out", "Transport", 0); info.setTicked (host.engine.isRecordRequested()); info.addDefaultKeypress ('r', 0); info.addDefaultKeypress (KP::numberPadMultiply, 0); info.addDefaultKeypress ('*', 0); break;   // ('*': Windows reports the numpad * as the character)
         case cmdLoop: info.setInfo ("Loop", "Toggle the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::loopEnabled]); info.addDefaultKeypress ('l', 0); break;
         case cmdPunch: info.setInfo ("Punch In/Out", "Record only inside the loop range", "Transport", 0); info.setTicked ((bool) doc->transport()[project::ids::punchEnabled]); info.addDefaultKeypress ('p', 0); break;
         case cmdAddTrack: info.setInfo ("Add Track", "Add an audio track", "Track", 0); info.addDefaultKeypress ('t', cmd); break;

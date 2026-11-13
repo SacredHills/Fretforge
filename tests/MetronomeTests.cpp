@@ -143,6 +143,36 @@ struct MetronomeTests : juce::UnitTest
             const auto on = renderOnsets (m, sr, 4.0, 512); // 4 bars; bar 1 unmuted (rolled after), later only downbeats
             expect (on.size() >= 4 && on.size() <= 7, juce::String ((int) on.size()));
         }
+
+        beginTest ("every click sound is audible, also when switched while running");
+        {
+            ff::MetronomeDsp m;
+            m.prepare (sr);
+            m.bpm = 120.0;
+            for (int snd = 0; snd < ff::MetronomeDsp::numSounds; ++snd)
+            {
+                m.sound = snd;
+                const auto on = renderOnsets (m, sr, 2.0, 256);
+                expect (on.size() >= 3, "sound " + juce::String (snd) + " gave " + juce::String ((int) on.size()) + " clicks");
+            }
+        }
+
+        beginTest ("accent off: every beat has the same level");
+        {
+            ff::MetronomeDsp m;
+            m.prepare (sr);
+            m.bpm = 120.0;
+            m.accentsEnabled = false;
+            std::vector<float> pk;
+            renderOnsets (m, sr, 4.0, 256, &pk);
+            expect (pk.size() >= 7);
+            for (auto v : pk) expect (std::abs (v - pk.front()) < 1.0e-4f, "uneven click level with accents off");
+            m.accentsEnabled = true;
+            m.reset();
+            pk.clear();
+            renderOnsets (m, sr, 2.0, 256, &pk);
+            expect (pk.size() >= 2 && pk[0] > pk[1], "the accent should be louder than the beat");
+        }
     }
 };
 static MetronomeTests metronomeTests;

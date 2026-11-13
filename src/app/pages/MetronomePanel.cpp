@@ -78,6 +78,10 @@ MetronomePanel::MetronomePanel (EngineHost& h, ProjectDocument& d, juce::Propert
         const double bpm = tap.tap (juce::Time::getMillisecondCounterHiRes());
         if (bpm > 0.0) { if (tap.numTaps() == 2) doc.undo().beginNewTransaction ("Tap tempo"); doc.setTempo (bpm); }
     };
+    accentToggle.setTooltip ("Off: every click uses the same plain sound, with no accented first beat.");
+    accentToggle.onClick = [this] {
+        if (! updating) doc.set (metroNode, ids::accentsOn, accentToggle.getToggleState(), false);
+    };
     startButton.setClickingTogglesState (false);
     startButton.onClick = [this] { togglePractice(); };
     startButton.setTooltip ("Start/stop the practice metronome (works with the transport stopped)");
@@ -128,7 +132,7 @@ MetronomePanel::MetronomePanel (EngineHost& h, ProjectDocument& d, juce::Propert
 
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &bpmSlider, &minusButton, &plusButton, &tapButton, &startButton, &sigNum, &sigDen, &subdivision, &swingSlider,
-             &sound, &volumeSlider, &rampToggle, &rampStep, &rampBars, &rampTarget, &missingSlider, &timerStart, &timerReset, &beats })
+             &sound, &volumeSlider, &rampToggle, &accentToggle, &rampStep, &rampBars, &rampTarget, &missingSlider, &timerStart, &timerReset, &beats })
         addAndMakeVisible (c);
 
     addLabel ("Time signature");   // 0
@@ -176,7 +180,10 @@ void MetronomePanel::refresh()
     volumeSlider.setValue ((double) metroNode[ids::volume] * 100.0, juce::dontSendNotification);
     swingSlider.setEnabled ((int) metroNode[ids::subdivision] % 2 == 0);
     beats.numBeats = doc.tsNum();
+    const bool accentsOn = ! metroNode.hasProperty (ids::accentsOn) || (bool) metroNode[ids::accentsOn];
+    accentToggle.setToggleState (accentsOn, juce::dontSendNotification);
     beats.levels = metroNode[ids::accents].toString();
+    if (! accentsOn) beats.levels = beats.levels.replaceCharacter ('2', '1');
     beats.repaint();
     repaint (tempoBox);
 }
@@ -185,7 +192,8 @@ void MetronomePanel::cycleBeat (int b)
 {
     auto s = metroNode[ids::accents].toString().paddedRight ('1', MetronomeDsp::maxBeats);
     const auto c = s[b];
-    const juce::juce_wchar next = c == '2' ? '1' : (c == '1' ? '0' : '2');
+    const bool accentsOn = ! metroNode.hasProperty (ids::accentsOn) || (bool) metroNode[ids::accentsOn];
+    const juce::juce_wchar next = ! accentsOn ? (c == '0' ? '1' : '0') : (c == '2' ? '1' : (c == '1' ? '0' : '2'));
     s = s.substring (0, b) + juce::String::charToString (next) + s.substring (b + 1);
     doc.undo().beginNewTransaction ("Accent pattern");
     doc.set (metroNode, ids::accents, s);
@@ -328,6 +336,8 @@ void MetronomePanel::resized()
         b.removeFromTop (12);
         labels[3]->setBounds (b.removeFromTop (18));
         beats.setBounds (b.removeFromTop (juce::jmin (70, b.getHeight())));
+        b.removeFromTop (8);
+        accentToggle.setBounds (b.removeFromTop (26));
     }
     // sound
     {

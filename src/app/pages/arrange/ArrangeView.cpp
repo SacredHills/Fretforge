@@ -2192,6 +2192,7 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
     dockClose.setTooltip ("Close the MIDI editor");
     dockClose.onClick = [this] { closeMidiEditor(); };
     session.selectionChanged.addChangeListener (this);
+    session.recordingFinished.addChangeListener (this);
     rebind();
     startTimerHz (30);
 }
@@ -2199,6 +2200,7 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
 ArrangeView::~ArrangeView()
 {
     session.selectionChanged.removeChangeListener (this);
+    session.recordingFinished.removeChangeListener (this);
     root.removeListener (this);
     settings.setValue ("arrangeZoom", geo.pixelsPerSecond);
 }
@@ -2302,8 +2304,14 @@ juce::Array<juce::ValueTree> ArrangeView::groupPartners (const juce::ValueTree& 
     return out;
 }
 
-void ArrangeView::changeListenerCallback (juce::ChangeBroadcaster*)
+void ArrangeView::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
+    if (source == &session.recordingFinished)   // keep what was just recorded highlighted
+    {
+        selection.clear();
+        for (auto& c : session.justRecorded)
+            if (c.getParent().isValid()) selection.addIfNotAlreadyThere (c);
+    }
     for (auto* h : headers) h->repaint();
     canvas.repaint();
 }

@@ -193,7 +193,8 @@ void MetronomeDsp::startTick() noexcept
         beatInBar = 0;
 
     const auto& set = clicks[(size_t) juce::jlimit (0, (int) numSounds - 1, sound.load())];
-    const int level = beatLevels[(size_t) beatInBar].load();
+    int level = beatLevels[(size_t) beatInBar].load();
+    if (level == accent && ! accentsEnabled.load()) level = normal;
     const bool muted = level == mute || barMuted[beatInBar];
 
     if (tickInBeat == 0)
@@ -229,7 +230,7 @@ void MetronomeDsp::renderVoice (float* const* outputs, int numChannels, int star
 void MetronomeDsp::triggerClick (bool accented) noexcept
 {
     const auto& set = clicks[(size_t) juce::jlimit (0, (int) numSounds - 1, sound.load())];
-    voice = accented ? &set.accent : &set.beat;
+    voice = accented && accentsEnabled.load() ? &set.accent : &set.beat;
     voicePos = 0;
     beatCounter.fetch_add (1);
 }

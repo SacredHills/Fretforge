@@ -51,6 +51,7 @@ juce::ValueTree createDefault (const juce::String& name)
     metro.setProperty (subdivision, 1, nullptr);
     metro.setProperty (sound, 0, nullptr);
     metro.setProperty (accents, "2111111111111111", nullptr);
+    metro.setProperty (accentsOn, true, nullptr);
     metro.setProperty (countInBars, 1, nullptr);
     root.appendChild (metro, nullptr);
 

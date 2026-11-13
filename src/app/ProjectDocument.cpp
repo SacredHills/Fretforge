@@ -208,8 +208,8 @@ void ProjectDocument::setTimeSignature (int num, int den)
 void ProjectDocument::tempoEdited()
 {
     const auto now = tempoMap();
-    if (haveLastMap && ! undoManager.isPerformingUndoRedo() && ! now.sameAs (lastMap) && ! (now.isConstant() && lastMap.isConstant()))
-        retimeMidi (lastMap, now);   // (a plain change of the project tempo, with no tempo points, leaves the clips where they are)
+    if (haveLastMap && ! undoManager.isPerformingUndoRedo() && ! now.sameAs (lastMap))
+        retimeMidi (lastMap, now);   // MIDI clips keep their musical positions, so they follow every tempo change
     lastMap = now;
     haveLastMap = true;
     pushAllToEngine();
@@ -269,6 +269,7 @@ void ProjectDocument::pushAllToEngine()
     e.metronome.volume = (float) (double) m[ids::volume];
     e.metronome.subdivision = (int) m[ids::subdivision];
     e.metronome.sound = (int) m[ids::sound];
+    e.metronome.accentsEnabled = ! m.hasProperty (ids::accentsOn) || (bool) m[ids::accentsOn];
     auto t = transport();
     e.loopEnabled = (bool) t[ids::loopEnabled];
     e.punchEnabled = (bool) t[ids::punchEnabled];
