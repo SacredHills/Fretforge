@@ -226,7 +226,11 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             bypass.setTooltip ("Bypass: the sound passes through untouched while this is lit");
             bypass.onClick = [this] { if (bypassControl.toggle) bypassControl.toggle(); syncBypass(); };
             if (bypassControl.isBypassed) { addAndMakeVisible (bypass); syncBypass(); }
-            for (auto* b : { &copy, &paste, &presets, &bypass, &undoButton, &redoButton })
+            pin.setClickingTogglesState (true);
+            pin.setColour (juce::TextButton::buttonOnColourId, palette::warn);
+            pin.setTooltip ("Pin: keep this plugin window on top of everything (and open) until you unpin it");
+            pin.onClick = [this] { if (onPin) onPin (pin.getToggleState()); };
+            for (auto* b : { &copy, &paste, &presets, &bypass, &undoButton, &redoButton, &pin })
             {
                 b->setWantsKeyboardFocus (false);
                 addAndMakeVisible (*b);
@@ -360,6 +364,8 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
             top.removeFromLeft (compact ? 3 : 4);
             paste.setBounds (top.removeFromLeft (compact ? 46 : 56));
             top.removeFromLeft (gap);
+            pin.setBounds (top.removeFromRight (compact ? 38 : 46));
+            top.removeFromRight (compact ? 3 : 6);
             status.setBounds (top);
             const juce::ScopedValueSetter<bool> svs (resizing, true);
             if (editor.isResizable() && editor.getWidth() >= minBarWidth) editor.setBounds (r);
@@ -376,7 +382,8 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         PluginManager& manager;
         juce::AudioPluginInstance& plugin;
         juce::AudioProcessorEditor& editor;
-        juce::TextButton copy { "Copy" }, paste { "Paste" }, presets { "Presets" }, bypass { "Bypass" }, undoButton { "Undo" }, redoButton { "Redo" };
+        juce::TextButton copy { "Copy" }, paste { "Paste" }, presets { "Presets" }, bypass { "Bypass" }, undoButton { "Undo" }, redoButton { "Redo" }, pin { "Pin" };
+        std::function<void (bool)> onPin;   // the window stays on top of everything while pinned
         std::weak_ptr<juce::AudioPluginInstance> weakPlugin;
         BypassControl bypassControl;
         juce::Label status;
@@ -399,6 +406,15 @@ struct PluginManager::EditorWindow final : public juce::DocumentWindow
         content = std::make_unique<Content> (m, plugin, *ed, std::move (bypass));
         setContentNonOwned (content.get(), true);
         setResizable (ed->isResizable(), false);
+        content->onPin = [this, &m, title] (bool on) {
+            setAlwaysOnTop (on);
+            if (on) { m.pinnedWindows.insert (title); toFront (true); } else m.pinnedWindows.erase (title);
+        };
+        if (m.pinnedWindows.count (title) != 0)   // pinned earlier: pinned again when the window is reopened
+        {
+            content->pin.setToggleState (true, juce::dontSendNotification);
+            setAlwaysOnTop (true);
+        }
         floating = std::make_unique<FloatAboveApp> (*this);
         centreWithSize (getWidth(), getHeight());
         setVisible (true);

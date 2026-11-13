@@ -460,7 +460,7 @@ void SessionController::showInsertMenu (juce::ValueTree track, int slot, juce::C
         else if (r == bypassId) { doc.undo().beginNewTransaction ("Bypass plugin"); n.setProperty (rig::ids::bypass, ! (bool) n[rig::ids::bypass], &doc.undo()); }
         else if (r == upId || r == downId) { doc.undo().beginNewTransaction ("Move plugin"); rig::moveInsert (track, slot, r == upId ? -1 : 1, &doc.undo()); }
         else if (r == sidechainNone) { doc.undo().beginNewTransaction ("Side-chain off"); n.removeProperty (rig::ids::sidechain, &doc.undo()); }
-        else if (r >= sidechainBase)
+        else if (r >= sidechainBase && r < sidechainBase + 10000)   // (the plugin list's own ids are far above this range)
         {
             auto src = doc.tracks().getChild (r - sidechainBase);
             if (! src.isValid()) return;

@@ -3,6 +3,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "engine/fx/PluginHost.h"
 #include <map>
+#include <set>
 
 namespace ff
 {
@@ -112,6 +113,7 @@ private:
     std::unique_ptr<juce::DocumentWindow> managerWindow;
     struct EditorWindow;
     std::map<juce::AudioPluginInstance*, std::unique_ptr<EditorWindow>> editors;
+    std::set<juce::String> pinnedWindows;   // titles of the plugin windows that are pinned on top
     std::unique_ptr<juce::FileChooser> presetChooser;
     std::function<void (juce::AudioPluginInstance*, const juce::String&)> restoredCallback();
     std::shared_ptr<juce::AudioPluginInstance> sharedFor (juce::AudioPluginInstance*);
