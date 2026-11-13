@@ -63,7 +63,7 @@ int InsertChain::latency() const noexcept
     return l;
 }
 
-void InsertChain::process (float* L, float* R, int n, const float* const* scL, const float* const* scR) noexcept
+void InsertChain::process (float* L, float* R, int n, const float* const* scL, const float* const* scR, juce::int64 inputOffset) noexcept
 {
     if (! isPreparedFor (sr) || maxBlock == 0) return;
     std::array<int, maxSlots> o;
@@ -71,14 +71,19 @@ void InsertChain::process (float* L, float* R, int n, const float* const* scL, c
     for (int done = 0; done < n;)
     {
         const int len = juce::jmin (maxBlock, n - done);
+        juce::int64 offset = inputOffset + done;
         for (int i = 0; i < count; ++i)
         {
             const int slot = o[(size_t) i];
             if (slot < 0 || slot >= maxSlots || bypass[(size_t) slot].load (std::memory_order_relaxed)) continue;
             if (auto* p = slots[(size_t) slot].active.load (std::memory_order_acquire))
+            {
+                const PlayHeadOffset at (offset);
+                offset -= juce::jmax (0, p->getLatencySamples());   // what follows hears this plugin's output, that much later
                 runPluginStereo (*p, scratch, midi, L + done, R + done, len,
                                  scL != nullptr && scL[slot] != nullptr ? scL[slot] + done : nullptr,
                                  scR != nullptr && scR[slot] != nullptr ? scR[slot] + done : nullptr);
+            }
         }
         done += len;
     }

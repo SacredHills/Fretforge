@@ -531,7 +531,9 @@ void PluginManager::menuTypes (bool instruments, juce::Array<juce::PluginDescrip
     juce::StringArray seen;
     for (auto& d : known.getTypes())
     {
-        if (d.isInstrument != instruments) continue;
+        // instruments that also take audio in (drum replacers / triggers such as Thruma) work as inserts too
+        const bool fits = d.isInstrument == instruments || (! instruments && d.isInstrument && d.numInputChannels > 0);
+        if (! fits) continue;
         const auto key = d.name.trim().toLowerCase() + "|" + d.pluginFormatName + "|" + d.manufacturerName.trim().toLowerCase() + "|"
                          + d.version + "|" + juce::String (d.uniqueId) + "|" + juce::String (d.numInputChannels) + "/" + juce::String (d.numOutputChannels);
         if (seen.contains (key)) continue;

@@ -1,14 +1,28 @@
 #include "EngineHost.h"
+#include "engine/ext/HostApi.h"
+
+// The host extension API for plugins (engine/ext/ravenyr_host_api.h), found by name at run time.
+#if JUCE_WINDOWS
+ #define FF_HOST_API_EXPORT extern "C" __declspec(dllexport)
+#else
+ #define FF_HOST_API_EXPORT extern "C" __attribute__((visibility ("default"), used))
+#endif
+FF_HOST_API_EXPORT const RavenyrHostApiV1* ravenyr_host_api_v1()
+{
+    return ff::hostapi::table();
+}
 
 namespace ff
 {
 EngineHost::EngineHost()
     : tuner (engine.analysisFifo(), [this] { return engine.getSampleRate(); })
 {
+    hostapi::attach (&engine);
 }
 
 EngineHost::~EngineHost()
 {
+    hostapi::attach (nullptr);
     deviceManager.removeChangeListener (this);
     deviceManager.removeMidiInputDeviceCallback ({}, this);
     deviceManager.removeAudioCallback (&engine);

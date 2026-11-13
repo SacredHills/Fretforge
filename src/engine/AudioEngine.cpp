@@ -245,6 +245,7 @@ void AudioEngine::dropGraphWhileStopped()
     if (deviceRunning.load()) return;
     delete pendingGraph.exchange (nullptr);
     collectGarbage();
+    liveGraph.store (nullptr);
     delete graph;
     graph = nullptr;
 }
@@ -495,6 +496,7 @@ void AudioEngine::process (const float* const* inputs, int numInputs, float* con
             // FIFO full (message thread stalled): leaking is safer than freeing here.
         }
         graph = g;
+        liveGraph.store (g, std::memory_order_release);
     }
     if (auto* cm = pendingClicks.exchange (nullptr))
     {

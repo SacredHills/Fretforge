@@ -42,6 +42,32 @@ private:
 };
 TransportPlayHead& transportPlayHead();
 
+/** While alive on the audio (or worker) thread, plugins processed on this thread read the transport shifted by
+    `samples`: the song position of the audio they are given. Playback reads clips ahead for delay compensation
+    and every plugin delays what follows it, so a plugin's input is not at the engine position. */
+struct PlayHeadOffset
+{
+    explicit PlayHeadOffset (juce::int64 samples) noexcept;
+    ~PlayHeadOffset() noexcept;
+    PlayHeadOffset (const PlayHeadOffset&) = delete;
+    PlayHeadOffset& operator= (const PlayHeadOffset&) = delete;
+private:
+    juce::int64 previous;
+};
+
+/** While alive on this thread: the key (PlayTrack::key) of the track whose plugins are being processed (0 = none).
+    Read by the host extension API (HostApi.h). */
+struct CurrentTrackScope
+{
+    explicit CurrentTrackScope (juce::int64 key) noexcept;
+    ~CurrentTrackScope() noexcept;
+    CurrentTrackScope (const CurrentTrackScope&) = delete;
+    CurrentTrackScope& operator= (const CurrentTrackScope&) = delete;
+    static juce::int64 current() noexcept;
+private:
+    juce::int64 previous;
+};
+
 void setPluginHost (PluginHost*);
 PluginHost* pluginHost();
 

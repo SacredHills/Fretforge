@@ -1,5 +1,6 @@
 #include "GraphMixer.h"
 #include "core/Timeline.h"
+#include "ext/HostApi.h"
 
 namespace ff
 {
@@ -54,14 +55,27 @@ void GraphMixer::updateLatencies (PlaybackGraph& g) noexcept
 
 void GraphMixer::processTrack (PlayTrack& t, float* L, float* R, int n) noexcept
 {
+    // plugins are told the song position of the audio they receive: playback reads this track's clips (and MIDI)
+    // readAhead() early for delay compensation
+    const fx::CurrentTrackScope trackScope (t.key);
+    const juce::int64 ahead = readAhead (t);
     if (t.instrument != nullptr)   // instrument tracks: the synth plays its MIDI, then the plugins (never idle)
     {
-        t.instrument->render (L, R, n, t.midiBuffer);
-        if (t.inserts != nullptr) t.inserts->process (L, R, n, t.scL.data(), t.scR.data());
+        {
+            const fx::PlayHeadOffset at (ahead);
+            t.instrument->render (L, R, n, t.midiBuffer);
+        }
+        if (t.inserts != nullptr)
+        {
+            const auto* ip = t.instrument->activePlugin();
+            t.inserts->process (L, R, n, t.scL.data(), t.scR.data(), ahead - (ip != nullptr ? juce::jmax (0, ip->getLatencySamples()) : 0));
+        }
         return;
     }
     if (t.rig == nullptr && t.inserts == nullptr) return;
     auto& idle = t.idle;
+    if (idle.sleeping && hostapi::wakeRequested (t.key)) idle = {};   // a plugin plays audio of its own (host API)
+    if (hostapi::wakeRequested (t.key)) idle.quietOut = 0;
     if (peakOf (L, R, n) > silenceThreshold) { idle.silentIn = 0; idle.sleeping = false; }
     else idle.silentIn += n;
     if (allowIdle && idle.sleeping)
@@ -70,8 +84,12 @@ void GraphMixer::processTrack (PlayTrack& t, float* L, float* R, int n) noexcept
         juce::FloatVectorOperations::clear (R, n);
         return;
     }
-    if (t.rig != nullptr) t.rig->process (L, R, n);
-    if (t.inserts != nullptr) t.inserts->process (L, R, n, t.scL.data(), t.scR.data());
+    if (t.rig != nullptr)
+    {
+        const fx::PlayHeadOffset at (ahead);
+        t.rig->process (L, R, n);
+    }
+    if (t.inserts != nullptr) t.inserts->process (L, R, n, t.scL.data(), t.scR.data(), ahead - (t.rig != nullptr ? t.rig->totalLatency() : 0));
     if (peakOf (L, R, n) > silenceThreshold) idle.quietOut = 0;
     else idle.quietOut += n;
     // nothing coming in and the tails (delay, reverb...) have died away: stop running the effects until sound arrives
@@ -235,7 +253,8 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
                 g.masterScL[(size_t) sc.first] = scBufL[(size_t) sc.second].data();
                 g.masterScR[(size_t) sc.first] = scBufR[(size_t) sc.second].data();
             }
-        g.masterInserts->process (outL, outR, n, g.masterScL.data(), g.masterScR.data());
+        // every track is read ahead by the master plugins' latency too, so the master's input is that far ahead
+        g.masterInserts->process (outL, outR, n, g.masterScL.data(), g.masterScR.data(), g.masterInserts->latency());
     }
     if (! g.masterLanes.empty())
     {

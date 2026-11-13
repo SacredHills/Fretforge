@@ -113,6 +113,7 @@ target_sources(ff_core PRIVATE
     src/engine/Recorder.cpp
     src/engine/PlaybackGraph.cpp
     src/engine/GraphMixer.cpp
+    src/engine/ext/HostApi.cpp
     src/engine/TrackWorkers.cpp
     src/engine/Exporter.cpp
     src/engine/AudioEngine.cpp
@@ -157,6 +158,12 @@ juce_add_gui_app(Ravenyr
     MICROPHONE_PERMISSION_TEXT "RAVENYR needs audio input to tune and record your instrument."
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png"
     VERSION ${PROJECT_VERSION})
+
+# plugins look up the host extension API (src/engine/ext/ravenyr_host_api.h) in the executable by name. Linux:
+# export only that symbol (exporting everything would let the app's JUCE clash with a plugin's own copy).
+if(UNIX AND NOT APPLE)
+    target_link_options(Ravenyr PRIVATE "LINKER:--dynamic-list=${CMAKE_CURRENT_SOURCE_DIR}/src/engine/ext/host_api.dynlist")
+endif()
 
 # Windows: JUCE's generated icon.ico only has 16/32/48/256 px images, so Windows scales them for desktop icons at
 # 125-200 % display scaling (blurry). Replace it with packaging/ravenyr.ico (16-256 px, each sized and sharpened).
