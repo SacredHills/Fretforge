@@ -18,6 +18,8 @@ public:
         preparedRate = sampleRate;
     }
     double getPreparedRate() const noexcept { return preparedRate.load(); }
+    /** Bypassed: the instrument makes no sound (notes held at that moment are released). */
+    std::atomic<bool> bypassed { false };
 
     std::shared_ptr<juce::AudioPluginInstance> setPlugin (std::shared_ptr<juce::AudioPluginInstance> p)
     {
@@ -33,6 +35,26 @@ public:
     {
         auto* p = active.load();
         if (p == nullptr || n > scratch.getNumSamples()) return;
+        if (bypassed.load())
+        {
+            if (! wasBypassed)   // let go of what is sounding, once, and drop the sound it makes
+            {
+                wasBypassed = true;
+                const int c = juce::jmax (p->getTotalNumInputChannels(), p->getTotalNumOutputChannels(), 1);
+                if (c <= scratch.getNumChannels())
+                {
+                    juce::MidiBuffer off;
+                    for (int chn = 1; chn <= 16; ++chn) { off.addEvent (juce::MidiMessage::allNotesOff (chn), 0); off.addEvent (juce::MidiMessage::allSoundOff (chn), 0); }
+                    juce::AudioBuffer<float> junk (scratch.getArrayOfWritePointers(), c, n);
+                    junk.clear();
+                    const juce::ScopedLock sl (p->getCallbackLock());
+                    if (! p->isSuspended()) p->processBlock (junk, off);
+                }
+            }
+            midi.clear();
+            return;
+        }
+        wasBypassed = false;
         const int ch = juce::jmax (p->getTotalNumInputChannels(), p->getTotalNumOutputChannels(), 1);
         if (ch > scratch.getNumChannels()) return;
         juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), ch, n);
@@ -55,5 +77,6 @@ private:
     std::atomic<double> preparedRate { 0.0 };
     double sr = 48000.0;
     int block = 512;
+    bool wasBypassed = false;   // audio thread only
 };
 } // namespace ff::fx

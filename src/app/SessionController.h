@@ -125,6 +125,7 @@ public:
     /** Right-click menu of a track's instrument: open it, change it (the plugin list), or remove it. */
     void showInstrumentContextMenu (juce::ValueTree track, juce::Component* target);
     void removeInstrument (juce::ValueTree track);
+    void toggleInstrumentBypass (juce::ValueTree track);
     /** Mono / stereo audio track: a stereo track records and monitors an input pair, a mono one a single input. */
     void setTrackStereo (juce::ValueTree track, bool stereo);
     /** The input choices of a track for its mode: single inputs for a mono track, pairs for a stereo one. */

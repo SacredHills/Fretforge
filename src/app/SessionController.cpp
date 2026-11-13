@@ -815,6 +815,14 @@ void SessionController::setTrackStereo (juce::ValueTree track, bool stereo)
     }
 }
 
+void SessionController::toggleInstrumentBypass (juce::ValueTree track)
+{
+    auto in = track.getChildWithName (midiclip::INSTRUMENT);
+    if (! in.isValid()) return;
+    doc.undo().beginNewTransaction ((bool) in[rig::ids::bypass] ? "Enable instrument" : "Bypass instrument");
+    in.setProperty (rig::ids::bypass, ! (bool) in[rig::ids::bypass], &doc.undo());
+}
+
 void SessionController::removeInstrument (juce::ValueTree track)
 {
     auto in = track.getChildWithName (midiclip::INSTRUMENT);
@@ -833,6 +841,7 @@ void SessionController::showInstrumentContextMenu (juce::ValueTree track, juce::
     {
         m.addSectionHeader (instrumentName (track));
         m.addItem (-10, "Open");
+        m.addItem (-12, "Bypass", true, (bool) track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::bypass]);
         m.addSubMenu ("Change instrument", change);
         m.addItem (-11, "Remove instrument");
     }
@@ -848,6 +857,7 @@ void SessionController::showInstrumentContextMenu (juce::ValueTree track, juce::
         if (r == -2) { plugins->showManager(); return; }
         if (r == -10) { openInstrument (track); return; }
         if (r == -11) { removeInstrument (track); return; }
+        if (r == -12) { toggleInstrumentBypass (track); return; }
         juce::String name;
         const auto desc = plugins->descriptionForMenuResult (r, PluginManager::instrumentMenu, name);
         if (desc.isNotEmpty()) setInstrument (track, desc, name);
@@ -858,6 +868,8 @@ void SessionController::showInstrumentContextMenu (juce::ValueTree track, juce::
 
 juce::String SessionController::instrumentName (const juce::ValueTree& track) const
 {
+    const auto in = track.getChildWithName (midiclip::INSTRUMENT);
+    if ((bool) in[rig::ids::bypass] && in[rig::ids::desc].toString().isNotEmpty()) return in[rig::ids::name].toString() + " (off)";
     const auto n = track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::name].toString();
     return n.isNotEmpty() ? n : juce::String ("No instrument");
 }
@@ -897,7 +909,12 @@ void SessionController::openInstrument (juce::ValueTree track)
 {
     if (plugins == nullptr) return;
     if (auto p = rigBank->instrumentPlugin (track))
-        plugins->showEditor (p, track[ids::name].toString() + " - " + instrumentName (track));
+    {
+        PluginManager::BypassControl bc;
+        bc.isBypassed = [this, track] { return (bool) track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::bypass]; };
+        bc.toggle = [this, track] { toggleInstrumentBypass (track); };
+        plugins->showEditor (p, track[ids::name].toString() + " - " + instrumentName (track), bc);
+    }
     else
     {
         const auto st = rigBank->instrumentStatus (track);

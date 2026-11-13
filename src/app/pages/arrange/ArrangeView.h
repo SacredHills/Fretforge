@@ -128,6 +128,9 @@ private:
     void refresh();
     void showMenu();
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override { refresh(); }
+    // the instrument is a child node: choosing or removing one changes the name shown on the header
+    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree& c) override { if (c.hasType (midiclip::INSTRUMENT)) refresh(); }
+    void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree& c, int) override { if (c.hasType (midiclip::INSTRUMENT)) refresh(); }
 };
 
 class TimelineCanvas : public juce::Component, public juce::FileDragAndDropTarget

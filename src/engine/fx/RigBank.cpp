@@ -163,6 +163,7 @@ std::shared_ptr<InstrumentSlot> makeOfflineInstrument (const juce::ValueTree& tr
     preparePlugin (*inst, sr, block);
     auto slot = std::make_shared<InstrumentSlot>();
     slot->prepare (sr, block);
+    slot->bypassed = (bool) node[rig::ids::bypass];
     slot->setPlugin (std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
     return slot;
 }
@@ -383,6 +384,7 @@ void RigBank::syncInstruments (bool& changed)
             changed = true;
         }
         auto& e = instruments[id];
+        e.slot->bypassed = (bool) n[rig::ids::bypass];
         if (e.loadedDesc != n[rig::ids::desc].toString()) loadInstrument (id);
     }
 }
@@ -903,7 +905,7 @@ void RigBank::valueTreePropertyChanged (juce::ValueTree& node, const juce::Ident
 {
     if (node.hasType (midiclip::INSTRUMENT))
     {
-        if (prop == rig::ids::desc) { bool changed = false; syncInstruments (changed); if (changed && onRigsChanged) onRigsChanged(); }
+        if (prop == rig::ids::desc || prop == rig::ids::bypass) { bool changed = false; syncInstruments (changed); if (changed && onRigsChanged) onRigsChanged(); }
         return;
     }
     if (node.hasType (timeline::ids::TRACK) && prop == timeline::ids::kind) { syncAll(); return; }
