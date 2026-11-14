@@ -1011,13 +1011,30 @@ void PluginManager::createAsync (const juce::String& descXml, double sr, int bs,
         done (nullptr, "\"" + d.name + "\" is disabled because it crashed or froze RAVENYR. Re-enable it under Plugins > Options.");
         return;
     }
+    createQueue.push_back ({ d, sr, bs, std::move (done) });
+    pumpCreateQueue();
+}
+
+void PluginManager::pumpCreateQueue()
+{
+    if (creating || createQueue.empty()) return;
+    creating = true;
+    auto job = std::move (createQueue.front());
+    createQueue.pop_front();
+    if (onLoadingPlugin) onLoadingPlugin (job.desc.name);
     std::weak_ptr<bool> token = alive;
-    fx::PluginActivity activity (d.name, d.fileOrIdentifier, "loading");
-    formats.createPluginInstanceAsync (d, sr, bs, [done, token, name = d.name, id = d.fileOrIdentifier] (std::unique_ptr<juce::AudioPluginInstance> inst, const juce::String& err) {
+    fx::PluginActivity activity (job.desc.name, job.desc.fileOrIdentifier, "loading");
+    formats.createPluginInstanceAsync (job.desc, job.sampleRate, job.blockSize,
+                                       [this, token, done = std::move (job.done), name = job.desc.name, id = job.desc.fileOrIdentifier]
+                                       (std::unique_ptr<juce::AudioPluginInstance> inst, const juce::String& err) {
         if (token.expired()) return;
         fx::registerPluginInstance (inst.get(), name, id);
         const auto message = inst == nullptr && err.isEmpty() ? "\"" + name + "\" could not be loaded (is it still installed?)" : err;
         done (std::move (inst), message);
+        if (token.expired()) return;
+        creating = false;
+        // the next one after the window has had a chance to repaint and take input
+        juce::Timer::callAfterDelay (15, [this, token] { if (! token.expired()) pumpCreateQueue(); });
     });
 }
 

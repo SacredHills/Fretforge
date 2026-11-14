@@ -4,6 +4,7 @@
 #include "engine/fx/PluginHost.h"
 #include <map>
 #include <set>
+#include <deque>
 
 namespace ff
 {
@@ -101,6 +102,8 @@ public:
     // fx::PluginHost
     void createAsync (const juce::String& descriptionXml, double sampleRate, int blockSize,
                       std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> done) override;
+    /** Called right before a queued plugin starts loading (the UI shows what is loading, then repaints at once). */
+    std::function<void (const juce::String& pluginName)> onLoadingPlugin;
     std::unique_ptr<juce::AudioPluginInstance> createBlocking (const juce::String& descriptionXml, double sampleRate, int blockSize,
                                                                juce::String& error) override;
 
@@ -118,6 +121,18 @@ private:
     std::function<void (juce::AudioPluginInstance*, const juce::String&)> restoredCallback();
     std::shared_ptr<juce::AudioPluginInstance> sharedFor (juce::AudioPluginInstance*);
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);
+    // plugins load one at a time with the message loop breathing in between: a project with many plugins used to
+    // load them back to back and the window could neither repaint nor react until the last one was done
+    struct PendingCreate
+    {
+        juce::PluginDescription desc;
+        double sampleRate = 48000.0;
+        int blockSize = 512;
+        std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> done;
+    };
+    std::deque<PendingCreate> createQueue;
+    bool creating = false;
+    void pumpCreateQueue();
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 };
 } // namespace ff

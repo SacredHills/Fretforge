@@ -1,4 +1,5 @@
 #pragma once
+#include "LoadingOverlay.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "StudioLookAndFeel.h"
 #include "EngineHost.h"
@@ -121,6 +122,7 @@ private:
     juce::OwnedArray<MilestonePage> milestonePages;
     juce::Array<juce::Component*> pages;
     juce::Label statusLeft, statusRight;
+    LoadingOverlay loadingOverlay;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::TooltipWindow tooltips { this, 600 };
     int currentSection = 0;

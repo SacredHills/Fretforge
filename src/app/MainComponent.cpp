@@ -105,9 +105,16 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
         addAndMakeVisible (l);
     }
     statusRight.setJustificationType (juce::Justification::centredRight);
+    addChildComponent (loadingOverlay);
+    loadingOverlay.source = [this] {
+        auto l = session != nullptr ? session->rigs().loadingNames() : juce::StringArray();
+        if (session != nullptr) l.addArray (session->cache.loadingFiles());
+        return l;
+    };
 
     doc->onStateChanged = [this] { updateTitleAndStatus(); };
     doc->onTreeReplaced = [this] {
+        if (doc->tracks().getNumChildren() > 0) loadingOverlay.begin ("Loading " + doc->displayName() + "...");   // shown and painted before the heavy part
         rigWindows.clear();
         session->rebind();
         transport->rebind();
@@ -127,6 +134,10 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     studioPage->arrange.onExportRequested = [this] { ExportDialog::show (this, *doc, *session, host, settings); };
     effectsPage->setPluginManager (pluginManager.get());
     session->plugins = pluginManager.get();
+    pluginManager->onLoadingPlugin = [this] (const juce::String& name) {
+        loadingOverlay.setCurrent ("loading " + name);
+        loadingOverlay.refreshNow();   // paint before the plugin blocks the window
+    };
     pluginManager->onPluginsReenabled = [this] { if (session != nullptr) session->rigs().retryFailedPlugins(); };
     juce::Timer::callAfterDelay (800, [safe = juce::Component::SafePointer<MainComponent> (this)] {
         if (safe != nullptr && safe->pluginManager != nullptr) safe->pluginManager->reportPreviousCrash (safe.getComponent());
@@ -322,6 +333,7 @@ void MainComponent::resized()
     statusLeft.setBounds (status);
 
     nav.setBounds (r.removeFromLeft (220));
+    loadingOverlay.setBounds (getLocalBounds());
     for (auto* p : pages)
         p->setBounds (r);
 }
