@@ -217,6 +217,16 @@ public:
             fx::transportPlayHead().update (i);
         }
 
+        beginTest ("host API: several tracks can be kept awake at once");
+        {
+            const auto* api = ff::hostapi::table();
+            api->wakeTrack (111);
+            api->wakeTrack (222);
+            api->wakeTrack (111);
+            expect (ff::hostapi::wakeRequested (111) && ff::hostapi::wakeRequested (222), "both tracks stay awake");
+            expect (! ff::hostapi::wakeRequested (333), "others are not");
+        }
+
         beginTest ("graph: outputs, sends and processing order");
         {
             juce::ValueTree tracks ("TRACKS");
