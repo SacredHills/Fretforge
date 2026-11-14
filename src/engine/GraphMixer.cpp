@@ -74,8 +74,11 @@ void GraphMixer::processTrack (PlayTrack& t, float* L, float* R, int n) noexcept
     }
     if (t.rig == nullptr && t.inserts == nullptr) return;
     auto& idle = t.idle;
-    if (idle.sleeping && hostapi::wakeRequested (t.key)) idle = {};   // a plugin plays audio of its own (host API)
-    if (hostapi::wakeRequested (t.key)) idle.quietOut = 0;
+    if (hostapi::wakeRequested (t.key))   // a plugin plays audio of its own (host API): keep it running
+    {
+        if (idle.sleeping) idle = {};
+        idle.quietOut = 0;
+    }
     if (peakOf (L, R, n) > silenceThreshold) { idle.silentIn = 0; idle.sleeping = false; }
     else idle.silentIn += n;
     if (allowIdle && idle.sleeping)

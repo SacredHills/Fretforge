@@ -2,6 +2,7 @@
 #include "engine/AudioEngine.h"
 #include "engine/PlaybackGraph.h"
 #include "engine/fx/PluginHost.h"
+#include <array>
 #include <atomic>
 #include <chrono>
 
@@ -10,8 +11,10 @@ namespace ff::hostapi
 namespace
 {
 std::atomic<AudioEngine*> engine { nullptr };
-std::atomic<juce::int64> wakeKey { 0 };
-std::atomic<juce::int64> wakeUntilMs { 0 };
+// tracks kept awake by their plugins (one entry per track, several plugins / tracks at once)
+constexpr int kWakeSlots = 64;
+std::array<std::atomic<juce::int64>, kWakeSlots> wakeKeys {};
+std::array<std::atomic<juce::int64>, kWakeSlots> wakeUntil {};
 
 juce::int64 nowMs() noexcept
 {
@@ -70,8 +73,17 @@ int64_t apiReadTrack (int64_t key, int64_t start, int64_t num, float* left, floa
 
 void apiWakeTrack (int64_t key)
 {
-    wakeKey.store ((juce::int64) key);
-    wakeUntilMs.store (nowMs() + 3000);
+    if (key == 0) return;
+    const auto now = nowMs();
+    int freeSlot = -1;
+    for (int i = 0; i < kWakeSlots; ++i)
+    {
+        if (wakeKeys[(size_t) i].load (std::memory_order_relaxed) == (juce::int64) key) { wakeUntil[(size_t) i].store (now + 3000); return; }
+        if (freeSlot < 0 && wakeUntil[(size_t) i].load (std::memory_order_relaxed) < now) freeSlot = i;
+    }
+    if (freeSlot < 0) return;
+    wakeUntil[(size_t) freeSlot].store (now + 3000);
+    wakeKeys[(size_t) freeSlot].store ((juce::int64) key);
 }
 
 const RavenyrHostApiV1 apiTable {
@@ -86,6 +98,10 @@ const RavenyrHostApiV1* table() noexcept { return &apiTable; }
 
 bool wakeRequested (juce::int64 key) noexcept
 {
-    return key != 0 && wakeKey.load (std::memory_order_relaxed) == key && nowMs() < wakeUntilMs.load (std::memory_order_relaxed);
+    if (key == 0) return false;
+    for (int i = 0; i < kWakeSlots; ++i)
+        if (wakeKeys[(size_t) i].load (std::memory_order_relaxed) == key)
+            return nowMs() < wakeUntil[(size_t) i].load (std::memory_order_relaxed);
+    return false;
 }
 } // namespace ff::hostapi
