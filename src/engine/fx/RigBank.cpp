@@ -579,14 +579,32 @@ void RigBank::prepareAsync (std::unique_ptr<juce::AudioPluginInstance> inst, juc
 {
     auto holder = std::make_shared<std::unique_ptr<juce::AudioPluginInstance>> (std::move (inst));
     std::weak_ptr<bool> token = alive;
-    pluginPrep.addJob ([holder, token, state = std::move (state), rate, block, sidechain, aux, then = std::move (then)] {
+    ++prepJobs;
+    pluginPrep.addJob ([this, holder, token, state = std::move (state), rate, block, sidechain, aux, then = std::move (then)] {
         restorePluginState (**holder, state);
-        preparePlugin (**holder, rate, block, sidechain, aux);
-        juce::MessageManager::callAsync ([holder, token, then] {
-            if (token.expired()) return;   // the plugin is freed with `holder`, on the message thread
-            then (std::move (*holder));
-        });
+        {
+            const std::lock_guard<std::mutex> lk (readyMutex);
+            readyQueue.push_back ([holder, then] { then (std::move (*holder)); });
+        }
+        --prepJobs;
+        juce::MessageManager::callAsync ([this, token] { if (! token.expired()) drainReady(); });
     });
+}
+
+void RigBank::drainReady()
+{
+    std::vector<std::function<void()>> run;
+    {
+        const std::lock_guard<std::mutex> lk (readyMutex);
+        run.swap (readyQueue);
+    }
+    for (auto& f : run) f();
+}
+
+void RigBank::finishLoads()
+{
+    while (prepJobs.load() > 0) juce::Thread::sleep (2);
+    drainReady();
 }
 
 void RigBank::requestPlugin (Entry& e, int slot)

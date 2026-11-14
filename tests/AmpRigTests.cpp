@@ -1025,6 +1025,7 @@ struct PluginSlotTests : juce::UnitTest
                 rg::addInsert (master, desc, "M3");
                 rg::findInserts (master).getChild (2).setProperty (rg::ids::slot, 7, nullptr);   // 0, 1, 7
                 bank.rebind (projectTree);
+                bank.finishLoads();   // plugins finish loading on worker threads and are handed over on the message thread
                 auto live = bank.insertsForTrack (project::masterId);
                 expect (live != nullptr);
                 if (live != nullptr)

@@ -3,6 +3,9 @@
 #include "InsertChain.h"
 #include "InstrumentSlot.h"
 #include <map>
+#include <mutex>
+#include <atomic>
+#include <functional>
 
 namespace ff { class AudioEngine; }
 
@@ -59,6 +62,9 @@ public:
         struct Plugin { juce::String desc, name, error; bool loading = false, loaded = false; int latency = 0; };
         std::array<Plugin, rig::numPluginSlots> plugins;
     };
+    /** Waits for plugins still being prepared on worker threads and hands them over (message thread). The running app
+        does this by itself; tests call it instead of running a message loop. */
+    void finishLoads();
     /** What is still loading (plugins, instruments, amp models, impulse responses), as short descriptions for a status line. */
     juce::StringArray loadingNames() const;
     /** Load status for a RIG node (a track's or the live one). */
@@ -137,6 +143,10 @@ private:
     /** Loading a plugin's saved settings (samples!) and preparing it can take seconds: done on worker threads while the
         message thread keeps the window alive, then `then` runs on the message thread with the ready plugin. */
     juce::ThreadPool pluginPrep { juce::ThreadPoolOptions{}.withThreadName ("FF plugin prep").withNumberOfThreads (2) };
+    std::mutex readyMutex;
+    std::vector<std::function<void()>> readyQueue;   // finished preparations, run on the message thread
+    std::atomic<int> prepJobs { 0 };
+    void drainReady();
     void prepareAsync (std::unique_ptr<juce::AudioPluginInstance> inst, juce::String state, double rate, int block, bool sidechain, int aux,
                        std::function<void (std::unique_ptr<juce::AudioPluginInstance>)> then);
     juce::ThreadPool loader { juce::ThreadPoolOptions{}.withThreadName ("FF rig loader").withNumberOfThreads (1) };
