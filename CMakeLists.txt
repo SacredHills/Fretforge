@@ -180,6 +180,7 @@ juce_add_binary_data(ff_resources SOURCES resources/ravenyr-logo.png resources/C
 target_sources(Ravenyr PRIVATE
     src/app/Main.cpp
     src/app/MainComponent.cpp
+    src/app/WinElevation.cpp
     src/app/GlobalKeys.cpp
     src/app/StudioLookAndFeel.cpp
     src/app/ProjectDocument.cpp

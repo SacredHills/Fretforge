@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "AppInfo.h"
+#include "WinElevation.h"
 #include "GlobalKeys.h"
 
 namespace ff
@@ -427,8 +428,37 @@ void MainComponent::requestQuit (std::function<void()> quit)
     });
 }
 
+bool MainComponent::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (auto& f : files)
+        if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3;mid;midi"))
+            return true;
+    return false;
+}
+
+void MainComponent::filesDropped (const juce::StringArray& files, int, int)
+{
+    showSection (0);
+    studioPage->showArrange();
+    studioPage->arrange.importDropped (files, (int) studioPage->arrange.geo.xFor (studioPage->arrange.playhead()), -1);   // new tracks at the playhead
+}
+
+
 void MainComponent::runStartupChecks()
 {
+    if (isRunningElevated())
+    {
+        juce::Logger::writeToLog ("Running as administrator: Windows blocks dragging files in from Explorer");
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                          .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                          .withTitle ("Running as administrator")
+                                          .withMessage ("RAVENYR was started as administrator. Windows does not allow dragging files from Explorer into a program running as administrator.\n\n"
+                                                        "Close it and start it normally (not \"Run as administrator\", and not from an installer that is still open) to drag files in.")
+                                          .withButton ("OK")
+                                          .withAssociatedComponent (this),
+                                      nullptr);
+    }
+
     juce::Component::SafePointer<MainComponent> safe (this);
     if (auto rec = doc->findCrashRecovery())
     {

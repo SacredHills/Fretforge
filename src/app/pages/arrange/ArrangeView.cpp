@@ -1597,8 +1597,10 @@ void TimelineCanvas::mouseDrag (const juce::MouseEvent& e)
                     auto parent = o.clip.getParent();
                     if (target.isValid() && parent != target)
                     {
+                        const bool wasSelected = owner.selection.contains (o.clip);   // removing it drops it from the selection
                         parent.removeChild (o.clip, &doc.undo());
                         target.appendChild (o.clip, &doc.undo());
+                        if (wasSelected) owner.selection.addIfNotAlreadyThere (o.clip);
                     }
                 }
             }
@@ -2233,12 +2235,14 @@ ArrangeView::ArrangeView (ProjectDocument& d, EngineHost& h, SessionController& 
     dockClose.onClick = [this] { closeMidiEditor(); };
     session.selectionChanged.addChangeListener (this);
     session.recordingFinished.addChangeListener (this);
+    session.onArrangementChanged = [this] { repaintAll(); };   // a waveform finished loading
     rebind();
     startTimerHz (30);
 }
 
 ArrangeView::~ArrangeView()
 {
+    session.onArrangementChanged = nullptr;
     session.selectionChanged.removeChangeListener (this);
     session.recordingFinished.removeChangeListener (this);
     root.removeListener (this);
@@ -2428,7 +2432,10 @@ void ArrangeView::timerCallback()
     // repaint what moves: everything while recording (the take grows), the playhead's old and new position while
     // playing, and nothing while the playhead stands still.
     const int x = (int) geo.xFor (playhead());
-    if (host.engine.isRecordingActive() || host.engine.isCountingIn())
+    const bool viewMoved = ! juce::exactlyEqual (geo.scrollX, lastScrollX) || ! juce::exactlyEqual (geo.pixelsPerSecond, lastPps);   // follow scrolled, or a zoom
+    lastScrollX = geo.scrollX;
+    lastPps = geo.pixelsPerSecond;
+    if (host.engine.isRecordingActive() || host.engine.isCountingIn() || viewMoved)
         repaintAll();
     else if (x != lastPlayheadX || host.engine.isPlaying())
     {
@@ -3024,7 +3031,8 @@ void ArrangeView::deleteSelection()
 {
     if (selection.isEmpty()) return;
     doc.undo().beginNewTransaction ("Delete clips");
-    for (auto& c : selection)
+    const auto doomed = selection;   // a copy: removing a clip also drops it from `selection` (valueTreeChildRemoved)
+    for (auto c : doomed)
         if (auto p = c.getParent(); p.isValid())
             p.removeChild (c, &doc.undo());
     selection.clear();
@@ -3167,8 +3175,9 @@ void ArrangeView::copySelection (bool cut)
     if (cut)
     {
         doc.undo().beginNewTransaction ("Cut");
-        for (auto& c : selection)
-            c.getParent().removeChild (c, &doc.undo());
+        const auto doomed = selection;   // a copy: see deleteSelection
+        for (auto c : doomed)
+            if (c.getParent().isValid()) c.getParent().removeChild (c, &doc.undo());
         selection.clear();
     }
     repaintAll();

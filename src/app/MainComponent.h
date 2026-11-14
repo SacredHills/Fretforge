@@ -41,11 +41,15 @@ private:
 };
 
 class MainComponent : public juce::Component,
+                      public juce::FileDragAndDropTarget,
                       public juce::ApplicationCommandTarget,
                       public juce::MenuBarModel,
                       private juce::Timer
 {
 public:
+    // audio / MIDI files dropped anywhere on the window (the arrange view takes them when dropped on it)
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int x, int y) override;
     enum Commands
     {
         cmdNew = 0x2000, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo,
