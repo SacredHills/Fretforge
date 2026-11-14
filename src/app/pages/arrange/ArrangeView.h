@@ -207,6 +207,7 @@ public:
     static constexpr int loopLane = 14;   // the loop bar's strip at the top
     static constexpr int exportLane = 12; // below it: the export range (what File > Export renders)
     static constexpr int numbersTop = loopLane + exportLane;
+    bool isZooming() const noexcept { return zooming; }
     void mouseMove (const juce::MouseEvent&) override;
     static inline const juce::Identifier exportStartId { "exportStart" }, exportEndId { "exportEnd" };   // TRANSPORT
 private:
@@ -232,7 +233,8 @@ private:
     // loop bar (like Studio One): drag the bar to move it, its ends to resize it, the empty strip to draw a new one
     enum class LoopDrag { none, move, left, right, draw } loopDrag = LoopDrag::none;
     double loopA0 = 0.0, loopB0 = 0.0;
-    bool scrubbing = false, zooming = false, exportDrag = false;
+    bool scrubbing = false, zooming = false, exportDrag = false, pendingLocate = false;
+    double pendingLocateTime = 0.0;
     double zoomPps0 = 0.0, zoomAnchor = 0.0, playheadBefore = 0.0;
     LoopDrag loopHit (float x, bool exportRange = false) const;
     juce::Identifier startId (bool exportRange) const;
@@ -276,8 +278,8 @@ private:
 };
 
 /** The Studio arrange window: toolbar, ruler, track headers and the clip timeline. */
-class ArrangeView : public juce::Component, private juce::Timer, private juce::ValueTree::Listener, private juce::ScrollBar::Listener,
-                    private juce::ChangeListener
+class ArrangeView : public juce::Component, public juce::FileDragAndDropTarget, private juce::Timer, private juce::ValueTree::Listener,
+                    private juce::ScrollBar::Listener, private juce::ChangeListener
 {
 public:
     ArrangeView (ProjectDocument&, EngineHost&, SessionController&, juce::PropertiesFile&);
@@ -303,11 +305,20 @@ public:
     /** Zoom to `pps` pixels per second keeping `time` under canvas x `x` (the ruler's drag-to-zoom). */
     void zoomAround (double pps, double time, float x);
     bool hasSelection() const { return ! selection.isEmpty(); }
+    /** True when two or more selected MIDI clips share a track. */
+    bool canCombineMidi() const;
+    /** Merges the selected MIDI clips of each track into one clip (one undo step). */
+    void combineMidiClips();
     /** Reorders: moves `tracks` as a block so they start at `insertIndex` (0..numTracks). */
     void moveTracks (juce::Array<juce::ValueTree> tracks, int insertIndex);
     void setTrackDropIndex (int index);
     int trackDropIndex() const { return dropIndex; }
     void paintOverChildren (juce::Graphics&) override;
+    // files dragged in from the system's file browser: dropping anywhere on the page imports them
+    bool isInterestedInFileDrag (const juce::StringArray&) override;
+    void filesDropped (const juce::StringArray&, int x, int y) override;
+    /** Imports audio / MIDI files at canvas position (x, y); a position outside the lanes means a new track at x (or 0). */
+    void importDropped (const juce::StringArray& files, int canvasX, int canvasY);
 
     // ---- shared with children ----
     ProjectDocument& doc;

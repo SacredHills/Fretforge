@@ -50,6 +50,8 @@ public:
     juce::Array<std::pair<int, juce::String>> interfaceOutputPairs() const;
 
     void deleteTrack (juce::ValueTree track);
+    /** Deletes all of them as one undo step. */
+    void deleteTracks (const juce::Array<juce::ValueTree>& tracks);
     juce::ValueTree duplicateTrack (juce::ValueTree track);
     juce::ValueTree findTrack (const juce::String& id);
     juce::StringArray inputChoiceNames (juce::Array<std::pair<int, bool>>& values) const; // (channel, stereo)

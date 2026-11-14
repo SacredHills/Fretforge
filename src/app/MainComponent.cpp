@@ -546,7 +546,7 @@ void MainComponent::getAllCommands (juce::Array<juce::CommandID>& c)
 {
     c.addArray ({ cmdNew, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo, cmdPlayStop, cmdReturnToZero, cmdBackToPlayStart,
                   cmdToggleClick, cmdTapTempo, cmdPracticeMetronome, cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow, cmdPlugins,
-                  cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdDelete,
+                  cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdCombineMidi, cmdDelete,
                   cmdCopy, cmdCut, cmdPaste, cmdSelectAll, cmdAddMarker, cmdZoomIn, cmdZoomOut, cmdZoomFit });
     for (int i = 0; i < numSections; ++i)
         c.add (cmdSectionBase + i);
@@ -593,6 +593,7 @@ void MainComponent::getCommandInfo (juce::CommandID id, juce::ApplicationCommand
         case cmdImport: info.setInfo ("Import Audio / MIDI...", "Import audio files at the playhead, or a MIDI file as instrument tracks", "Track", 0); info.addDefaultKeypress ('i', cmd); break;
         case cmdExport: info.setInfo ("Export Audio...", "Export the mix or stems", "File", 0); info.addDefaultKeypress ('e', cmd); break;
         case cmdSplit: info.setInfo ("Split at Playhead", "Split clips at the playhead", "Edit", 0); info.setActive (currentSection == 0); info.addDefaultKeypress ('s', 0); break;
+        case cmdCombineMidi: info.setInfo ("Combine MIDI Clips", "Merge the selected MIDI clips of a track into one clip", "Edit", 0); info.setActive (currentSection == 0 && studioPage->arrange.canCombineMidi()); info.addDefaultKeypress ('j', cmd); break;
         case cmdDuplicate: info.setInfo ("Duplicate", "Duplicate selected clips", "Edit", 0); info.setActive (currentSection == 0 && studioPage->arrange.hasSelection()); info.addDefaultKeypress ('d', cmd); break;
         case cmdDelete: info.setInfo ("Delete", "Delete selected clips", "Edit", 0); info.setActive (currentSection == 0 && (studioPage->arrange.hasSelection() || ! session->selectedTracks.isEmpty())); info.addDefaultKeypress (KP::deleteKey, 0); info.addDefaultKeypress (KP::backspaceKey, 0); break;
         case cmdCopy: info.setInfo ("Copy", "Copy selected clips", "Edit", 0); info.setActive (currentSection == 0 && studioPage->arrange.hasSelection()); info.addDefaultKeypress ('c', cmd); break;
@@ -651,6 +652,7 @@ bool MainComponent::perform (const InvocationInfo& info)
         case cmdExport: ExportDialog::show (this, *doc, *session, host, settings); return true;
         case cmdSplit: studioPage->arrange.splitAtPlayhead(); return true;
         case cmdDuplicate: studioPage->arrange.duplicateSelection(); return true;
+        case cmdCombineMidi: studioPage->arrange.combineMidiClips(); return true;
         case cmdDelete:
         {
             if (studioPage->arrange.hasSelection()) { studioPage->arrange.deleteSelection(); return true; }
@@ -667,7 +669,7 @@ bool MainComponent::perform (const InvocationInfo& info)
                                           [safe, tracks] (int r) {
                                               if (r != 1 || safe == nullptr) return;
                                               safe->session->selectedTracks.clear();
-                                              for (auto t : tracks) if (t.getParent().isValid()) safe->session->deleteTrack (t);
+                                              safe->session->deleteTracks (tracks);
                                           });
             return true;
         }
@@ -745,6 +747,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int index, const juce::String&)
             m.addCommandItem (cm, cmdSelectAll);
             m.addSeparator();
             m.addCommandItem (cm, cmdSplit);
+            m.addCommandItem (cm, cmdCombineMidi);
             m.addCommandItem (cm, cmdAddMarker);
             break;
         case 2:

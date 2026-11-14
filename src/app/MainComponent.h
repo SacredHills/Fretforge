@@ -51,7 +51,7 @@ public:
         cmdNew = 0x2000, cmdOpen, cmdSave, cmdSaveAs, cmdReveal, cmdUndo, cmdRedo,
         cmdPlayStop, cmdReturnToZero, cmdBackToPlayStart, cmdToggleClick, cmdTapTempo, cmdPracticeMetronome,
         cmdShortcuts, cmdAbout, cmdTunerWindow, cmdMetronomeWindow, cmdPlugins,
-        cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdDelete,
+        cmdRecord, cmdLoop, cmdPunch, cmdAddTrack, cmdImport, cmdExport, cmdSplit, cmdDuplicate, cmdCombineMidi, cmdDelete,
         cmdCopy, cmdCut, cmdPaste, cmdSelectAll, cmdAddMarker, cmdZoomIn, cmdZoomOut, cmdZoomFit,
         cmdSectionBase = 0x2100 // + section index
     };

@@ -446,6 +446,8 @@ void TrackHeader::mouseDown (const juce::MouseEvent& e)
         return;
     }
     owner.session.clickTrack (track, e.mods);
+    owner.clearSelection();   // picking tracks leaves no clip selected (Delete would remove the clips instead of the tracks)
+    owner.repaintAll();
     if (e.getNumberOfClicks() == 2)
         name.showEditor();
 }
@@ -548,7 +550,7 @@ void TrackHeader::showMenu()
         else if (r == 2) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx - 1, &o.doc.undo()); }
         else if (r == 3) { o.doc.undo().beginNewTransaction ("Move track"); tracks.moveChild (idx, idx + 1, &o.doc.undo()); }
         else if (r == 4) { for (auto x : o.session.tracksForEdit (t)) o.session.duplicateTrack (x); }
-        else if (r == 5) { for (auto x : o.session.tracksForEdit (t)) o.session.deleteTrack (x); }
+        else if (r == 5) o.session.deleteTracks (o.session.tracksForEdit (t));
         else if (r == 6)
         {
             juce::Array<juce::ValueTree> all;
@@ -950,7 +952,15 @@ void Ruler::mouseDown (const juce::MouseEvent& e)
     zoomPps0 = owner.geo.pixelsPerSecond;
     zoomAnchor = owner.geo.timeFor ((float) e.x);
     playheadBefore = owner.playhead();
-    owner.locate (owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown()));
+    const double clicked = owner.geo.snap (owner.geo.timeFor ((float) e.x), ! e.mods.isAltDown());
+    if (owner.host.engine.isPlaying())
+    {
+        // while playing, a click only jumps on release: a drag that turns into a zoom must not move the playhead at all
+        pendingLocate = true;
+        pendingLocateTime = clicked;
+    }
+    else
+        owner.locate (clicked);
 }
 
 juce::Identifier Ruler::startId (bool exportRange) const { return exportRange ? exportStartId : pids::loopStart; }
@@ -996,7 +1006,8 @@ void Ruler::mouseDrag (const juce::MouseEvent& e)
     if (scrubbing && ! zooming && std::abs (e.getDistanceFromDragStartY()) > 5 && std::abs (e.getDistanceFromDragStartY()) > std::abs (e.getDistanceFromDragStartX()))
     {
         zooming = true;   // a mostly vertical drag zooms (down: in, up: out); sideways while zooming scrolls
-        owner.locate (playheadBefore);   // zooming leaves the playhead where it was
+        if (pendingLocate) pendingLocate = false;       // playing: it never moved
+        else owner.locate (playheadBefore);              // stopped: zooming leaves the playhead where it was
     }
     if (zooming)
     {
@@ -1006,6 +1017,7 @@ void Ruler::mouseDrag (const juce::MouseEvent& e)
     }
     if (scrubbing)
     {
+        pendingLocate = false;
         owner.locate (owner.geo.snap (owner.geo.timeFor ((float) e.x), snapOn));
         return;
     }
@@ -1038,6 +1050,8 @@ void Ruler::mouseUp (const juce::MouseEvent&)
     if (tempoDrag.isValid() || tempoDragBase) { tempoDrag = {}; tempoDragBase = false; repaint(); return; }
     dragStart = -1.0;
     loopDrag = LoopDrag::none;
+    if (pendingLocate && scrubbing && ! zooming) owner.locate (pendingLocateTime);
+    pendingLocate = false;
     scrubbing = zooming = false;
 }
 
@@ -1094,6 +1108,10 @@ const std::vector<midiclip::Note>& TimelineCanvas::cachedNotes (const juce::Valu
 void TimelineCanvas::drawClip (juce::Graphics& g, const juce::ValueTree& clip, juce::Rectangle<float> r, juce::Colour colour,
                                bool selected)
 {
+    // Zoomed far in, a clip is many thousands of pixels wide. Shapes that big (rounded corners, outlines) draw
+    // with glitches, so only the visible part (plus a margin) is drawn; notes and waveforms use real positions.
+    r = r.withLeft (juce::jmax (r.getX(), -24.0f)).withRight (juce::jmin (r.getRight(), (float) getWidth() + 24.0f));
+    if (r.getWidth() < 2.0f) return;
     const bool muted = (bool) clip[ids::muted];
     const float alpha = muted ? 0.45f : 1.0f;
     g.setColour (palette::bg.interpolatedWith (colour, selected ? 0.5f : 0.28f).withAlpha (alpha));
@@ -1270,9 +1288,9 @@ void TimelineCanvas::paint (juce::Graphics& g)
     auto tr = owner.doc.transport();
     if ((bool) tr[pids::loopEnabled])
     {
-        const float a = geo.xFor (prop (tr, pids::loopStart)), b = geo.xFor (prop (tr, pids::loopEnd));
+        const float a = juce::jmax (-10.0f, geo.xFor (prop (tr, pids::loopStart))), b = juce::jmin ((float) getWidth() + 10.0f, geo.xFor (prop (tr, pids::loopEnd)));
         g.setColour (palette::accent.withAlpha (0.06f));
-        g.fillRect (juce::Rectangle<float> (a, 0.0f, b - a, (float) getHeight()));
+        if (b > a) g.fillRect (juce::Rectangle<float> (a, 0.0f, b - a, (float) getHeight()));
     }
 
     // clips (child order = layering: later children drawn on top)
@@ -1967,24 +1985,44 @@ void TimelineCanvas::mouseWheelMove (const juce::MouseEvent& e, const juce::Mous
 
 bool TimelineCanvas::isInterestedInFileDrag (const juce::StringArray& files)
 {
+    return owner.isInterestedInFileDrag (files);
+}
+
+void TimelineCanvas::filesDropped (const juce::StringArray& files, int x, int y)
+{
+    dropX = -1;
+    owner.importDropped (files, x, y);
+}
+
+static bool isImportable (const juce::StringArray& files)
+{
     for (auto& f : files)
         if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3;mid;midi"))
             return true;
     return false;
 }
 
-void TimelineCanvas::filesDropped (const juce::StringArray& files, int x, int y)
+bool ArrangeView::isInterestedInFileDrag (const juce::StringArray& files) { return isImportable (files); }
+
+void ArrangeView::filesDropped (const juce::StringArray& files, int x, int y)
 {
-    dropX = -1;
+    const auto p = canvas.getLocalPoint (this, juce::Point<int> (x, y));
+    importDropped (files, juce::jmax (0, p.x), p.y);
+}
+
+void ArrangeView::importDropped (const juce::StringArray& files, int canvasX, int canvasY)
+{
     juce::Array<juce::File> list;
     for (auto& f : files)
         if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3;mid;midi"))
             list.add (juce::File (f));
-    auto track = owner.trackAtIndex (owner.trackIndexAtY (y));
-    const auto r = owner.session.importFiles (list, track, owner.geo.snap (owner.geo.timeFor ((float) x)));
+    if (list.isEmpty()) return;
+    juce::ValueTree track;
+    if (canvasY >= 0 && canvasY < canvas.getHeight()) track = trackAtIndex (trackIndexAtY (canvasY));
+    const auto r = session.importFiles (list, track, geo.snap (geo.timeFor ((float) canvasX)));
     if (r.failed())
-        owner.showError ("Import problem", r.getErrorMessage());
-    owner.repaintAll();
+        showError ("Import problem", r.getErrorMessage());
+    repaintAll();
 }
 
 void TimelineCanvas::showClipMenu (juce::ValueTree clip)
@@ -2004,6 +2042,7 @@ void TimelineCanvas::showClipMenu (juce::ValueTree clip)
     {
         m.addItem (8, "Edit MIDI...  (double-click)");
         m.addItem (9, "Export as MIDI file...");
+        m.addItem (10, "Combine MIDI clips  (Ctrl+J)", owner.canCombineMidi());
     }
 
     // takes: other clips on this track overlapping this one
@@ -2029,6 +2068,7 @@ void TimelineCanvas::showClipMenu (juce::ValueTree clip)
         else if (r == 4) { um.beginNewTransaction ("Mute clip"); o.doc.set (clip, ids::muted, ! (bool) clip[ids::muted]); }
         else if (r == 8) o.openMidiEditor (clip);
         else if (r == 9) o.exportMidi (clip);
+        else if (r == 10) o.combineMidiClips();
         else if (r == 5)
         {
             if (auto a = o.session.audioFor (clip))
@@ -2372,7 +2412,7 @@ void ArrangeView::timerCallback()
     for (auto* h : headers)
         h->tickMeter();
 
-    if (host.engine.isPlaying() && followButton.getToggleState())
+    if (host.engine.isPlaying() && followButton.getToggleState() && ! ruler.isZooming())
     {
         const double ph = playhead();
         const double viewSec = canvas.getWidth() / geo.pixelsPerSecond;
@@ -3049,6 +3089,64 @@ void ArrangeView::duplicateSelection()
         c.getParent().appendChild (copy, &doc.undo());
         created.add (copy);
     }
+    selection = created;
+    repaintAll();
+}
+
+namespace
+{
+std::map<juce::String, juce::Array<juce::ValueTree>> midiClipsByTrack (const juce::Array<juce::ValueTree>& selection)
+{
+    std::map<juce::String, juce::Array<juce::ValueTree>> groups;
+    for (auto& c : selection)
+        if (c.getParent().isValid() && midiclip::isMidiClip (c))
+            groups[c.getParent()[ids::id].toString()].add (c);
+    return groups;
+}
+}
+
+bool ArrangeView::canCombineMidi() const
+{
+    for (auto& [id, list] : midiClipsByTrack (selection))
+        if (list.size() > 1) return true;
+    return false;
+}
+
+void ArrangeView::combineMidiClips()
+{
+    juce::Array<juce::ValueTree> created;
+    bool began = false;
+    for (auto& [id, list] : midiClipsByTrack (selection))
+    {
+        if (list.size() < 2) continue;
+        auto sorted = list;
+        std::stable_sort (sorted.begin(), sorted.end(), [] (const juce::ValueTree& a, const juce::ValueTree& b) { return prop (a, ids::start) < prop (b, ids::start); });
+        const double start = prop (sorted.getFirst(), ids::start);
+        double end = start;
+        std::vector<midiclip::Note> notes;
+        std::vector<midiclip::Pedal> pedal;
+        for (auto& c : sorted)
+        {
+            std::vector<midiclip::Note> n;
+            std::vector<midiclip::Pedal> p;
+            midiclip::clipContent (c, n, p);
+            const double shift = prop (c, ids::start) - start;
+            for (auto& x : n) { x.start += shift; notes.push_back (x); }
+            for (auto& x : p) { x.time += shift; pedal.push_back (x); }
+            end = juce::jmax (end, clipEnd (c));
+        }
+        std::stable_sort (notes.begin(), notes.end(), [] (const midiclip::Note& a, const midiclip::Note& b) { return a.start < b.start; });
+        std::stable_sort (pedal.begin(), pedal.end(), [] (const midiclip::Pedal& a, const midiclip::Pedal& b) { return a.time < b.time; });
+        auto merged = midiclip::createMidiClip (sorted.getFirst()[ids::name].toString(), start, notes, pedal);
+        merged.setProperty (ids::length, juce::jmax (0.25, end - start), nullptr);   // keeps the gaps and the tail of the last clip
+        if (sorted.getFirst().hasProperty (midiclip::channel)) merged.setProperty (midiclip::channel, sorted.getFirst()[midiclip::channel], nullptr);
+        if (! began) { doc.undo().beginNewTransaction ("Combine MIDI clips"); began = true; }
+        auto track = sorted.getFirst().getParent();
+        for (auto& c : sorted) track.removeChild (c, &doc.undo());
+        track.appendChild (merged, &doc.undo());
+        created.add (merged);
+    }
+    if (created.isEmpty()) return;
     selection = created;
     repaintAll();
 }

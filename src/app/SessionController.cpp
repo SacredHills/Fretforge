@@ -744,6 +744,26 @@ void SessionController::deleteTrack (juce::ValueTree track)
     doc.tracks().removeChild (track, &doc.undo());
 }
 
+void SessionController::deleteTracks (const juce::Array<juce::ValueTree>& tracks)
+{
+    juce::Array<juce::ValueTree> list;
+    for (auto& t : tracks)
+        if (t.isValid() && t.getParent() == doc.tracks()) list.addIfNotAlreadyThere (t);
+    if (list.isEmpty()) return;
+    juce::StringArray busy;
+    for (auto& t : list)
+        if (sessionActive && recorders.count (t[ids::id].toString()) > 0) busy.add (t[ids::name].toString());
+    if (busy.size() > 0 && onError)
+        onError ("Track is recording", "Stop recording before deleting: " + busy.joinIntoString (", "));
+    doc.undo().beginNewTransaction (list.size() > 1 ? "Delete " + juce::String (list.size()) + " tracks" : juce::String ("Delete track"));
+    for (auto& t : list)
+    {
+        if (sessionActive && recorders.count (t[ids::id].toString()) > 0) continue;
+        removeRoutesTo (doc.tracks(), t[ids::id].toString(), &doc.undo());
+        doc.tracks().removeChild (t, &doc.undo());
+    }
+}
+
 juce::ValueTree SessionController::duplicateTrack (juce::ValueTree track)
 {
     auto copy = track.createCopy();
