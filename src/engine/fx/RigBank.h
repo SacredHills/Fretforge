@@ -59,6 +59,8 @@ public:
         struct Plugin { juce::String desc, name, error; bool loading = false, loaded = false; int latency = 0; };
         std::array<Plugin, rig::numPluginSlots> plugins;
     };
+    /** What is still loading (plugins, instruments, amp models, impulse responses), as short descriptions for a status line. */
+    juce::StringArray loadingNames() const;
     /** Load status for a RIG node (a track's or the live one). */
     Status statusFor (const juce::ValueTree& rigTree) const;
     /** The running rig for a RIG node (nullptr if none). */
@@ -114,6 +116,7 @@ private:
         std::shared_ptr<InstrumentSlot> slot;
         juce::ValueTree node;   // the INSTRUMENT node
         juce::String loadedDesc;
+        int loadedAux = 0;
         Status::Plugin status;
         int generation = 0;
     };

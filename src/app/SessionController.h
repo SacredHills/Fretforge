@@ -128,6 +128,10 @@ public:
     void showInstrumentContextMenu (juce::ValueTree track, juce::Component* target);
     void removeInstrument (juce::ValueTree track);
     void toggleInstrumentBypass (juce::ValueTree track);
+    /** Gives every extra output of an instrument (a multi-output drum sampler, say) its own bus track. */
+    void instrumentOutputsToTracks (juce::ValueTree track);
+    /** Takes those tracks away again (the instrument goes back to its one stereo output). */
+    void removeInstrumentOutputTracks (juce::ValueTree track);
     /** Mono / stereo audio track: a stereo track records and monitors an input pair, a mono one a single input. */
     void setTrackStereo (juce::ValueTree track, bool stereo);
     /** The input choices of a track for its mode: single inputs for a mono track, pairs for a stereo one. */

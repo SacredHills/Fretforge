@@ -39,6 +39,8 @@ public:
     void invalidate (const juce::File&);
     void clear();
     bool isLoading() const;
+    /** File names waiting to be decoded (the first one is being decoded now). */
+    juce::StringArray loadingFiles() const;
 
     juce::AudioFormatManager& formats() { return formatManager; }
     std::function<void()> onLoaded;

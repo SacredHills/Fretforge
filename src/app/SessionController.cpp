@@ -851,6 +851,61 @@ void SessionController::removeInstrument (juce::ValueTree track)
     track.removeChild (in, &doc.undo());
 }
 
+void SessionController::instrumentOutputsToTracks (juce::ValueTree track)
+{
+    auto in = track.getChildWithName (midiclip::INSTRUMENT);
+    auto plugin = rigBank->instrumentPlugin (track);
+    if (! in.isValid() || plugin == nullptr)
+    {
+        if (onError) onError ("Instrument outputs", "Wait until the instrument has finished loading, then try again.");
+        return;
+    }
+    const int buses = plugin->getBusCount (false);
+    if (buses < 2)
+    {
+        if (onError) onError ("Instrument outputs", in[rig::ids::name].toString() + " has only one stereo output, so there is nothing to split off.");
+        return;
+    }
+    const int extra = juce::jmin (buses - 1, 15);
+    auto tracks = doc.tracks();
+    if (tracks.getNumChildren() + extra > maxTracks)
+    {
+        if (onError) onError ("Instrument outputs", "That would be more than " + juce::String (maxTracks) + " tracks.");
+        return;
+    }
+    rigBank->captureAllPluginStates();   // the instrument is reloaded with its outputs on: keep its settings
+    const auto id = track[ids::id].toString();
+    doc.undo().beginNewTransaction ("Instrument outputs to tracks");
+    // existing output tracks of this instrument are replaced
+    for (int i = tracks.getNumChildren(); --i >= 0;)
+        if (tracks.getChild (i)[ids::instrSource].toString() == id) tracks.removeChild (i, &doc.undo());
+    int at = tracks.indexOf (track) + 1;
+    for (int b = 1; b <= extra; ++b)
+    {
+        auto name = plugin->getBus (false, b) != nullptr ? plugin->getBus (false, b)->getName() : juce::String ("Output " + juce::String (b + 1));
+        auto t = createBusTrack (track[ids::name].toString() + " - " + name, tracks.indexOf (track), TrackKind::bus);
+        t.setProperty (ids::colour, track[ids::colour], nullptr);
+        t.setProperty (ids::instrSource, id, nullptr);
+        t.setProperty (ids::instrBus, b, nullptr);
+        tracks.addChild (t, at++, &doc.undo());
+    }
+    in.setProperty (rig::ids::auxOutputs, extra, &doc.undo());
+}
+
+void SessionController::removeInstrumentOutputTracks (juce::ValueTree track)
+{
+    auto tracks = doc.tracks();
+    const auto id = track[ids::id].toString();
+    doc.undo().beginNewTransaction ("Remove instrument output tracks");
+    for (int i = tracks.getNumChildren(); --i >= 0;)
+        if (tracks.getChild (i)[ids::instrSource].toString() == id) tracks.removeChild (i, &doc.undo());
+    if (auto in = track.getChildWithName (midiclip::INSTRUMENT); in.isValid() && (int) in[rig::ids::auxOutputs] != 0)
+    {
+        rigBank->captureAllPluginStates();
+        in.setProperty (rig::ids::auxOutputs, 0, &doc.undo());
+    }
+}
+
 void SessionController::showInstrumentContextMenu (juce::ValueTree track, juce::Component* target)
 {
     if (plugins == nullptr || ! isInstrumentTrack (track)) return;
@@ -863,6 +918,8 @@ void SessionController::showInstrumentContextMenu (juce::ValueTree track, juce::
         m.addItem (-10, "Open");
         m.addItem (-12, "Bypass", true, (bool) track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::bypass]);
         m.addSubMenu ("Change instrument", change);
+        m.addItem (-13, "Outputs to tracks", true, (int) track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::auxOutputs] > 0);
+        if ((int) track.getChildWithName (midiclip::INSTRUMENT)[rig::ids::auxOutputs] > 0) m.addItem (-14, "Remove output tracks");
         m.addItem (-11, "Remove instrument");
     }
     else
@@ -878,6 +935,8 @@ void SessionController::showInstrumentContextMenu (juce::ValueTree track, juce::
         if (r == -10) { openInstrument (track); return; }
         if (r == -11) { removeInstrument (track); return; }
         if (r == -12) { toggleInstrumentBypass (track); return; }
+        if (r == -13) { instrumentOutputsToTracks (track); return; }
+        if (r == -14) { removeInstrumentOutputTracks (track); return; }
         juce::String name;
         const auto desc = plugins->descriptionForMenuResult (r, PluginManager::instrumentMenu, name);
         if (desc.isNotEmpty()) setInstrument (track, desc, name);

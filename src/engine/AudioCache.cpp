@@ -131,6 +131,14 @@ bool AudioCache::isLoading() const
     return ! queue.isEmpty();
 }
 
+juce::StringArray AudioCache::loadingFiles() const
+{
+    juce::StringArray names;
+    const juce::ScopedLock sl (lock);
+    for (auto& q : queue) names.add (juce::File (q).getFileName());
+    return names;
+}
+
 void AudioCache::run()
 {
     juce::AudioFormatManager fm; // own instance: format readers are not shared across threads

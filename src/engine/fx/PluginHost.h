@@ -80,7 +80,8 @@ void runPluginStereo (juce::AudioPluginInstance&, juce::AudioBuffer<float>& scra
                       float* left, float* right, int n, const float* scLeft = nullptr, const float* scRight = nullptr) noexcept;
 /** Asks for a stereo (or else mono) main bus, switches off side-chain buses if it can, and prepares the plugin. */
 /** allowSidechain: switch the second input bus on (insert plugins only; instruments and guitar rigs keep it off). */
-void preparePlugin (juce::AudioPluginInstance&, double sampleRate, int blockSize, bool allowSidechain = false);
+/** auxOutputs: how many extra output buses (stereo) to switch on, after the main one (instruments with several outputs). */
+void preparePlugin (juce::AudioPluginInstance&, double sampleRate, int blockSize, bool allowSidechain = false, int auxOutputs = 0);
 
 // ---- crash protection ----
 /** Remembers a plugin instance's name and file, so a crash report can name the plugin it happened in, and starts

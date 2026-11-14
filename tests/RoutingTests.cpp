@@ -79,6 +79,35 @@ public:
     }
 };
 
+/** An instrument with two stereo outputs: 0.2 on the main one, 0.3 on the second (when it is switched on). */
+class TwoOutPlugin final : public juce::AudioPluginInstance
+{
+public:
+    TwoOutPlugin() : juce::AudioPluginInstance (BusesProperties().withOutput ("Main", juce::AudioChannelSet::stereo())
+                                                    .withOutput ("Second", juce::AudioChannelSet::stereo(), false)) {}
+    void fillInPluginDescription (juce::PluginDescription& d) const override { d.name = "TwoOut"; }
+    const juce::String getName() const override { return "TwoOut"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    double getTailLengthSeconds() const override { return 0.0; }
+    bool acceptsMidi() const override { return true; }
+    bool producesMidi() const override { return false; }
+    bool hasEditor() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+    void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer&) override
+    {
+        for (int c = 0; c < b.getNumChannels(); ++c)
+            juce::FloatVectorOperations::fill (b.getWritePointer (c), c < 2 ? 0.2f : 0.3f, b.getNumSamples());
+    }
+};
+
 /** Records the transport position it is given while processing (and has a settable latency). */
 class ProbePlugin final : public juce::AudioPluginInstance
 {
@@ -164,6 +193,40 @@ public:
             kick.setProperty (tl::ids::mute, true, nullptr);
             g = buildPlaybackGraph (tracks, noBundle, cache, opt);
             expectWithinAbsoluteError (mixOnce (*g, m, src), 0.4f, 1.0e-4f);   // a muted source does not trigger it
+        }
+
+        beginTest ("an instrument's extra output plays into its own bus track");
+        {
+            juce::ValueTree tracks ("TRACKS");
+            auto inst = track (tracks, "Kit", tl::TrackKind::instrument);
+            auto bus = track (tracks, "Kit - Second", tl::TrackKind::bus);
+            auto slot = std::make_shared<fx::InstrumentSlot>();
+            slot->auxOutputs = 1;
+            slot->prepare (48000.0, 256);
+            auto plug = std::make_shared<TwoOutPlugin>();
+            fx::preparePlugin (*plug, 48000.0, 256, false, 1);
+            expect (plug->getBus (false, 1)->isEnabled(), "the second output is switched on");
+            slot->setPlugin (plug);
+            GraphBuildOptions opt;
+            opt.instrumentFor = [&] (const juce::ValueTree& t) { return t == inst ? slot : nullptr; };
+            ConstSource src;
+            src.levels = { 0.0f, 0.0f };
+            GraphMixer m;
+            m.prepare (256, 48000.0);
+
+            auto g = buildPlaybackGraph (tracks, noBundle, cache, opt);
+            expectWithinAbsoluteError (mixOnce (*g, m, src), 0.2f, 1.0e-4f);   // not routed: only the main output is heard
+
+            bus.setProperty (tl::ids::instrSource, inst[tl::ids::id].toString(), nullptr);
+            bus.setProperty (tl::ids::instrBus, 1, nullptr);
+            g = buildPlaybackGraph (tracks, noBundle, cache, opt);
+            expectEquals ((int) g->tracks[0].auxOuts.size(), 1);
+            expect (g->tracks[1].level > g->tracks[0].level, "the bus comes after the instrument");
+            expectWithinAbsoluteError (mixOnce (*g, m, src), 0.5f, 1.0e-4f);   // main + the second output through its bus
+
+            bus.setProperty (tl::ids::mute, true, nullptr);
+            g = buildPlaybackGraph (tracks, noBundle, cache, opt);
+            expectWithinAbsoluteError (mixOnce (*g, m, src), 0.2f, 1.0e-4f);   // muting the bus silences just that output
         }
 
         beginTest ("plugins see the host transport");

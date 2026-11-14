@@ -160,8 +160,10 @@ std::shared_ptr<InstrumentSlot> makeOfflineInstrument (const juce::ValueTree& tr
     auto inst = host->createBlocking (desc, sr, block, err);
     if (inst == nullptr) { warnings.add ("Instrument \"" + name + "\" could not be loaded" + (err.isNotEmpty() ? ": " + err : juce::String()) + "."); return nullptr; }
     restorePluginState (*inst, node[rig::ids::state].toString());
-    preparePlugin (*inst, sr, block);
+    const int aux = juce::jlimit (0, 15, (int) node[rig::ids::auxOutputs]);
+    preparePlugin (*inst, sr, block, false, aux);
     auto slot = std::make_shared<InstrumentSlot>();
+    slot->auxOutputs = aux;
     slot->prepare (sr, block);
     slot->bypassed = (bool) node[rig::ids::bypass];
     slot->setPlugin (std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
@@ -215,7 +217,7 @@ void RigBank::prepareAll (double sr, int block)
     for (auto& [id, e] : instruments)
     {
         e.slot->prepare (sr, block);
-        if (auto p = e.slot->getPlugin()) preparePlugin (*p, sr, block);
+        if (auto p = e.slot->getPlugin()) preparePlugin (*p, sr, block, false, e.slot->auxOutputs.load());
     }
 }
 
@@ -253,6 +255,30 @@ RigBank::Entry* RigBank::entryFor (const juce::ValueTree& t)
 const RigBank::Entry* RigBank::entryFor (const juce::ValueTree& t) const
 {
     return const_cast<RigBank*> (this)->entryFor (t);
+}
+
+juce::StringArray RigBank::loadingNames() const
+{
+    juce::StringArray out;
+    const auto nameOf = [] (const juce::String& n) { return n.isNotEmpty() ? n : juce::String ("plugin"); };
+    const auto onTrack = [] (const juce::ValueTree& track) {
+        const auto n = track[timeline::ids::name].toString();
+        return n.isNotEmpty() ? " (" + n + ")" : juce::String();
+    };
+    const auto rigLoading = [&] (const Entry& e, const juce::String& where) {
+        for (auto& p : e.status.plugins)
+            if (p.loading) out.add (nameOf (p.name) + where);
+        if (e.status.modelLoading) out.add ("amp model " + juce::File (e.status.modelPath).getFileNameWithoutExtension() + where);
+        if (e.status.irLoading) out.add ("cabinet " + juce::File (e.status.irPath).getFileNameWithoutExtension() + where);
+    };
+    rigLoading (liveEntry, " (live rig)");
+    for (auto& [id, e] : tracks) rigLoading (e, onTrack (e.tree.getParent()));
+    for (auto& [id, e] : inserts)
+        for (auto& s : e.status)
+            if (s.loading) out.add (nameOf (s.name) + onTrack (e.track));
+    for (auto& [id, e] : instruments)
+        if (e.status.loading) out.add (nameOf (e.status.name) + onTrack (e.node.getParent()));
+    return out;
 }
 
 RigBank::Status RigBank::statusFor (const juce::ValueTree& t) const
@@ -385,7 +411,9 @@ void RigBank::syncInstruments (bool& changed)
         }
         auto& e = instruments[id];
         e.slot->bypassed = (bool) n[rig::ids::bypass];
-        if (e.loadedDesc != n[rig::ids::desc].toString()) loadInstrument (id);
+        const int aux = juce::jlimit (0, 15, (int) n[rig::ids::auxOutputs]);
+        e.slot->auxOutputs = aux;
+        if (e.loadedDesc != n[rig::ids::desc].toString() || e.loadedAux != aux) loadInstrument (id);
     }
 }
 
@@ -393,6 +421,7 @@ void RigBank::loadInstrument (const juce::String& key)
 {
     auto& e = instruments[key];
     e.loadedDesc = e.node[rig::ids::desc].toString();
+    e.loadedAux = e.slot->auxOutputs.load();
     e.status = {};
     e.status.desc = e.loadedDesc;
     e.status.name = e.node[rig::ids::name].toString();
@@ -419,7 +448,7 @@ void RigBank::loadInstrument (const juce::String& key)
         std::shared_ptr<juce::AudioPluginInstance> old;
         {
             const juce::ScopedLock lk (lock);
-            preparePlugin (*inst, en.slot->getPreparedRate() > 0 ? en.slot->getPreparedRate() : r, juce::jmax (b, 512));
+            preparePlugin (*inst, en.slot->getPreparedRate() > 0 ? en.slot->getPreparedRate() : r, juce::jmax (b, 512), false, en.slot->auxOutputs.load());
             en.status.latency = inst->getLatencySamples();
             old = en.slot->setPlugin (std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
         }
@@ -905,7 +934,7 @@ void RigBank::valueTreePropertyChanged (juce::ValueTree& node, const juce::Ident
 {
     if (node.hasType (midiclip::INSTRUMENT))
     {
-        if (prop == rig::ids::desc || prop == rig::ids::bypass) { bool changed = false; syncInstruments (changed); if (changed && onRigsChanged) onRigsChanged(); }
+        if (prop == rig::ids::desc || prop == rig::ids::bypass || prop == rig::ids::auxOutputs) { bool changed = false; syncInstruments (changed); if (changed && onRigsChanged) onRigsChanged(); }
         return;
     }
     if (node.hasType (timeline::ids::TRACK) && prop == timeline::ids::kind) { syncAll(); return; }

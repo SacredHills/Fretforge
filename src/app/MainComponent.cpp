@@ -169,7 +169,7 @@ MainComponent::MainComponent (juce::PropertiesFile& s) : settings (s)
     showSection (juce::jlimit (0, pages.size() - 1, settings.getIntValue ("lastSection", 0)));  // an old "Tools" index lands on Settings
     updateTitleAndStatus();
     setSize (1440, 900);
-    startTimerHz (2);
+    startTimerHz (4);
 }
 
 MainComponent::~MainComponent()
@@ -243,7 +243,24 @@ void MainComponent::updateTitleAndStatus()
     left << (doc->hasLocation() ? doc->getBundle().getFullPathName() : juce::String ("(not saved)"));
     if (doc->lastAutosave() != juce::Time())
         left << dotSep() << "autosaved " << doc->lastAutosave().formatted ("%H:%M:%S");
-    statusLeft.setText (left, juce::dontSendNotification);
+    // what the session is still loading (plugins, instruments, amp models, audio files)
+    auto loading = session != nullptr ? session->rigs().loadingNames() : juce::StringArray();
+    if (session != nullptr) loading.addArray (session->cache.loadingFiles());
+    if (loading.isEmpty())
+    {
+        statusLeft.setColour (juce::Label::textColourId, palette::textDim);
+        statusLeft.setTooltip ({});
+        statusLeft.setText (left, juce::dontSendNotification);
+    }
+    else
+    {
+        juce::String text = "Loading: ";
+        for (int i = 0; i < juce::jmin (4, loading.size()); ++i) text << (i > 0 ? ", " : "") << loading[i];
+        if (loading.size() > 4) text << " and " << (loading.size() - 4) << " more";
+        statusLeft.setColour (juce::Label::textColourId, palette::accent);
+        statusLeft.setText (text + "...", juce::dontSendNotification);
+        statusLeft.setTooltip (loading.joinIntoString ("\n"));
+    }
 
     statusRight.setText (host.lastError.isNotEmpty() ? host.lastError : host.deviceSummary(), juce::dontSendNotification);
     statusRight.setColour (juce::Label::textColourId, host.hasDevice() ? palette::textDim : palette::warn);

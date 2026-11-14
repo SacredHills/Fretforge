@@ -206,6 +206,13 @@ void GraphMixer::mix (PlaybackGraph& g, Source& source, float* outL, float* outR
             auto& t = g.tracks[(size_t) ti];
             float* L = bufL[(size_t) ti].data();
             float* R = bufR[(size_t) ti].data();
+            for (const auto& ax : t.auxOuts)   // the instrument's extra outputs go to their tracks (before the fader)
+            {
+                const float *al, *ar;
+                if (! juce::isPositiveAndBelow (ax.target, numTracks) || t.instrument == nullptr || ! t.instrument->auxOutput (ax.bus, al, ar)) continue;
+                juce::FloatVectorOperations::add (bufL[(size_t) ax.target].data(), al, n);
+                juce::FloatVectorOperations::add (bufR[(size_t) ax.target].data(), ar, n);
+            }
             for (const auto& s : t.sends)
             {
                 if (! juce::isPositiveAndBelow (s.target, numTracks)) continue;

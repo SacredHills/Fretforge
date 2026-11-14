@@ -20,6 +20,24 @@ public:
     double getPreparedRate() const noexcept { return preparedRate.load(); }
     /** Bypassed: the instrument makes no sound (notes held at that moment are released). */
     std::atomic<bool> bypassed { false };
+    /** Extra stereo output buses switched on (message thread; takes effect when the plugin is prepared). */
+    std::atomic<int> auxOutputs { 0 };
+
+    /** The sound of extra output bus `bus` (1 = the first extra one) of the block just rendered: false if it has none.
+        Audio thread, after render(), valid until the next render(). */
+    bool auxOutput (int bus, const float*& l, const float*& r) const noexcept
+    {
+        auto* p = active.load();
+        if (! auxValid || p == nullptr || bus < 1 || bus >= p->getBusCount (false)) return false;
+        auto* b = p->getBus (false, bus);
+        if (b == nullptr || ! b->isEnabled() || b->getNumberOfChannels() < 1) return false;
+        const int first = p->getChannelIndexInProcessBlockBuffer (false, bus, 0);
+        const int second = b->getNumberOfChannels() > 1 ? first + 1 : first;
+        if (second >= scratch.getNumChannels()) return false;
+        l = scratch.getReadPointer (first);
+        r = scratch.getReadPointer (second);
+        return true;
+    }
 
     std::shared_ptr<juce::AudioPluginInstance> setPlugin (std::shared_ptr<juce::AudioPluginInstance> p)
     {
@@ -34,6 +52,7 @@ public:
     void render (float* L, float* R, int n, juce::MidiBuffer& midi) noexcept
     {
         auto* p = active.load();
+        auxValid = false;
         if (p == nullptr || n > scratch.getNumSamples()) return;
         if (bypassed.load())
         {
@@ -63,6 +82,7 @@ public:
             const juce::ScopedLock sl (p->getCallbackLock());
             if (p->isSuspended()) return;
             p->processBlock (view, midi);
+            auxValid = true;
         }
         const int outs = p->getTotalNumOutputChannels();
         if (outs <= 0) return;
@@ -78,5 +98,6 @@ private:
     double sr = 48000.0;
     int block = 512;
     bool wasBypassed = false;   // audio thread only
+    bool auxValid = false;      // audio thread: the scratch buffer holds this block's output
 };
 } // namespace ff::fx

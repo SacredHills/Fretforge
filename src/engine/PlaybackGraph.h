@@ -44,6 +44,8 @@ struct PlayTrack
     int output = -1;                          // index of the bus track this one plays into, -1 = master
     struct Send { int target = -1; float gain = 0.0f; bool pre = false; };
     std::vector<Send> sends;                  // into FX / bus tracks
+    struct AuxOut { int target = -1; int bus = 1; };
+    std::vector<AuxOut> auxOuts;              // instrument tracks: extra output buses that play into bus tracks (before the fader)
     int hwOutput = -1;                        // >= 0: plays to this device output channel (and the next) instead of the master
     std::vector<Send> hwSends;                // sends to interface outputs (target = device output channel of the left side)
     int level = 0;                            // processing stage: a track's sources all have lower levels

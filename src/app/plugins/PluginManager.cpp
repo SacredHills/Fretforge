@@ -816,6 +816,11 @@ void PluginManager::showEditor (std::shared_ptr<juce::AudioPluginInstance> p, co
     if (p == nullptr) return;
     auto* key = p.get();
     if (auto it = editors.find (key); it != editors.end()) { it->second->setVisible (true); it->second->toFront (true); return; }
+    // opening another plugin closes the plugin windows that are open, except the pinned ones
+    std::vector<juce::AudioPluginInstance*> others;
+    for (auto& [other, w] : editors)
+        if (pinnedWindows.count (w->getName()) == 0) others.push_back (other);
+    for (auto* other : others) closeEditor (other);
     std::weak_ptr<bool> token = alive;
     editors[key] = std::make_unique<EditorWindow> (*this, p, title, [this, token, key] { if (! token.expired()) closeEditor (key); },
                                                    std::move (bypass));
