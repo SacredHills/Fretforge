@@ -949,6 +949,7 @@ void Ruler::mouseDown (const juce::MouseEvent& e)
     }
     // the bar numbers: click to move the playhead; drag sideways to scrub, down to zoom in, up to zoom out
     scrubbing = true;
+    scrubMoved = false;
     zoomPps0 = owner.geo.pixelsPerSecond;
     zoomAnchor = owner.geo.timeFor ((float) e.x);
     playheadBefore = owner.playhead();
@@ -1003,7 +1004,15 @@ void Ruler::mouseDrag (const juce::MouseEvent& e)
         return;
     }
     const bool snapOn = ! e.mods.isAltDown();
-    if (scrubbing && ! zooming && std::abs (e.getDistanceFromDragStartY()) > 5 && std::abs (e.getDistanceFromDragStartY()) > std::abs (e.getDistanceFromDragStartX()))
+    // a press on the bar numbers is a click, a scrub or a zoom: nothing happens (no seeking!) until the pointer has moved
+    // a few pixels, then the dominant direction decides
+    if (scrubbing && ! zooming && ! scrubMoved)
+    {
+        const int dx = std::abs (e.getDistanceFromDragStartX()), dy = std::abs (e.getDistanceFromDragStartY());
+        if (juce::jmax (dx, dy) <= 5) return;
+        if (dy <= dx) scrubMoved = true;
+    }
+    if (scrubbing && ! zooming && ! scrubMoved)
     {
         zooming = true;   // a mostly vertical drag zooms (down: in, up: out); sideways while zooming scrolls
         if (pendingLocate) pendingLocate = false;       // playing: it never moved
@@ -1050,9 +1059,9 @@ void Ruler::mouseUp (const juce::MouseEvent&)
     if (tempoDrag.isValid() || tempoDragBase) { tempoDrag = {}; tempoDragBase = false; repaint(); return; }
     dragStart = -1.0;
     loopDrag = LoopDrag::none;
-    if (pendingLocate && scrubbing && ! zooming) owner.locate (pendingLocateTime);
+    if (pendingLocate && scrubbing && ! zooming && ! scrubMoved) owner.locate (pendingLocateTime);
     pendingLocate = false;
-    scrubbing = zooming = false;
+    scrubbing = zooming = scrubMoved = false;
 }
 
 void Ruler::mouseDoubleClick (const juce::MouseEvent& e)

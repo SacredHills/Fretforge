@@ -233,7 +233,7 @@ private:
     // loop bar (like Studio One): drag the bar to move it, its ends to resize it, the empty strip to draw a new one
     enum class LoopDrag { none, move, left, right, draw } loopDrag = LoopDrag::none;
     double loopA0 = 0.0, loopB0 = 0.0;
-    bool scrubbing = false, zooming = false, exportDrag = false, pendingLocate = false;
+    bool scrubbing = false, zooming = false, exportDrag = false, pendingLocate = false, scrubMoved = false;
     double pendingLocateTime = 0.0;
     double zoomPps0 = 0.0, zoomAnchor = 0.0, playheadBefore = 0.0;
     LoopDrag loopHit (float x, bool exportRange = false) const;
