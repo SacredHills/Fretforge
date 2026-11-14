@@ -438,6 +438,7 @@ void MainComponent::openProject (const juce::File& f)
         return;
     }
     host.engine.stop();
+    loadingOverlay.begin ("Opening " + bundle.getFileNameWithoutExtension() + "...");   // up and painted before any of the work
     const auto r = doc->openBundle (bundle);
     if (r.failed())
         showError ("Problem opening project", r.getErrorMessage());

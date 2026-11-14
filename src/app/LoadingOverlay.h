@@ -12,6 +12,7 @@ public:
     LoadingOverlay()
     {
         setInterceptsMouseClicks (true, true);
+        setAlwaysOnTop (true);   // above the pages whatever they bring to the front
         hide.setButtonText ("Hide");
         hide.setTooltip ("Close this and keep working while the rest loads");
         hide.onClick = [this] { finish(); };
@@ -24,6 +25,7 @@ public:
 
     void begin (const juce::String& heading)
     {
+        if (isVisible()) { title = heading; refreshNow(); return; }   // already up (opening, then the tree is replaced)
         title = heading;
         peak = 0;
         quiet = 0;

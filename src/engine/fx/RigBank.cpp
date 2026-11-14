@@ -195,6 +195,7 @@ RigBank::~RigBank()
     engine.liveRig.store (nullptr);
     engine.waitForAudioCallback();
     loader.removeAllJobs (true, 5000);
+    pluginPrep.removeAllJobs (true, 30000);
     root.removeListener (this);
     live.removeListener (this);
 }
@@ -436,27 +437,35 @@ void RigBank::loadInstrument (const juce::String& key)
         auto it = instruments.find (key);
         if (it == instruments.end() || it->second.generation != gen) return;
         auto& en = it->second;
-        en.status.loading = false;
         if (inst == nullptr)
         {
+            en.status.loading = false;
             en.status.error = err.isNotEmpty() ? err : juce::String ("The instrument could not be loaded.");
             notifyStatus();
             return;
         }
-        restorePluginState (*inst, en.node[rig::ids::state].toString());
-        const auto [r, b] = engineFormat (engine);
-        std::shared_ptr<juce::AudioPluginInstance> old;
-        {
-            const juce::ScopedLock lk (lock);
-            preparePlugin (*inst, en.slot->getPreparedRate() > 0 ? en.slot->getPreparedRate() : r, juce::jmax (b, 512), false, en.slot->auxOutputs.load());
-            en.status.latency = inst->getLatencySamples();
-            old = en.slot->setPlugin (std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
-        }
-        en.status.loaded = true;
-        if (old != nullptr && onPluginRemoved) onPluginRemoved (old.get());
-        releasePlugin (std::move (old));
-        notifyStatus();
-        if (onRigsChanged) onRigsChanged();   // latency may have changed
+        const auto [r0, b0] = engineFormat (engine);
+        const double rate0 = en.slot->getPreparedRate() > 0 ? en.slot->getPreparedRate() : r0;
+        prepareAsync (std::move (inst), en.node[rig::ids::state].toString(), rate0, juce::jmax (b0, 512), false, en.slot->auxOutputs.load(),
+                      [this, key, gen] (std::unique_ptr<juce::AudioPluginInstance> ready) {
+            auto it2 = instruments.find (key);
+            if (it2 == instruments.end() || it2->second.generation != gen) return;
+            auto& en2 = it2->second;
+            en2.status.loading = false;
+            const auto [r, b] = engineFormat (engine);
+            std::shared_ptr<juce::AudioPluginInstance> old;
+            {
+                const juce::ScopedLock lk (lock);
+                preparePlugin (*ready, en2.slot->getPreparedRate() > 0 ? en2.slot->getPreparedRate() : r, juce::jmax (b, 512), false, en2.slot->auxOutputs.load());
+                en2.status.latency = ready->getLatencySamples();
+                old = en2.slot->setPlugin (std::shared_ptr<juce::AudioPluginInstance> (ready.release()));
+            }
+            en2.status.loaded = true;
+            if (old != nullptr && onPluginRemoved) onPluginRemoved (old.get());
+            releasePlugin (std::move (old));
+            notifyStatus();
+            if (onRigsChanged) onRigsChanged();   // latency may have changed
+        });
     });
 }
 
@@ -565,6 +574,21 @@ void RigBank::releaseEntryPlugins (Entry& e)
     }
 }
 
+void RigBank::prepareAsync (std::unique_ptr<juce::AudioPluginInstance> inst, juce::String state, double rate, int block, bool sidechain, int aux,
+                            std::function<void (std::unique_ptr<juce::AudioPluginInstance>)> then)
+{
+    auto holder = std::make_shared<std::unique_ptr<juce::AudioPluginInstance>> (std::move (inst));
+    std::weak_ptr<bool> token = alive;
+    pluginPrep.addJob ([holder, token, state = std::move (state), rate, block, sidechain, aux, then = std::move (then)] {
+        restorePluginState (**holder, state);
+        preparePlugin (**holder, rate, block, sidechain, aux);
+        juce::MessageManager::callAsync ([holder, token, then] {
+            if (token.expired()) return;   // the plugin is freed with `holder`, on the message thread
+            then (std::move (*holder));
+        });
+    });
+}
+
 void RigBank::requestPlugin (Entry& e, int slot)
 {
     auto& st = e.status.plugins[(size_t) slot];
@@ -601,25 +625,33 @@ void RigBank::requestPlugin (Entry& e, int slot)
         auto* en = entryByKey (key);
         if (en == nullptr || en->pluginGeneration[(size_t) slot] != gen) return;   // superseded; inst is freed here
         auto& s2 = en->status.plugins[(size_t) slot];
-        s2.loading = false;
         if (inst == nullptr)
         {
+            s2.loading = false;
             s2.error = err.isNotEmpty() ? err : juce::String ("The plugin could not be loaded.");
             notifyStatus();
             return;
         }
-        restorePluginState (*inst, rig::pluginNode (en->tree, slot)[rig::ids::state].toString());
-        const auto [r, b] = engineFormat (engine);
-        std::shared_ptr<juce::AudioPluginInstance> old;
-        {
-            const juce::ScopedLock lk (lock);   // not while the device re-prepares the rigs
-            preparePlugin (*inst, en->rig->getPreparedRate() > 0 ? en->rig->getPreparedRate() : r, juce::jmax (b, 512));
-            s2.latency = inst->getLatencySamples();
-            old = en->rig->setPlugin (slot, std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
-        }
-        s2.loaded = true;
-        releasePlugin (std::move (old));
-        notifyStatus();
+        const auto [r0, b0] = engineFormat (engine);
+        const double rate0 = en->rig->getPreparedRate() > 0 ? en->rig->getPreparedRate() : r0;
+        prepareAsync (std::move (inst), rig::pluginNode (en->tree, slot)[rig::ids::state].toString(), rate0, juce::jmax (b0, 512), false, 0,
+                      [this, key, slot, gen] (std::unique_ptr<juce::AudioPluginInstance> ready) {
+            auto* en2 = entryByKey (key);
+            if (en2 == nullptr || en2->pluginGeneration[(size_t) slot] != gen) return;   // superseded meanwhile; `ready` is freed here
+            auto& s3 = en2->status.plugins[(size_t) slot];
+            s3.loading = false;
+            const auto [r, b] = engineFormat (engine);
+            std::shared_ptr<juce::AudioPluginInstance> old;
+            {
+                const juce::ScopedLock lk (lock);   // not while the device re-prepares the rigs
+                preparePlugin (*ready, en2->rig->getPreparedRate() > 0 ? en2->rig->getPreparedRate() : r, juce::jmax (b, 512));   // quick when it is already prepared like this
+                s3.latency = ready->getLatencySamples();
+                old = en2->rig->setPlugin (slot, std::shared_ptr<juce::AudioPluginInstance> (ready.release()));
+            }
+            s3.loaded = true;
+            releasePlugin (std::move (old));
+            notifyStatus();
+        });
     });
     notifyStatus();
 }
@@ -703,25 +735,34 @@ void RigBank::loadInsert (InsertEntry& e, int phys)
         if (it == inserts.end() || it->second.generation[(size_t) phys] != gen) return;
         auto& en = it->second;
         auto& s2 = en.status[(size_t) phys];
-        s2.loading = false;
         if (inst == nullptr)
         {
+            s2.loading = false;
             s2.error = err.isNotEmpty() ? err : juce::String ("The plugin could not be loaded.");
             notifyStatus();
             return;
         }
-        restorePluginState (*inst, en.nodes[(size_t) phys][rig::ids::state].toString());
-        const auto [r, b] = engineFormat (engine);
-        std::shared_ptr<juce::AudioPluginInstance> old;
-        {
-            const juce::ScopedLock lk (lock);
-            preparePlugin (*inst, en.chain->getPreparedRate() > 0 ? en.chain->getPreparedRate() : r, juce::jmax (b, 512), true);
-            s2.latency = inst->getLatencySamples();
-            old = en.chain->setPlugin (phys, std::shared_ptr<juce::AudioPluginInstance> (inst.release()));
-        }
-        s2.loaded = true;
-        releasePlugin (std::move (old));
-        notifyStatus();
+        const auto [r0, b0] = engineFormat (engine);
+        const double rate0 = en.chain->getPreparedRate() > 0 ? en.chain->getPreparedRate() : r0;
+        prepareAsync (std::move (inst), en.nodes[(size_t) phys][rig::ids::state].toString(), rate0, juce::jmax (b0, 512), true, 0,
+                      [this, key, phys, gen] (std::unique_ptr<juce::AudioPluginInstance> ready) {
+            auto it2 = inserts.find (key);
+            if (it2 == inserts.end() || it2->second.generation[(size_t) phys] != gen) return;
+            auto& en2 = it2->second;
+            auto& s3 = en2.status[(size_t) phys];
+            s3.loading = false;
+            const auto [r, b] = engineFormat (engine);
+            std::shared_ptr<juce::AudioPluginInstance> old;
+            {
+                const juce::ScopedLock lk (lock);
+                preparePlugin (*ready, en2.chain->getPreparedRate() > 0 ? en2.chain->getPreparedRate() : r, juce::jmax (b, 512), true);
+                s3.latency = ready->getLatencySamples();
+                old = en2.chain->setPlugin (phys, std::shared_ptr<juce::AudioPluginInstance> (ready.release()));
+            }
+            s3.loaded = true;
+            releasePlugin (std::move (old));
+            notifyStatus();
+        });
     });
 }
 

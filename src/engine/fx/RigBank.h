@@ -134,6 +134,11 @@ private:
     Entry liveEntry;
     int generationCounter = 0;
     juce::dsp::ConvolutionMessageQueue convQueue { 64 };
+    /** Loading a plugin's saved settings (samples!) and preparing it can take seconds: done on worker threads while the
+        message thread keeps the window alive, then `then` runs on the message thread with the ready plugin. */
+    juce::ThreadPool pluginPrep { juce::ThreadPoolOptions{}.withThreadName ("FF plugin prep").withNumberOfThreads (2) };
+    void prepareAsync (std::unique_ptr<juce::AudioPluginInstance> inst, juce::String state, double rate, int block, bool sidechain, int aux,
+                       std::function<void (std::unique_ptr<juce::AudioPluginInstance>)> then);
     juce::ThreadPool loader { juce::ThreadPoolOptions{}.withThreadName ("FF rig loader").withNumberOfThreads (1) };
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);
     mutable juce::CriticalSection lock;   // serialises rig creation / model hand-over with prepareAll()
